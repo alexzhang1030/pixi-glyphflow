@@ -13,6 +13,23 @@
 bun add pixi-glyphflow pixi.js pixi-viewport
 ```
 
+## Bundler configuration
+
+The HarfBuzz module worker uses top-level `await`. Vite applications emit the worker as ESM:
+
+```ts
+// vite.config.ts
+import { defineConfig } from "vite";
+
+export default defineConfig({
+  build: { target: "es2022" },
+  worker: { format: "es" },
+});
+```
+
+Equivalent bundler configurations use an ES module worker and an ES2022-or-newer target. The
+package exports the worker at `pixi-glyphflow/text-worker.js`.
+
 ## Renderer lifecycle
 
 Create the PixiJS application, associate its renderer with `TextLayer`, add the layer to the scene,

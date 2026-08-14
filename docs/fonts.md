@@ -48,6 +48,10 @@ The default `LayoutEngine` creates `HarfBuzzWorkerShaper`. Its worker URL resolv
 `text-worker.js` export. Font bytes transfer once per registration revision. Superseded responses
 are discarded through label source revisions.
 
+Worker bundles use ESM because HarfBuzzJS initializes through top-level `await`. For Vite, set
+`worker.format` to `"es"` and `build.target` to `"es2022"` as shown in the
+[getting-started bundler configuration](getting-started.md#bundler-configuration).
+
 Direct shaping remains available through the shaping subpath:
 
 ```ts

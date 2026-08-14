@@ -27,6 +27,20 @@ bun add pixi-viewport
 
 The package ships ESM for PixiJS 8.19 and pixi-viewport 6.
 
+### Vite worker output
+
+HarfBuzzJS uses top-level `await` inside the module worker. Configure Vite to emit an ES module
+worker and target ES2022:
+
+```ts
+import { defineConfig } from "vite";
+
+export default defineConfig({
+  build: { target: "es2022" },
+  worker: { format: "es" },
+});
+```
+
 ## Create a text layer
 
 ```ts

@@ -151,7 +151,7 @@
   - Verify: bun run release:check
   - Files: package.json, CHANGELOG.md, README.md, bun.lock
 
-- [ ] Task 7.2: Publish and verify 1.0.0.
+- [x] Task 7.2: Publish and verify 1.0.0.
   - Acceptance: CI, signed tag, npm provenance, GitHub Release, and public-registry consumer checks all succeed.
   - Verify: npm view plus independent runtime, browser, and TypeScript consumer probes.
   - Files: .github/workflows/release.yml, scripts/package-smoke.ts
