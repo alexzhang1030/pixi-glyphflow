@@ -1,9 +1,33 @@
 export { FontRegistry } from "./FontRegistry";
+export { GlyphAtlas } from "./atlas/GlyphAtlas";
+export { PrebuiltGlyphProvider } from "./atlas/PrebuiltGlyphProvider";
+export { RasterGlyphProvider } from "./atlas/RasterGlyphProvider";
 export { LayoutEngine } from "./layout/LayoutEngine";
 export { BitmapLayoutAdapter } from "./pixi/compat/bitmapLayout";
 export { HarfBuzzShaper } from "./shaping/HarfBuzzShaper";
 export { HarfBuzzWorkerShaper, StaleShapeResultError } from "./shaping/HarfBuzzWorkerShaper";
 export { TextLayer } from "./TextLayer";
+export type {
+  AtlasCommit,
+  AtlasEntry,
+  AtlasUpload,
+  GlyphAtlasOptions,
+  GlyphAtlasStats,
+  GlyphMode,
+  GlyphMetrics,
+  GlyphRaster,
+  GlyphRequest,
+  MsdfAtlasLike,
+  MsdfGeneratorLike,
+  MsdfGlyphInfoLike,
+  PrebuiltGlyphPage,
+  PrebuiltGlyphProviderOptions,
+  PrebuiltGlyphProviderStats,
+  PrebuiltGlyphRecord,
+  RasterGlyphProviderOptions,
+  RasterGlyphProviderStats,
+  RasterGlyphRequest,
+} from "./atlas/types";
 export type {
   TextId,
   TextCompactionResult,

@@ -58,12 +58,12 @@
 
 ## Phase 3
 
-- [ ] Task 3.1: Implement atlas packing, pinning, eviction, and generation swaps.
+- [x] Task 3.1: Implement atlas packing, pinning, eviction, and generation swaps.
   - Acceptance: Atlas bytes stay bounded and stale generation results never replace visible entries.
   - Verify: bun test tests/GlyphAtlas.test.ts
   - Files: src/atlas/GlyphAtlas.ts, src/atlas/Packer.ts, src/atlas/types.ts, tests/GlyphAtlas.test.ts
 
-- [ ] Task 3.2: Implement prebuilt distance-field and dynamic raster glyph providers.
+- [x] Task 3.2: Implement prebuilt distance-field and dynamic raster glyph providers.
   - Acceptance: MSDF, SDF, alpha, and color pages produce stable entries and correct metadata.
   - Verify: bun test tests/glyph-providers.test.ts
   - Files: src/atlas/PrebuiltGlyphProvider.ts, src/atlas/RasterGlyphProvider.ts, src/atlas/types.ts, tests/glyph-providers.test.ts

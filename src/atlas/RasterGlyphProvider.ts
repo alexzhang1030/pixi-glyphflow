@@ -1,0 +1,343 @@
+import type { FontRegistry } from "../FontRegistry";
+import type {
+  GlyphMetrics,
+  GlyphMode,
+  GlyphRaster,
+  MsdfAtlasLike,
+  MsdfGeneratorLike,
+  RasterGlyphProviderOptions,
+  RasterGlyphProviderStats,
+  RasterGlyphRequest,
+} from "./types";
+
+const DEFAULT_CACHE_SIZE = 2_048;
+
+export class RasterGlyphProvider {
+  readonly #registry: FontRegistry;
+  readonly #cacheSize: number;
+  readonly #canvasRasterizer: (request: RasterGlyphRequest) => Promise<GlyphRaster>;
+  readonly #createMsdfGenerator: () => Promise<MsdfGeneratorLike>;
+  readonly #cache = new Map<string, Readonly<GlyphRaster>>();
+  readonly #pending = new Map<string, Promise<Readonly<GlyphRaster>>>();
+  #generatorPromise: Promise<MsdfGeneratorLike> | undefined;
+  #hits = 0;
+  #misses = 0;
+  #canvasRasters = 0;
+  #distanceFieldRasters = 0;
+  #generatorStarts = 0;
+  #destroyed = false;
+
+  constructor(registry: FontRegistry, options: RasterGlyphProviderOptions = {}) {
+    this.#registry = registry;
+    this.#cacheSize = options.cacheSize ?? DEFAULT_CACHE_SIZE;
+    if (!Number.isSafeInteger(this.#cacheSize) || this.#cacheSize <= 0) {
+      throw new TypeError("cacheSize must be a positive safe integer");
+    }
+    this.#canvasRasterizer = options.canvasRasterizer ?? defaultCanvasRasterizer;
+    this.#createMsdfGenerator = options.createMsdfGenerator ?? defaultMsdfGenerator;
+  }
+
+  async rasterize(request: RasterGlyphRequest): Promise<Readonly<GlyphRaster>> {
+    this.#assertActive();
+    validateRequest(request);
+    const registered = this.#registry.get(request.family);
+    if (registered === undefined) {
+      throw new RangeError(`Font family is unavailable: ${request.family}`);
+    }
+    if (registered.revision !== request.fontRevision) {
+      throw new RangeError(
+        `Font revision ${String(request.fontRevision)} is stale; current revision is ${String(registered.revision)}`,
+      );
+    }
+    if ((request.mode === "msdf" || request.mode === "sdf") && registered.kind !== "binary") {
+      throw new RangeError(
+        `Distance-field rasterization requires a binary font: ${request.family}`,
+      );
+    }
+
+    const key = requestCacheKey(request);
+    const cached = this.#cache.get(key);
+    if (cached !== undefined) {
+      this.#hits += 1;
+      return cached;
+    }
+    const pending = this.#pending.get(key);
+    if (pending !== undefined) {
+      this.#hits += 1;
+      return pending;
+    }
+
+    this.#misses += 1;
+    const promise = this.#createRaster(request).then((raster) => {
+      this.#assertActive();
+      validateRaster(raster, request.mode);
+      const frozen = Object.freeze({
+        ...raster,
+        ...(raster.metrics === undefined ? {} : { metrics: Object.freeze({ ...raster.metrics }) }),
+      });
+      this.#cache.set(key, frozen);
+      while (this.#cache.size > this.#cacheSize) {
+        const oldest = this.#cache.keys().next().value as string | undefined;
+        if (oldest === undefined) break;
+        this.#cache.delete(oldest);
+      }
+
+      return frozen;
+    });
+    this.#pending.set(key, promise);
+    try {
+      return await promise;
+    } finally {
+      this.#pending.delete(key);
+    }
+  }
+
+  get stats(): Readonly<RasterGlyphProviderStats> {
+    return Object.freeze({
+      cacheEntries: this.#cache.size,
+      pending: this.#pending.size,
+      hits: this.#hits,
+      misses: this.#misses,
+      canvasRasters: this.#canvasRasters,
+      distanceFieldRasters: this.#distanceFieldRasters,
+      generatorStarts: this.#generatorStarts,
+    });
+  }
+
+  async destroy(): Promise<void> {
+    if (this.#destroyed) return;
+    this.#destroyed = true;
+    this.#cache.clear();
+    this.#pending.clear();
+    const generator = await this.#generatorPromise;
+    await generator?.dispose();
+  }
+
+  async #createRaster(request: RasterGlyphRequest): Promise<Readonly<GlyphRaster>> {
+    if (request.mode === "alpha" || request.mode === "color") {
+      this.#canvasRasters += 1;
+      return this.#canvasRasterizer(request);
+    }
+
+    this.#distanceFieldRasters += 1;
+    const bytes = this.#registry.getBinaryData(request.family);
+    if (bytes === undefined) {
+      throw new RangeError(`Binary font data is unavailable: ${request.family}`);
+    }
+    const generator = await this.#generator();
+    const textureSize = nextPowerOfTwo(Math.max(32, Math.ceil(request.fontSize * 2)));
+    const atlas = await generator.generateAtlas({
+      font: bytes,
+      charset: request.glyphText,
+      fontSize: request.fontSize,
+      textureSize: [textureSize, textureSize],
+      fieldRange: 4,
+      padding: 2,
+      fixOverlaps: true,
+    });
+
+    return extractDistanceField(request, atlas);
+  }
+
+  async #generator(): Promise<MsdfGeneratorLike> {
+    if (this.#generatorPromise === undefined) {
+      this.#generatorStarts += 1;
+      this.#generatorPromise = this.#createMsdfGenerator().then(async (generator) => {
+        await generator.initialize?.();
+        return generator;
+      });
+    }
+
+    return this.#generatorPromise;
+  }
+
+  #assertActive(): void {
+    if (this.#destroyed) {
+      throw new Error("RasterGlyphProvider has been destroyed");
+    }
+  }
+}
+
+function extractDistanceField(
+  request: RasterGlyphRequest,
+  atlas: MsdfAtlasLike,
+): Readonly<GlyphRaster> {
+  const glyph =
+    atlas.glyphs.find((candidate) => candidate.char === request.glyphText) ?? atlas.glyphs[0];
+  if (glyph === undefined) {
+    throw new RangeError(`MSDF generator returned no glyph for: ${request.glyphText}`);
+  }
+  const [x, y] = glyph.atlasPosition;
+  const [width, height] = glyph.atlasSize;
+  if (
+    !Number.isSafeInteger(x) ||
+    !Number.isSafeInteger(y) ||
+    !Number.isSafeInteger(width) ||
+    !Number.isSafeInteger(height) ||
+    x < 0 ||
+    y < 0 ||
+    width <= 0 ||
+    height <= 0 ||
+    x + width > atlas.texture.width ||
+    y + height > atlas.texture.height
+  ) {
+    throw new RangeError("MSDF generator returned invalid atlas coordinates");
+  }
+  const rgba = new Uint8Array(width * height * 4);
+  for (let row = 0; row < height; row += 1) {
+    const sourceStart = ((y + row) * atlas.texture.width + x) * 4;
+    rgba.set(atlas.texture.data.subarray(sourceStart, sourceStart + width * 4), row * width * 4);
+  }
+  const metrics: Readonly<GlyphMetrics> = Object.freeze({
+    bearingX: glyph.bounds.left,
+    bearingY: glyph.bounds.top,
+    advance: glyph.advance,
+    fieldRange: atlas.fieldRange,
+  });
+  if (request.mode === "msdf") {
+    return Object.freeze({ mode: "msdf", width, height, pixels: rgba, metrics });
+  }
+
+  const pixels = new Uint8Array(width * height);
+  for (let index = 0; index < pixels.length; index += 1) {
+    const offset = index * 4;
+    pixels[index] = median(rgba[offset] ?? 0, rgba[offset + 1] ?? 0, rgba[offset + 2] ?? 0);
+  }
+
+  return Object.freeze({ mode: "sdf", width, height, pixels, metrics });
+}
+
+async function defaultMsdfGenerator(): Promise<MsdfGeneratorLike> {
+  const { MSDF } = await import("@zappar/msdf-generator");
+  return new MSDF() as unknown as MsdfGeneratorLike;
+}
+
+async function defaultCanvasRasterizer(request: RasterGlyphRequest): Promise<GlyphRaster> {
+  const canvas = createCanvas(1, 1);
+  let context = canvas.getContext("2d", { willReadFrequently: true });
+  if (context === null) {
+    throw new Error("Canvas 2D context is unavailable");
+  }
+  context.font = `${String(request.fontSize)}px ${quoteFamily(request.family)}`;
+  const measurement = context.measureText(request.glyphText);
+  const padding = Math.max(2, Math.ceil(request.fontSize * 0.125));
+  const left = measurement.actualBoundingBoxLeft || 0;
+  const right = measurement.actualBoundingBoxRight || measurement.width;
+  const ascent = measurement.actualBoundingBoxAscent || request.fontSize;
+  const descent = measurement.actualBoundingBoxDescent || request.fontSize * 0.25;
+  const width = Math.max(1, Math.ceil(left + right) + padding * 2);
+  const height = Math.max(1, Math.ceil(ascent + descent) + padding * 2);
+  canvas.width = width;
+  canvas.height = height;
+  context = canvas.getContext("2d", { willReadFrequently: true });
+  if (context === null) {
+    throw new Error("Canvas 2D context is unavailable after resize");
+  }
+  context.clearRect(0, 0, width, height);
+  context.font = `${String(request.fontSize)}px ${quoteFamily(request.family)}`;
+  context.textBaseline = "alphabetic";
+  context.fillStyle = "white";
+  context.fillText(request.glyphText, padding + left, padding + ascent);
+  const image = context.getImageData(0, 0, width, height);
+  const metrics = Object.freeze({ bearingX: -left, bearingY: ascent, advance: measurement.width });
+  if (request.mode === "color") {
+    return { mode: "color", width, height, pixels: new Uint8Array(image.data), metrics };
+  }
+  const pixels = new Uint8Array(width * height);
+  for (let index = 0; index < pixels.length; index += 1) {
+    pixels[index] = image.data[index * 4 + 3] ?? 0;
+  }
+
+  return { mode: "alpha", width, height, pixels, metrics };
+}
+
+interface CanvasLike {
+  width: number;
+  height: number;
+  getContext(
+    contextId: "2d",
+    options?: CanvasRenderingContext2DSettings,
+  ): CanvasRenderingContext2D | OffscreenCanvasRenderingContext2D | null;
+}
+
+function createCanvas(width: number, height: number): CanvasLike {
+  if (typeof OffscreenCanvas !== "undefined") {
+    return new OffscreenCanvas(width, height);
+  }
+  if (typeof document !== "undefined") {
+    const canvas = document.createElement("canvas");
+    canvas.width = width;
+    canvas.height = height;
+    return canvas;
+  }
+  throw new Error("Canvas rasterization requires OffscreenCanvas or a browser document");
+}
+
+function validateRequest(request: RasterGlyphRequest): void {
+  if (typeof request.family !== "string" || request.family.length === 0) {
+    throw new TypeError("family must be a non-empty string");
+  }
+  if (!Number.isSafeInteger(request.fontRevision) || request.fontRevision < 0) {
+    throw new TypeError("fontRevision must be a non-negative safe integer");
+  }
+  if (!Number.isSafeInteger(request.glyphId) || request.glyphId < 0) {
+    throw new TypeError("glyphId must be a non-negative safe integer");
+  }
+  if (typeof request.glyphText !== "string" || request.glyphText.length === 0) {
+    throw new TypeError("glyphText must be a non-empty string");
+  }
+  if (!Number.isFinite(request.fontSize) || request.fontSize <= 0) {
+    throw new TypeError("fontSize must be a positive finite number");
+  }
+  assertMode(request.mode);
+}
+
+function validateRaster(raster: GlyphRaster, expectedMode: GlyphMode): void {
+  if (raster.mode !== expectedMode) {
+    throw new TypeError(`Raster mode ${raster.mode} differs from request mode ${expectedMode}`);
+  }
+  if (!Number.isSafeInteger(raster.width) || raster.width <= 0) {
+    throw new TypeError("Raster width must be a positive safe integer");
+  }
+  if (!Number.isSafeInteger(raster.height) || raster.height <= 0) {
+    throw new TypeError("Raster height must be a positive safe integer");
+  }
+  if (!(raster.pixels instanceof Uint8Array)) {
+    throw new TypeError("Raster pixels must be a Uint8Array");
+  }
+  const channels = raster.mode === "sdf" || raster.mode === "alpha" ? 1 : 4;
+  if (raster.pixels.byteLength !== raster.width * raster.height * channels) {
+    throw new TypeError("Raster pixel byte length differs from its dimensions and mode");
+  }
+}
+
+function requestCacheKey(request: RasterGlyphRequest): string {
+  return [
+    request.family,
+    request.fontRevision,
+    request.glyphId,
+    request.glyphText,
+    request.fontSize,
+    request.mode,
+  ].join("\u0000");
+}
+
+function quoteFamily(family: string): string {
+  return `"${family.replaceAll('"', '\\"')}"`;
+}
+
+function median(first: number, second: number, third: number): number {
+  return Math.max(Math.min(first, second), Math.min(Math.max(first, second), third));
+}
+
+function nextPowerOfTwo(value: number): number {
+  let result = 1;
+  while (result < value) result *= 2;
+  return result;
+}
+
+function assertMode(mode: string): void {
+  if (mode !== "msdf" && mode !== "sdf" && mode !== "alpha" && mode !== "color") {
+    throw new TypeError("Glyph mode is unsupported");
+  }
+}

@@ -1,0 +1,153 @@
+export type GlyphMode = "msdf" | "sdf" | "alpha" | "color";
+
+export interface GlyphRequest {
+  readonly key: string;
+  readonly generation: number;
+}
+
+export interface GlyphRaster {
+  readonly mode: GlyphMode;
+  readonly width: number;
+  readonly height: number;
+  readonly pixels: Uint8Array;
+  readonly metrics?: Readonly<GlyphMetrics>;
+}
+
+export interface GlyphMetrics {
+  readonly bearingX: number;
+  readonly bearingY: number;
+  readonly advance: number;
+  readonly fieldRange?: number;
+}
+
+export interface AtlasEntry {
+  readonly key: string;
+  readonly generation: number;
+  readonly page: number;
+  readonly mode: GlyphMode;
+  readonly x: number;
+  readonly y: number;
+  readonly width: number;
+  readonly height: number;
+  readonly u0: number;
+  readonly v0: number;
+  readonly u1: number;
+  readonly v1: number;
+  readonly metrics?: Readonly<GlyphMetrics>;
+}
+
+export interface AtlasUpload {
+  readonly entry: Readonly<AtlasEntry>;
+  readonly pixels: Uint8Array;
+}
+
+export interface AtlasCommit {
+  readonly entries: readonly Readonly<AtlasEntry>[];
+  readonly uploads: readonly Readonly<AtlasUpload>[];
+  readonly evictedKeys: readonly string[];
+}
+
+export interface GlyphAtlasOptions {
+  readonly pageWidth?: number;
+  readonly pageHeight?: number;
+  readonly maxBytes?: number;
+}
+
+export interface GlyphAtlasStats {
+  readonly entries: number;
+  readonly pendingEntries: number;
+  readonly pages: number;
+  readonly allocatedBytes: number;
+  readonly pinnedEntries: number;
+  readonly requests: number;
+  readonly stagedResults: number;
+  readonly staleResults: number;
+  readonly evictions: number;
+  readonly capacityFailures: number;
+  readonly commits: number;
+}
+
+export interface PrebuiltGlyphPage {
+  readonly id: string;
+  readonly mode: GlyphMode;
+  readonly width: number;
+  readonly height: number;
+  readonly pixels: Uint8Array;
+}
+
+export interface PrebuiltGlyphRecord {
+  readonly key: string;
+  readonly pageId: string;
+  readonly x: number;
+  readonly y: number;
+  readonly width: number;
+  readonly height: number;
+  readonly metrics?: Readonly<GlyphMetrics>;
+}
+
+export interface PrebuiltGlyphProviderOptions {
+  readonly pages: readonly PrebuiltGlyphPage[];
+  readonly glyphs: readonly PrebuiltGlyphRecord[];
+}
+
+export interface PrebuiltGlyphProviderStats {
+  readonly glyphs: number;
+  readonly pages: number;
+  readonly cacheEntries: number;
+  readonly hits: number;
+  readonly misses: number;
+}
+
+export interface RasterGlyphRequest {
+  readonly family: string;
+  readonly fontRevision: number;
+  readonly glyphId: number;
+  readonly glyphText: string;
+  readonly fontSize: number;
+  readonly mode: GlyphMode;
+}
+
+export interface MsdfGlyphInfoLike {
+  readonly char: string;
+  readonly atlasPosition: readonly [number, number];
+  readonly atlasSize: readonly [number, number];
+  readonly bounds: Readonly<{
+    left: number;
+    bottom: number;
+    right: number;
+    top: number;
+  }>;
+  readonly advance: number;
+}
+
+export interface MsdfAtlasLike {
+  readonly texture: Readonly<{
+    width: number;
+    height: number;
+    data: Uint8Array | Uint8ClampedArray;
+  }>;
+  readonly glyphs: readonly MsdfGlyphInfoLike[];
+  readonly fieldRange: number;
+}
+
+export interface MsdfGeneratorLike {
+  initialize?(): Promise<void>;
+  generateAtlas(options: Readonly<Record<string, unknown>>): Promise<MsdfAtlasLike>;
+  dispose(): Promise<void>;
+}
+
+export interface RasterGlyphProviderOptions {
+  readonly cacheSize?: number;
+  readonly canvasRasterizer?: (request: RasterGlyphRequest) => Promise<GlyphRaster>;
+  readonly createMsdfGenerator?: () => Promise<MsdfGeneratorLike>;
+}
+
+export interface RasterGlyphProviderStats {
+  readonly cacheEntries: number;
+  readonly pending: number;
+  readonly hits: number;
+  readonly misses: number;
+  readonly canvasRasters: number;
+  readonly distanceFieldRasters: number;
+  readonly generatorStarts: number;
+}
