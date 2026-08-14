@@ -31,7 +31,7 @@ flowchart LR
 | Diagnostics       | Label, mutation, revision, attachment, backend | Draw, upload, atlas, cache, fallback, and renderer metrics  |
 
 Performance claims begin when M1 fixtures satisfy the release gates in the
-[project blueprint](https://github.com/alexzhang1030/pixi-glyphflow/blob/main/.agents/docs/pixi-glyphflow-blueprint.md#竞争性发布门槛).
+[project blueprint](https://github.com/alexzhang1030/pixi-glyphflow/blob/main/.agents/docs/pixi-glyphflow-blueprint.md#performance-budgets).
 
 ## Public API
 
