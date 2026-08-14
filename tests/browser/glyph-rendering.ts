@@ -1,6 +1,7 @@
-import { Application, Rectangle } from "pixi.js";
+import { Application } from "pixi.js";
 
 import { TextLayer } from "../../src";
+import { measureVisiblePixels } from "./pixels";
 
 interface BrowserFixtureState {
   done: boolean;
@@ -93,64 +94,4 @@ async function run(): Promise<void> {
     reattachedStats,
   };
   window.__glyphflow.done = true;
-}
-
-interface PixelMeasure {
-  readonly count: number;
-  readonly centroidX: number;
-}
-
-async function measureVisiblePixels(app: Application, layer: TextLayer): Promise<PixelMeasure> {
-  if ("gpu" in app.renderer) {
-    const texture = app.renderer.extract.texture({
-      target: layer,
-      frame: new Rectangle(0, 0, 320, 180),
-    });
-    const gpuTexture = app.renderer.texture.getGpuSource(texture.source);
-    const width = 320;
-    const height = 180;
-    const rowBytes = width * 4;
-    const bytesPerRow = Math.ceil(rowBytes / 256) * 256;
-    const buffer = app.renderer.gpu.device.createBuffer({
-      size: bytesPerRow * height,
-      usage: GPUBufferUsage.COPY_DST | GPUBufferUsage.MAP_READ,
-    });
-    const encoder = app.renderer.gpu.device.createCommandEncoder();
-    encoder.copyTextureToBuffer(
-      { texture: gpuTexture },
-      { buffer, bytesPerRow, rowsPerImage: height },
-      { width, height, depthOrArrayLayers: 1 },
-    );
-    app.renderer.gpu.device.queue.submit([encoder.finish()]);
-    await buffer.mapAsync(GPUMapMode.READ);
-    const pixels = new Uint8Array(buffer.getMappedRange());
-    let count = 0;
-    let xSum = 0;
-    for (let y = 0; y < height; y += 1) {
-      for (let x = 0; x < width; x += 1) {
-        if ((pixels[y * bytesPerRow + x * 4 + 3] ?? 0) > 0) {
-          count += 1;
-          xSum += x;
-        }
-      }
-    }
-    buffer.unmap();
-    buffer.destroy();
-    texture.destroy(true);
-    return { count, centroidX: count === 0 ? 0 : xSum / count };
-  }
-  const { pixels, width } = app.renderer.extract.pixels({
-    target: layer,
-    frame: new Rectangle(0, 0, 320, 180),
-  });
-  let count = 0;
-  let xSum = 0;
-  for (let index = 3; index < pixels.length; index += 4) {
-    if ((pixels[index] ?? 0) > 0) {
-      count += 1;
-      xSum += Math.floor(index / 4) % width;
-    }
-  }
-
-  return { count, centroidX: count === 0 ? 0 : xSum / count };
 }

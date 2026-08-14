@@ -83,7 +83,7 @@
   - Verify: bun test tests/renderer-adapters.test.ts
   - Files: src/render/WebGLAdapter.ts, src/render/WebGPUAdapter.ts, src/render/RendererAdapter.ts, tests/renderer-adapters.test.ts
 
-- [ ] Task 3.6: Integrate commit, atlas, instance, mesh, attach, detach, and destruction.
+- [x] Task 3.6: Integrate commit, atlas, instance, mesh, attach, detach, and destruction.
   - Acceptance: Complete revisions render atomically and every owned resource has one teardown path.
   - Verify: bun run test:browser -- lifecycle
   - Files: src/TextLayer.ts, src/render/RenderCoordinator.ts, tests/browser/lifecycle.test.ts
