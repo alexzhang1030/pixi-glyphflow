@@ -19,10 +19,10 @@
 
 ## Phase 1
 
-- [ ] Task 1.1: Implement generation-checked TextStore identities and immutable snapshots.
+- [x] Task 1.1: Implement generation-checked TextStore identities and immutable snapshots.
   - Acceptance: Create, get, update, remove, reuse, growth, and stale identity behavior pass through TextStore.
-  - Verify: bun test tests/TextStore.test.ts
-  - Files: src/store/TextStore.ts, src/store/types.ts, tests/TextStore.test.ts
+  - Verify: bun test tests/TextStore.test.ts; bun run benchmark:store
+  - Files: src/store/TextStore.ts, src/store/types.ts, tests/TextStore.test.ts, benchmarks/store.ts, benchmarks/store-worker.ts
 
 - [ ] Task 1.2: Implement the ergonomic TextLayer CRUD and bulk interface.
   - Acceptance: createMany, get, has, update, updateMany, remove, removeMany, and clear follow the public specification.
