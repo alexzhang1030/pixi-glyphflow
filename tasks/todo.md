@@ -24,10 +24,10 @@
   - Verify: bun test tests/TextStore.test.ts; bun run benchmark:store
   - Files: src/store/TextStore.ts, src/store/types.ts, tests/TextStore.test.ts, benchmarks/store.ts, benchmarks/store-worker.ts
 
-- [ ] Task 1.2: Implement the ergonomic TextLayer CRUD and bulk interface.
+- [x] Task 1.2: Implement the ergonomic TextLayer CRUD and bulk interface.
   - Acceptance: createMany, get, has, update, updateMany, remove, removeMany, and clear follow the public specification.
-  - Verify: bun test tests/TextLayer.crud.test.ts
-  - Files: src/TextLayer.ts, src/types.ts, src/index.ts, tests/TextLayer.crud.test.ts
+  - Verify: bun test tests/TextLayer.crud.test.ts; bun run benchmark:core
+  - Files: src/TextLayer.ts, src/types.ts, src/index.ts, tests/TextLayer.crud.test.ts, benchmarks/layer.ts, benchmarks/layer-worker.ts
 
 - [ ] Task 1.3: Implement revision journals, no-op commits, compact, and core diagnostics.
   - Acceptance: Dirty domains remain minimal, revisions are monotonic, no-op commits schedule zero work, and compact preserves IDs.

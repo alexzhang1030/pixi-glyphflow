@@ -39,6 +39,7 @@
   },
   "scripts": {
     "baseline": "bun benchmarks/baseline.ts",
+    "benchmark:core": "bun benchmarks/layer.ts",
     "benchmark:store": "bun benchmarks/store.ts",
     "build": "tsdown",
     "dev": "tsdown --watch",

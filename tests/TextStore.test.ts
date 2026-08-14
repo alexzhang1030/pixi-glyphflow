@@ -45,9 +45,11 @@ describe("TextStore", () => {
     const ids = new Float64Array([first, second]);
 
     expect(store.updatePositions(ids, new Float32Array([10, 20, 30, 40]))).toBe(2);
+    const warmedBytes = store.stats.allocatedBytes;
     expect(store.get(first)).toMatchObject({ x: 10, y: 20, sourceRevision: 2 });
     expect(store.get(second)).toMatchObject({ x: 30, y: 40, sourceRevision: 2 });
     expect(store.updatePositions(ids, new Float32Array([10, 20, 30, 40]))).toBe(0);
+    expect(store.stats.allocatedBytes).toBe(warmedBytes);
 
     const stale = first;
     store.remove(first);

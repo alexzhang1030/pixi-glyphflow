@@ -1,4 +1,4 @@
-import type { PointData, TextStyleOptions } from "pixi.js";
+import type { PointData, Renderer, TextStyleOptions } from "pixi.js";
 
 declare const textIdBrand: unique symbol;
 declare const textRevisionBrand: unique symbol;
@@ -9,44 +9,87 @@ export type TextId = number & { readonly [textIdBrand]: "TextId" };
 /** Monotonic revision published by {@link TextLayer.commit}. */
 export type TextRevision = number & { readonly [textRevisionBrand]: "TextRevision" };
 
-/**
- * A label accepted by the POC layer.
- *
- * The style object follows PixiJS v8 Canvas Text options. Version `0.0.x` keeps this contract
- * intentionally small while the batched glyph renderer is built.
- */
-export interface TextLabelSpec {
-  /** Text content rendered by PixiJS. */
-  text: string;
-  /** Horizontal position in layer-local coordinates. */
-  x?: number;
-  /** Vertical position in layer-local coordinates. */
-  y?: number;
-  /** Rotation in radians. */
-  rotation?: number;
-  /** Opacity multiplier. */
-  alpha?: number;
-  /** Render visibility. */
-  visible?: boolean;
-  /** Origin used for positioning and rotation. */
-  anchor?: PointData | number;
-  /** PixiJS v8 Canvas Text style. */
-  style?: TextStyleOptions;
+/** Construction options for a dense text layer. */
+export interface TextLayerOptions {
+  /** Initial label capacity. Geometric growth preserves accepted identities. */
+  readonly initialCapacity?: number;
+  /** Renderer association used by the rendering coordinator. */
+  readonly renderer?: Renderer;
 }
 
-/** Mutable fields accepted by `TextLayer.updateLabel`. */
+/** Label state accepted by {@link TextLayer.create}. */
+export interface TextLabelSpec {
+  /** Text content. Empty strings remain valid labels. */
+  readonly text: string;
+  /** Horizontal position in layer-local coordinates. */
+  readonly x?: number;
+  /** Vertical position in layer-local coordinates. */
+  readonly y?: number;
+  /** Uniform or x/y scale. */
+  readonly scale?: PointData | number;
+  /** Horizontal scale override. */
+  readonly scaleX?: number;
+  /** Vertical scale override. */
+  readonly scaleY?: number;
+  /** Rotation in radians. */
+  readonly rotation?: number;
+  /** Opacity multiplier. */
+  readonly alpha?: number;
+  /** Render visibility. */
+  readonly visible?: boolean;
+  /** Origin used for positioning and rotation. */
+  readonly anchor?: PointData | number;
+  /** PixiJS text style options captured by value. */
+  readonly style?: Readonly<TextStyleOptions>;
+}
+
+/** Mutable fields accepted by {@link TextLayer.update}. */
 export type TextLabelPatch = Partial<TextLabelSpec>;
 
-/** Observable state for the current POC implementation. */
+/** Immutable label state returned by {@link TextLayer.get}. */
+export interface TextLabelSnapshot {
+  readonly id: TextId;
+  readonly sourceRevision: number;
+  readonly text: string;
+  readonly x: number;
+  readonly y: number;
+  readonly scaleX: number;
+  readonly scaleY: number;
+  readonly rotation: number;
+  readonly alpha: number;
+  readonly visible: boolean;
+  readonly anchor: Readonly<PointData>;
+  readonly style: Readonly<TextStyleOptions>;
+}
+
+/** One entry accepted by {@link TextLayer.updateMany}. */
+export interface TextUpdate {
+  readonly id: TextId;
+  readonly patch: TextLabelPatch;
+}
+
+/** Observable core state. Rendering, atlas, culling, and worker fields extend this shape. */
 export interface TextLayerStats {
-  /** Rendering path active in this release. */
-  readonly backend: "pixi-text-poc";
-  /** Labels currently owned by the layer. */
+  readonly backend: "glyphflow-core";
   readonly labelCount: number;
-  /** Mutations waiting for the next commit. */
+  readonly capacity: number;
   readonly pendingMutations: number;
-  /** Last published revision. */
+  readonly pendingDirtyMask: number;
   readonly revision: TextRevision;
-  /** Whether a renderer was supplied through `TextLayer.attach`. */
   readonly attached: boolean;
+  readonly acceptedMutations: number;
+  readonly commits: number;
+  readonly numericStoreBytes: number;
+  readonly referenceSlotBytes: number;
+  readonly allocatedStoreBytes: number;
+  readonly lastCommitDurationMs: number;
+}
+
+/** Type-only forward declaration used by API documentation links. */
+export interface TextLayer {
+  readonly stats: Readonly<TextLayerStats>;
+  commit(): Promise<TextRevision>;
+  create(spec: TextLabelSpec): TextId;
+  get(id: TextId): Readonly<TextLabelSnapshot> | undefined;
+  update(id: TextId, patch: TextLabelPatch): boolean;
 }

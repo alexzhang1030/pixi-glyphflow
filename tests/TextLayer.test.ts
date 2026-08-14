@@ -1,11 +1,11 @@
 import { describe, expect, test } from "bun:test";
 
-import { Text, type Renderer } from "pixi.js";
+import type { Renderer } from "pixi.js";
 
 import { TextLayer, type TextId } from "../src";
 
 describe("TextLayer", () => {
-  test("creates visible PixiJS text and publishes a revision", async () => {
+  test("creates label state and publishes a revision", async () => {
     const layer = new TextLayer();
     const id = layer.create({
       text: "上海 120 FPS",
@@ -15,12 +15,9 @@ describe("TextLayer", () => {
     });
 
     expect(typeof id).toBe("number");
-    expect(layer.children).toHaveLength(1);
-    expect(layer.children[0]).toBeInstanceOf(Text);
-    expect(layer.children[0]?.text).toBe("上海 120 FPS");
-    expect(layer.children[0]?.position).toMatchObject({ x: 24, y: 32 });
+    expect(layer.get(id)).toMatchObject({ text: "上海 120 FPS", x: 24, y: 32 });
     expect(layer.stats).toMatchObject({
-      backend: "pixi-text-poc",
+      backend: "glyphflow-core",
       labelCount: 1,
       pendingMutations: 1,
       revision: 0,
@@ -33,25 +30,27 @@ describe("TextLayer", () => {
     layer.destroy();
   });
 
-  test("updates and removes labels", async () => {
+  test("keeps the 0.0.x update alias", async () => {
     const layer = new TextLayer();
     const id = layer.create({ text: "120 FPS" });
 
-    layer.updateLabel(id, {
+    expect(
+      layer.updateLabel(id, {
+        text: "121 FPS",
+        alpha: 0.5,
+        visible: false,
+        anchor: 0.5,
+      }),
+    ).toBe(true);
+    expect(layer.get(id)).toMatchObject({
       text: "121 FPS",
       alpha: 0.5,
       visible: false,
-      anchor: 0.5,
+      anchor: { x: 0.5, y: 0.5 },
     });
 
-    expect(layer.children[0]?.text).toBe("121 FPS");
-    expect(layer.children[0]?.alpha).toBe(0.5);
-    expect(layer.children[0]?.visible).toBe(false);
-    expect(layer.children[0]?.anchor).toMatchObject({ x: 0.5, y: 0.5 });
-
     expect(Number(await layer.commit())).toBe(1);
-    layer.remove(id);
-    expect(layer.children).toHaveLength(0);
+    expect(layer.remove(id)).toBe(true);
     expect(layer.stats.labelCount).toBe(0);
     expect(Number(await layer.commit())).toBe(2);
 
@@ -70,11 +69,12 @@ describe("TextLayer", () => {
     layer.destroy();
   });
 
-  test("rejects invalid values and unknown ids", () => {
+  test("rejects invalid values and stale updates", () => {
     const layer = new TextLayer();
 
     expect(() => layer.create({ text: "bad", x: Number.NaN })).toThrow(TypeError);
-    expect(() => layer.remove(999 as TextId)).toThrow(RangeError);
+    expect(layer.remove(999 as TextId)).toBe(false);
+    expect(() => layer.update(999 as TextId, { x: 1 })).toThrow(RangeError);
 
     layer.destroy();
     expect(() => layer.create({ text: "late" })).toThrow("TextLayer has been destroyed");

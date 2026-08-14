@@ -40,6 +40,7 @@ export class TextStore {
   #texts: Array<string | undefined>;
   #styles: Array<Readonly<TextStoreLabel["style"]> | undefined>;
   readonly #freeSlots: number[] = [];
+  #positionSlots = new Uint32Array();
 
   constructor(options: TextStoreOptions = {}) {
     const requestedCapacity = options.initialCapacity ?? DEFAULT_CAPACITY;
@@ -75,6 +76,21 @@ export class TextStore {
     return this.#capacity;
   }
 
+  reserve(additionalLabels: number): void {
+    if (!Number.isSafeInteger(additionalLabels) || additionalLabels < 0) {
+      throw new TypeError("additionalLabels must be a non-negative safe integer");
+    }
+
+    const requiredNewSlots = Math.max(0, additionalLabels - this.#freeSlots.length);
+    const requiredHighWater = this.#highWater + requiredNewSlots;
+    if (requiredHighWater > MAX_CAPACITY) {
+      throw new RangeError(`TextStore capacity exceeds ${String(MAX_CAPACITY)} labels`);
+    }
+    while (this.#capacity < requiredHighWater) {
+      this.#grow();
+    }
+  }
+
   get stats(): Readonly<TextStoreStats> {
     const numericBytes =
       this.#generations.byteLength +
@@ -88,7 +104,8 @@ export class TextStore {
       this.#alpha.byteLength +
       this.#visible.byteLength +
       this.#anchorX.byteLength +
-      this.#anchorY.byteLength;
+      this.#anchorY.byteLength +
+      this.#positionSlots.byteLength;
     const referenceSlotBytes = this.#capacity * 2 * 8;
 
     return Object.freeze({
@@ -217,7 +234,10 @@ export class TextStore {
       throw new TypeError("positions must contain one packed x/y pair for every TextId");
     }
 
-    const slots = new Uint32Array(ids.length);
+    if (this.#positionSlots.length < ids.length) {
+      this.#positionSlots = new Uint32Array(nextPowerOfTwo(ids.length));
+    }
+    const slots = this.#positionSlots;
     for (let index = 0; index < ids.length; index += 1) {
       const id = ids[index];
       if (id === undefined) {
@@ -236,7 +256,7 @@ export class TextStore {
     }
 
     let changed = 0;
-    for (let index = 0; index < slots.length; index += 1) {
+    for (let index = 0; index < ids.length; index += 1) {
       const slot = slots[index];
       if (slot === undefined) {
         throw new Error(`TextStore position slot missing at index ${String(index)}`);
@@ -288,6 +308,28 @@ export class TextStore {
     }
 
     this.#size = 0;
+  }
+
+  dispose(): void {
+    this.#capacity = 0;
+    this.#size = 0;
+    this.#highWater = 0;
+    this.#generations = new Uint32Array();
+    this.#occupied = new Uint8Array();
+    this.#sourceRevisions = new Uint32Array();
+    this.#x = new Float32Array();
+    this.#y = new Float32Array();
+    this.#scaleX = new Float32Array();
+    this.#scaleY = new Float32Array();
+    this.#rotation = new Float32Array();
+    this.#alpha = new Float32Array();
+    this.#visible = new Uint8Array();
+    this.#anchorX = new Float32Array();
+    this.#anchorY = new Float32Array();
+    this.#texts = [];
+    this.#styles = [];
+    this.#freeSlots.length = 0;
+    this.#positionSlots = new Uint32Array();
   }
 
   #allocateSlot(): number {
