@@ -112,7 +112,7 @@
 
 ## Phase 5
 
-- [ ] Task 5.1: Build browser fixtures and raw metric collection.
+- [x] Task 5.1: Build browser fixtures and raw metric collection.
   - Acceptance: Equal-content Text, BitmapText, HTMLText, and glyphflow fixtures emit the benchmark schema.
   - Verify: bun run benchmark -- --workload static-hud
   - Files: benchmarks/browser/index.ts, benchmarks/browser/fixtures.ts, benchmarks/schema.ts, playground/benchmark.html
