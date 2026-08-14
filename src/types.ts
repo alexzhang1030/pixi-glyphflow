@@ -1,5 +1,7 @@
 import type { PointData, Renderer, TextStyleOptions } from "pixi.js";
 
+import type { RenderCoordinatorOptions } from "./render/RenderCoordinator";
+
 declare const textIdBrand: unique symbol;
 declare const textRevisionBrand: unique symbol;
 
@@ -15,7 +17,12 @@ export interface TextLayerOptions {
   readonly initialCapacity?: number;
   /** Renderer association used by the rendering coordinator. */
   readonly renderer?: Renderer;
+  /** Rendering coordinator overrides, or false for a CPU-only layer. */
+  readonly rendering?: false | TextLayerRenderingOptions;
 }
+
+/** Advanced construction seams for custom shaping, rasterization, atlas, and storage policies. */
+export type TextLayerRenderingOptions = Omit<RenderCoordinatorOptions, "registry">;
 
 /** Label state accepted by {@link TextLayer.create}. */
 export interface TextLabelSpec {
@@ -97,6 +104,11 @@ export interface TextLayerStats {
   readonly lastCommitContentLabels: number;
   readonly lastCommitTransformLabels: number;
   readonly lastCommitStyleLabels: number;
+  readonly glyphCount: number;
+  readonly shapedLabels: number;
+  readonly transformOnlyLabels: number;
+  readonly removedRenderLabels: number;
+  readonly staleRenderRevisions: number;
 }
 
 /** Type-only forward declaration used by API documentation links. */

@@ -1,5 +1,10 @@
 import type { TextId } from "../types";
-import { DirtyJournal, type PendingDirty, type PublishedDirty } from "./DirtyJournal";
+import {
+  DirtyJournal,
+  type DirtySlotVisitor,
+  type PendingDirty,
+  type PublishedDirty,
+} from "./DirtyJournal";
 import {
   TextDirty,
   type TextDirtyMask,
@@ -145,6 +150,29 @@ export class TextStore {
       return undefined;
     }
 
+    return this.#snapshot(slot, id);
+  }
+
+  /** Return the current slot for a layer-local identity. @internal */
+  slotOf(id: TextId): number | undefined {
+    return this.#resolveSlot(id);
+  }
+
+  /** Read the current label occupying a dense slot. @internal */
+  snapshotAt(slot: number): Readonly<TextStoreSnapshot> | undefined {
+    if (!Number.isSafeInteger(slot) || slot < 0) {
+      throw new TypeError("TextStore slot must be a non-negative safe integer");
+    }
+    if (slot >= this.#highWater || this.#occupied[slot] !== 1) {
+      return undefined;
+    }
+    const generation = this.#generations[slot] ?? 1;
+    const id = (this.#idBase + generation * SLOT_RADIX + slot) as TextId;
+
+    return this.#snapshot(slot, id);
+  }
+
+  #snapshot(slot: number, id: TextId): Readonly<TextStoreSnapshot> {
     const text = this.#texts[slot];
     const style = this.#styles[slot];
     if (text === undefined || style === undefined) {
@@ -331,8 +359,23 @@ export class TextStore {
     this.#journal.record(slot, mask);
   }
 
-  publishDirty(): Readonly<PublishedDirty> {
-    return this.#journal.publish();
+  publishDirty(visitor?: DirtySlotVisitor): Readonly<PublishedDirty> {
+    return this.#journal.publish(visitor);
+  }
+
+  markAllDirty(mask: TextDirtyMask = ALL_DIRTY): number {
+    if (!Number.isSafeInteger(mask) || mask <= TextDirty.None || (mask & ~ALL_DIRTY) !== 0) {
+      throw new TypeError("Dirty mask contains unsupported domains");
+    }
+    let marked = 0;
+    for (let slot = 0; slot < this.#highWater; slot += 1) {
+      if (this.#occupied[slot] === 1) {
+        this.#journal.record(slot, mask);
+        marked += 1;
+      }
+    }
+
+    return marked;
   }
 
   compact(): Readonly<TextStoreCompaction> {

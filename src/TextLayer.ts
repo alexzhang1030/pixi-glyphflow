@@ -2,13 +2,23 @@ import { Container, type DestroyOptions, type Renderer, type TextStyleOptions } 
 
 import { FontRegistry } from "./FontRegistry";
 import {
+  RenderCoordinator,
+  type RenderChange,
+  type RenderLabelSnapshot,
+} from "./render/RenderCoordinator";
+import {
   assertTrustedGlyphRunOwner,
   createTrustedGlyphRun,
   type TrustedGlyphRun,
   type TrustedGlyphRunInput,
 } from "./shaping/TrustedGlyphRun";
 import { TextStore } from "./store/TextStore";
-import { TextDirty, type TextDirtyMask, type TextStoreLabelPatch } from "./store/types";
+import {
+  TextDirty,
+  type TextDirtyMask,
+  type TextStoreLabelPatch,
+  type TextStoreSnapshot,
+} from "./store/types";
 import type {
   TextId,
   TextCompactionResult,
@@ -16,6 +26,7 @@ import type {
   TextLabelSnapshot,
   TextLabelSpec,
   TextLayerOptions,
+  TextLayerRenderingOptions,
   TextLayerStats,
   TextRevision,
   TextUpdate,
@@ -44,6 +55,10 @@ export class TextLayer extends Container {
   #lastCommitTransformLabels = 0;
   #lastCommitStyleLabels = 0;
   #renderer: Renderer | undefined;
+  readonly #renderingOptions: false | TextLayerRenderingOptions;
+  #renderCoordinator: RenderCoordinator | undefined;
+  #renderTail: Promise<void> = Promise.resolve();
+  #lastCommitPromise: Promise<TextRevision> = Promise.resolve(0 as TextRevision);
 
   constructor(options: TextLayerOptions = {}) {
     super();
@@ -52,6 +67,10 @@ export class TextLayer extends Container {
         ? new TextStore()
         : new TextStore({ initialCapacity: options.initialCapacity });
     this.#renderer = options.renderer;
+    this.#renderingOptions = options.rendering ?? {};
+    if (this.#renderer !== undefined) {
+      this.#activateRendering();
+    }
   }
 
   /** Create one label and return its layer-local identity. */
@@ -265,49 +284,97 @@ export class TextLayer extends Container {
   /** Publish accepted mutations as one monotonic revision. */
   commit(): Promise<TextRevision> {
     this.#assertActive();
-    if (this.#pendingMutations === 0) {
+    if (this.#store.pendingDirty.labels === 0) {
       this.#lastCommitDurationMs = 0;
       this.#lastCommitDirtyLabels = 0;
       this.#lastCommitContentLabels = 0;
       this.#lastCommitTransformLabels = 0;
       this.#lastCommitStyleLabels = 0;
-      return Promise.resolve(this.#revision as TextRevision);
+      return this.#lastCommitPromise;
     }
     if (this.#revision === Number.MAX_SAFE_INTEGER) {
       throw new RangeError("TextLayer revision capacity exhausted");
     }
 
     const start = performance.now();
-    const dirty = this.#store.publishDirty();
+    const coordinator = this.#renderCoordinator;
+    const changes: RenderChange[] = [];
+    const dirty = this.#store.publishDirty((slot, mask) => {
+      if (coordinator === undefined) return;
+      const snapshot = this.#store.snapshotAt(slot);
+      const trustedRun = snapshot === undefined ? undefined : this.#trustedRuns.get(snapshot.id);
+      changes.push({
+        slot,
+        mask,
+        snapshot: snapshot === undefined ? undefined : toRenderSnapshot(snapshot),
+        ...(trustedRun === undefined ? {} : { trustedRun }),
+      });
+    });
     this.#revision += 1;
+    const revision = this.#revision as TextRevision;
     this.#pendingMutations = 0;
     this.#commits += 1;
     this.#lastCommitDirtyLabels = dirty.labels;
     this.#lastCommitContentLabels = dirty.content;
     this.#lastCommitTransformLabels = dirty.transform;
     this.#lastCommitStyleLabels = dirty.style;
-    this.#lastCommitDurationMs = performance.now() - start;
+    if (coordinator === undefined) {
+      this.#lastCommitDurationMs = performance.now() - start;
+      this.#lastCommitPromise = Promise.resolve(revision);
+      return this.#lastCommitPromise;
+    }
 
-    return Promise.resolve(this.#revision as TextRevision);
+    const renderWork = this.#renderTail.then(async () => {
+      await coordinator.commit(this.#revisionForRender(revision), changes);
+    });
+    this.#renderTail = renderWork.then(
+      () => undefined,
+      () => undefined,
+    );
+    this.#lastCommitPromise = renderWork.then(
+      () => {
+        this.#lastCommitDurationMs = performance.now() - start;
+        return revision;
+      },
+      (error: unknown) => {
+        if (!this.destroyed && this.#renderCoordinator === coordinator) {
+          this.#pendingMutations += this.#store.markAllDirty(ALL_DIRTY);
+        }
+        throw error;
+      },
+    );
+
+    return this.#lastCommitPromise;
   }
 
   /** Associate the layer with the renderer that owns future glyph resources. */
   attach(renderer: Renderer): void {
     this.#assertActive();
+    if (this.#renderer === renderer && this.#renderCoordinator !== undefined) {
+      return;
+    }
+    this.#renderCoordinator?.destroy();
     this.#renderer = renderer;
+    this.#activateRendering();
+    this.#pendingMutations += this.#store.markAllDirty(ALL_DIRTY);
   }
 
   /** Release the current renderer association. */
   detach(): void {
     this.#assertActive();
+    this.#renderCoordinator?.destroy();
+    this.#renderCoordinator = undefined;
     this.#renderer = undefined;
     this.#trustedRuns.clear();
+    this.#renderTail = Promise.resolve();
+    this.#lastCommitPromise = Promise.resolve(this.#revision as TextRevision);
   }
 
   /** Read an immutable diagnostics snapshot. */
   get stats(): Readonly<TextLayerStats> {
     const store = this.#store.stats;
     const pendingDirty = this.#store.pendingDirty;
+    const render = this.#renderCoordinator?.stats;
 
     return Object.freeze({
       backend: "glyphflow-core",
@@ -328,6 +395,11 @@ export class TextLayer extends Container {
       lastCommitContentLabels: this.#lastCommitContentLabels,
       lastCommitTransformLabels: this.#lastCommitTransformLabels,
       lastCommitStyleLabels: this.#lastCommitStyleLabels,
+      glyphCount: render?.glyphs ?? 0,
+      shapedLabels: render?.shapedLabels ?? 0,
+      transformOnlyLabels: render?.transformOnlyLabels ?? 0,
+      removedRenderLabels: render?.removedLabels ?? 0,
+      staleRenderRevisions: render?.staleRevisions ?? 0,
     });
   }
 
@@ -338,6 +410,8 @@ export class TextLayer extends Container {
     }
 
     this.#renderer = undefined;
+    this.#renderCoordinator?.destroy();
+    this.#renderCoordinator = undefined;
     this.fonts.destroy();
     this.#store.dispose();
     super.destroy(options);
@@ -350,6 +424,20 @@ export class TextLayer extends Container {
 
     this.#pendingMutations += count;
     this.#acceptedMutations += count;
+  }
+
+  #activateRendering(): void {
+    if (this.#renderingOptions === false || this.#renderCoordinator !== undefined) {
+      return;
+    }
+    this.#renderCoordinator = new RenderCoordinator({
+      ...this.#renderingOptions,
+      registry: this.fonts,
+    });
+  }
+
+  #revisionForRender(revision: TextRevision): number {
+    return Number(revision);
   }
 
   #assertTrustedRunSource(
@@ -409,6 +497,23 @@ function normalizeLabel(spec: TextLabelSpec): Parameters<TextStore["create"]>[0]
     anchorY,
     style: spec.style ?? EMPTY_STYLE,
   };
+}
+
+function toRenderSnapshot(snapshot: Readonly<TextStoreSnapshot>): Readonly<RenderLabelSnapshot> {
+  return Object.freeze({
+    sourceRevision: snapshot.sourceRevision,
+    text: snapshot.text,
+    x: snapshot.x,
+    y: snapshot.y,
+    scaleX: snapshot.scaleX,
+    scaleY: snapshot.scaleY,
+    rotation: snapshot.rotation,
+    alpha: snapshot.alpha,
+    visible: snapshot.visible,
+    anchorX: snapshot.anchorX,
+    anchorY: snapshot.anchorY,
+    style: snapshot.style,
+  });
 }
 
 function normalizePatch(patch: TextLabelPatch): TextStoreLabelPatch {

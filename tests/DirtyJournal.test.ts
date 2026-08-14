@@ -6,6 +6,7 @@ import { TextDirty } from "../src/store/types";
 describe("DirtyJournal", () => {
   test("coalesces slots and publishes precise dirty-domain counts", () => {
     const journal = new DirtyJournal(2);
+    const visited: Array<readonly [number, number]> = [];
 
     journal.record(0, TextDirty.Content);
     journal.record(0, TextDirty.Transform);
@@ -15,13 +16,17 @@ describe("DirtyJournal", () => {
       labels: 2,
       mask: TextDirty.Content | TextDirty.Transform | TextDirty.Style,
     });
-    expect(journal.publish()).toEqual({
+    expect(journal.publish((slot, mask) => visited.push([slot, mask]))).toEqual({
       labels: 2,
       content: 1,
       transform: 1,
       style: 1,
       mask: TextDirty.Content | TextDirty.Transform | TextDirty.Style,
     });
+    expect(visited).toEqual([
+      [0, TextDirty.Content | TextDirty.Transform],
+      [1, TextDirty.Style],
+    ]);
     expect(journal.pending).toEqual({ labels: 0, mask: TextDirty.None });
   });
 

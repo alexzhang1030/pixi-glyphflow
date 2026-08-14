@@ -72,6 +72,7 @@ export type {
   TextLabelSnapshot,
   TextLabelSpec,
   TextLayerOptions,
+  TextLayerRenderingOptions,
   TextLayerStats,
   TextRevision,
   TextUpdate,

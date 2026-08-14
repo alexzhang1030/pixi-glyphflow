@@ -13,6 +13,8 @@ export interface PublishedDirty extends PendingDirty {
   readonly style: number;
 }
 
+export type DirtySlotVisitor = (slot: number, mask: TextDirtyMask) => void;
+
 export class DirtyJournal {
   #capacity: number;
   #length = 0;
@@ -92,7 +94,7 @@ export class DirtyJournal {
     this.#aggregateMask |= mask;
   }
 
-  publish(): Readonly<PublishedDirty> {
+  publish(visitor?: DirtySlotVisitor): Readonly<PublishedDirty> {
     let content = 0;
     let transform = 0;
     let style = 0;
@@ -103,6 +105,7 @@ export class DirtyJournal {
         throw new Error(`DirtyJournal slot missing at index ${String(index)}`);
       }
       const mask = this.#masks[slot] ?? TextDirty.None;
+      visitor?.(slot, mask);
       content += Number((mask & TextDirty.Content) !== 0);
       transform += Number((mask & TextDirty.Transform) !== 0);
       style += Number((mask & TextDirty.Style) !== 0);
