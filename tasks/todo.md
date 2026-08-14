@@ -68,7 +68,7 @@
   - Verify: bun test tests/glyph-providers.test.ts
   - Files: src/atlas/PrebuiltGlyphProvider.ts, src/atlas/RasterGlyphProvider.ts, src/atlas/types.ts, tests/glyph-providers.test.ts
 
-- [ ] Task 3.3: Implement compact glyph instances and dirty range uploads.
+- [x] Task 3.3: Implement compact glyph instances and dirty range uploads.
   - Acceptance: Geometric growth preserves buffer identity and updates only changed ranges.
   - Verify: bun test tests/GlyphInstanceStore.test.ts
   - Files: src/render/GlyphInstanceStore.ts, src/render/DirtyRanges.ts, src/render/types.ts, tests/GlyphInstanceStore.test.ts

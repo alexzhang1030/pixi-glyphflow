@@ -3,10 +3,20 @@ export { GlyphAtlas } from "./atlas/GlyphAtlas";
 export { PrebuiltGlyphProvider } from "./atlas/PrebuiltGlyphProvider";
 export { RasterGlyphProvider } from "./atlas/RasterGlyphProvider";
 export { LayoutEngine } from "./layout/LayoutEngine";
+export { GlyphInstanceStore } from "./render/GlyphInstanceStore";
+export { GLYPH_INSTANCE_STRIDE } from "./render/types";
 export { BitmapLayoutAdapter } from "./pixi/compat/bitmapLayout";
 export { HarfBuzzShaper } from "./shaping/HarfBuzzShaper";
 export { HarfBuzzWorkerShaper, StaleShapeResultError } from "./shaping/HarfBuzzWorkerShaper";
 export { TextLayer } from "./TextLayer";
+export type {
+  DirtyByteRange,
+  GlyphInstanceBatch,
+  GlyphInstanceCompactionResult,
+  GlyphInstanceRange,
+  GlyphInstanceStoreOptions,
+  GlyphInstanceStoreStats,
+} from "./render/types";
 export type {
   AtlasCommit,
   AtlasEntry,
