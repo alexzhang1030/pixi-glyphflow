@@ -91,3 +91,36 @@ export interface WebGPUAdapterStats {
   readonly deferredBytes: number;
   readonly maxWriteBytes: number;
 }
+
+export interface TransformPaletteInput {
+  readonly x: number;
+  readonly y: number;
+  readonly scaleX: number;
+  readonly scaleY: number;
+  readonly rotation: number;
+  readonly alpha: number;
+  readonly visible: boolean;
+  readonly anchorX: number;
+  readonly anchorY: number;
+  readonly fill?: unknown;
+}
+
+export interface TransformRunBounds {
+  readonly width: number;
+  readonly height: number;
+}
+
+export interface TransformPaletteOptions {
+  readonly initialCapacity?: number;
+  readonly textureWidth?: number;
+  readonly maxCapacity?: number;
+}
+
+export interface TransformPaletteStats {
+  readonly capacity: number;
+  readonly activeLabels: number;
+  readonly allocatedBytes: number;
+  readonly textureWidth: number;
+  readonly textureHeight: number;
+  readonly pendingDirtyRanges: number;
+}

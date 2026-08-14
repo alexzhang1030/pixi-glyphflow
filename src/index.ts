@@ -5,7 +5,9 @@ export { RasterGlyphProvider } from "./atlas/RasterGlyphProvider";
 export { LayoutEngine } from "./layout/LayoutEngine";
 export { GlyphInstanceStore } from "./render/GlyphInstanceStore";
 export { GlyphMesh } from "./render/GlyphMesh";
+export { RenderCoordinator } from "./render/RenderCoordinator";
 export { GLYPH_INSTANCE_STRIDE } from "./render/types";
+export { TRANSFORM_PALETTE_STRIDE, TransformPalette } from "./render/TransformPalette";
 export { WebGLAdapter } from "./render/WebGLAdapter";
 export { WebGPUAdapter } from "./render/WebGPUAdapter";
 export { BitmapLayoutAdapter } from "./pixi/compat/bitmapLayout";
@@ -26,8 +28,21 @@ export type {
   WebGPUAdapterStats,
   WebGPUBufferLike,
   WebGPUQueueLike,
+  TransformPaletteInput,
+  TransformPaletteOptions,
+  TransformPaletteStats,
+  TransformRunBounds,
 } from "./render/types";
 export type { GlyphMeshOptions } from "./render/GlyphMesh";
+export type {
+  GlyphProviderLike,
+  RenderChange,
+  RenderCommitResult,
+  RenderCoordinatorOptions,
+  RenderCoordinatorStats,
+  RenderLabelSnapshot,
+  RenderLayoutEngineLike,
+} from "./render/RenderCoordinator";
 export type { RendererAdapter } from "./render/RendererAdapter";
 export type {
   AtlasCommit,

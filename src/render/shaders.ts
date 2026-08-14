@@ -11,19 +11,36 @@ uniform vec4 uWorldColorAlpha;
 uniform mat3 uTransformMatrix;
 uniform vec4 uColor;
 uniform float uRound;
+uniform sampler2D uTransformTexture;
+uniform float uPaletteWidth;
 
 out vec2 vUv;
 out vec4 vColor;
 flat out uint vMode;
 
+vec4 paletteTexel(uint index) {
+    uint width = uint(uPaletteWidth);
+    return texelFetch(uTransformTexture, ivec2(int(index % width), int(index / width)), 0);
+}
+
 void main(void) {
     bool active = (aMetadata & 0x80000000u) != 0u;
-    vec2 localPosition = aInstanceRect.xy + aVertex * aInstanceRect.zw;
+    uint paletteBase = aPaletteIndex * 3u;
+    vec4 transform0 = paletteTexel(paletteBase);
+    vec4 transform1 = paletteTexel(paletteBase + 1u);
+    vec4 paletteColor = paletteTexel(paletteBase + 2u);
+    vec2 localPosition = (aInstanceRect.xy + aVertex * aInstanceRect.zw - transform1.zw)
+        * transform0.zw;
+    vec2 rotatedPosition = vec2(
+        localPosition.x * transform1.y - localPosition.y * transform1.x,
+        localPosition.x * transform1.x + localPosition.y * transform1.y
+    );
+    localPosition = rotatedPosition + transform0.xy;
     vec3 projected = uProjectionMatrix * uWorldTransformMatrix * uTransformMatrix
         * vec3(localPosition, 1.0);
     gl_Position = active ? vec4(projected.xy, 0.0, 1.0) : vec4(2.0, 2.0, 0.0, 1.0);
     vUv = mix(aInstanceUv.xy, aInstanceUv.zw, aVertex);
-    vColor = uWorldColorAlpha * uColor;
+    vColor = uWorldColorAlpha * uColor * paletteColor;
     vMode = (aMetadata >> 16u) & 3u;
 }
 `;
@@ -76,6 +93,13 @@ struct LocalUniforms {
 @group(1) @binding(0) var<uniform> localUniforms: LocalUniforms;
 @group(2) @binding(0) var uTexture: texture_2d<f32>;
 @group(2) @binding(1) var uSampler: sampler;
+@group(2) @binding(2) var uTransformTexture: texture_2d<f32>;
+
+struct GlyphUniforms {
+    uPaletteWidth: f32,
+};
+
+@group(2) @binding(3) var<uniform> glyphUniforms: GlyphUniforms;
 
 struct VertexOutput {
     @builtin(position) position: vec4<f32>,
@@ -93,7 +117,25 @@ fn mainVertex(
     @location(4) aMetadata: u32,
 ) -> VertexOutput {
     let active = (aMetadata & 0x80000000u) != 0u;
-    let localPosition = aInstanceRect.xy + aVertex * aInstanceRect.zw;
+    let paletteWidth = u32(glyphUniforms.uPaletteWidth);
+    let paletteBase = aPaletteIndex * 3u;
+    let transform0Index = vec2<i32>(i32(paletteBase % paletteWidth), i32(paletteBase / paletteWidth));
+    let transform1Linear = paletteBase + 1u;
+    let transform1Index = vec2<i32>(
+        i32(transform1Linear % paletteWidth),
+        i32(transform1Linear / paletteWidth),
+    );
+    let colorLinear = paletteBase + 2u;
+    let colorIndex = vec2<i32>(i32(colorLinear % paletteWidth), i32(colorLinear / paletteWidth));
+    let transform0 = textureLoad(uTransformTexture, transform0Index, 0);
+    let transform1 = textureLoad(uTransformTexture, transform1Index, 0);
+    let paletteColor = textureLoad(uTransformTexture, colorIndex, 0);
+    var localPosition = (aInstanceRect.xy + aVertex * aInstanceRect.zw - transform1.zw)
+        * transform0.zw;
+    localPosition = vec2<f32>(
+        localPosition.x * transform1.y - localPosition.y * transform1.x,
+        localPosition.x * transform1.x + localPosition.y * transform1.y,
+    ) + transform0.xy;
     let projected = globalUniforms.uProjectionMatrix
         * globalUniforms.uWorldTransformMatrix
         * localUniforms.uTransformMatrix
@@ -102,11 +144,10 @@ fn mainVertex(
     if (!active) {
         clip = vec4<f32>(2.0, 2.0, 0.0, 1.0);
     }
-    let paletteGuard = f32(aPaletteIndex & 0u);
     return VertexOutput(
         clip,
         mix(aInstanceUv.xy, aInstanceUv.zw, aVertex),
-        globalUniforms.uWorldColorAlpha * localUniforms.uColor + vec4<f32>(paletteGuard),
+        globalUniforms.uWorldColorAlpha * localUniforms.uColor * paletteColor,
         (aMetadata >> 16u) & 3u,
     );
 }

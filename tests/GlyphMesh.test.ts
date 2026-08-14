@@ -17,6 +17,8 @@ describe("GlyphMesh", () => {
     });
     const mesh = new GlyphMesh({
       texture: Texture.WHITE,
+      paletteTexture: Texture.WHITE,
+      paletteWidth: 1,
       instanceData: instances.buffer,
       instanceCount: 2,
       shader: new Shader({
@@ -57,9 +59,11 @@ describe("GlyphMesh", () => {
 
   test("keeps equivalent distance-field and color branches in paired shader sources", () => {
     expect(GLYPH_VERTEX_GLSL).toContain("aInstanceRect");
+    expect(GLYPH_VERTEX_GLSL).toContain("uTransformTexture");
     expect(GLYPH_FRAGMENT_GLSL).toContain("median3");
     expect(GLYPH_FRAGMENT_GLSL).toContain("vMode == 3u");
     expect(GLYPH_SHADER_WGSL).toContain("fn median3");
+    expect(GLYPH_SHADER_WGSL).toContain("textureLoad(uTransformTexture");
     expect(GLYPH_SHADER_WGSL).toContain("input.mode == 3u");
   });
 });

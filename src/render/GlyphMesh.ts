@@ -14,6 +14,8 @@ import { GLYPH_INSTANCE_STRIDE } from "./types";
 
 export interface GlyphMeshOptions {
   readonly texture: Texture;
+  readonly paletteTexture: Texture;
+  readonly paletteWidth: number;
   readonly instanceData: ArrayBuffer;
   readonly instanceCount: number;
   readonly shader?: Shader;
@@ -26,6 +28,9 @@ export class GlyphMesh extends Mesh<Geometry, Shader> {
 
   constructor(options: GlyphMeshOptions) {
     validateInstanceData(options.instanceData, options.instanceCount);
+    if (!Number.isSafeInteger(options.paletteWidth) || options.paletteWidth <= 0) {
+      throw new TypeError("paletteWidth must be a positive safe integer");
+    }
     const vertexBuffer = new Buffer({
       data: new Float32Array([0, 0, 1, 0, 1, 1, 0, 1]),
       usage: BufferUsage.VERTEX | BufferUsage.STATIC,
@@ -90,6 +95,10 @@ export class GlyphMesh extends Mesh<Geometry, Shader> {
         resources: {
           uTexture: options.texture.source,
           uSampler: options.texture.source.style,
+          uTransformTexture: options.paletteTexture.source,
+          glyphUniforms: {
+            uPaletteWidth: { value: options.paletteWidth, type: "f32" },
+          },
         },
       });
     super({ geometry, shader, texture: options.texture });
@@ -112,6 +121,14 @@ export class GlyphMesh extends Mesh<Geometry, Shader> {
     this.texture = texture;
     this.#ownedShader.resources.uTexture = texture.source;
     this.#ownedShader.resources.uSampler = texture.source.style;
+  }
+
+  setPaletteTexture(texture: Texture, width: number): void {
+    if (!Number.isSafeInteger(width) || width <= 0) {
+      throw new TypeError("palette width must be a positive safe integer");
+    }
+    this.#ownedShader.resources.uTransformTexture = texture.source;
+    this.#ownedShader.resources.glyphUniforms.uniforms.uPaletteWidth = width;
   }
 
   override destroy(): void {

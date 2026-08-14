@@ -41,15 +41,18 @@ export class RasterGlyphProvider {
     this.#assertActive();
     validateRequest(request);
     const registered = this.#registry.get(request.family);
-    if (registered === undefined) {
+    if (
+      registered === undefined &&
+      (request.fontRevision !== 0 || request.mode === "msdf" || request.mode === "sdf")
+    ) {
       throw new RangeError(`Font family is unavailable: ${request.family}`);
     }
-    if (registered.revision !== request.fontRevision) {
+    if (registered !== undefined && registered.revision !== request.fontRevision) {
       throw new RangeError(
         `Font revision ${String(request.fontRevision)} is stale; current revision is ${String(registered.revision)}`,
       );
     }
-    if ((request.mode === "msdf" || request.mode === "sdf") && registered.kind !== "binary") {
+    if ((request.mode === "msdf" || request.mode === "sdf") && registered?.kind !== "binary") {
       throw new RangeError(
         `Distance-field rasterization requires a binary font: ${request.family}`,
       );
