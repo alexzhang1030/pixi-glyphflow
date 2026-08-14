@@ -146,7 +146,7 @@
 
 ## Phase 7
 
-- [ ] Task 7.1: Promote package metadata and changelog to 1.0.0.
+- [x] Task 7.1: Promote package metadata and changelog to 1.0.0.
   - Acceptance: Version, exports, files, README, and changelog describe the verified stable surface.
   - Verify: bun run release:check
   - Files: package.json, CHANGELOG.md, README.md, bun.lock

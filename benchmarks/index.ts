@@ -19,13 +19,19 @@ if (requestedWorkload === undefined) {
 await runScript("report.ts", []);
 
 async function runScript(file: string, arguments_: readonly string[]): Promise<void> {
-  const process = Bun.spawn([Bun.argv[0] ?? "bun", resolve(import.meta.dir, file), ...arguments_], {
+  const child = Bun.spawn([Bun.argv[0] ?? "bun", resolve(import.meta.dir, file), ...arguments_], {
     cwd: resolve(import.meta.dir, ".."),
-    stdin: "inherit",
-    stdout: "inherit",
-    stderr: "inherit",
+    stdin: "ignore",
+    stdout: "pipe",
+    stderr: "pipe",
   });
-  const exitCode = await process.exited;
+  const [exitCode, stdout, stderr] = await Promise.all([
+    child.exited,
+    new Response(child.stdout).text(),
+    new Response(child.stderr).text(),
+  ]);
+  if (stdout.length > 0) console.log(stdout.trimEnd());
+  if (stderr.length > 0) console.error(stderr.trimEnd());
   if (exitCode !== 0) throw new Error(`${file} exited with code ${String(exitCode)}`);
 }
 

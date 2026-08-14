@@ -1,0 +1,101 @@
+{
+  "schemaVersion": 3,
+  "benchmark": "browser-workloads",
+  "packageVersion": "1.0.0",
+  "capturedAt": "2026-08-14T21:47:09.678Z",
+  "runtime": {
+    "bun": "1.3.14",
+    "cpu": "Apple M1 Pro",
+    "platform": "darwin",
+    "release": "27.0.0",
+    "architecture": "arm64"
+  },
+  "workload": "million-full",
+  "status": "complete",
+  "samples": [
+    {
+      "schemaVersion": 3,
+      "kind": "pixi-glyphflow-browser-sample",
+      "capturedAt": "2026-08-14T21:47:09.487Z",
+      "userAgent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) HeadlessChrome/151.0.0.0 Safari/537.36",
+      "configuration": {
+        "fixture": "glyphflow",
+        "workload": "million-full",
+        "renderer": "webgl",
+        "labelCount": 1000000,
+        "mutationCount": 1,
+        "warmupFrames": 1,
+        "sampleFrames": 5,
+        "width": 1280,
+        "height": 800
+      },
+      "timings": {
+        "setupMs": 491.40000000596046,
+        "frameMs": [
+          0.10000002384185791,
+          0,
+          0,
+          0.09999999403953552,
+          0.09999999403953552
+        ]
+      },
+      "counters": {
+        "residentLabels": 1000000,
+        "submittedLabels": 1000000,
+        "visibleGlyphs": 8000000,
+        "drawCalls": 1,
+        "allocatedStoreBytes": 75497472,
+        "instanceBytes": 256000000,
+        "transformBytes": 64000000,
+        "labelRevision": 1,
+        "shapedLabels": 0,
+        "observedDrawCalls": 7,
+        "maximumInstanceCount": 8000000,
+        "nonTransparentPixels": 192,
+        "heapBytes": 458863045
+      },
+      "invariants": {
+        "exactResidentLabels": true,
+        "exactVisibleGlyphs": true,
+        "eightGlyphsPerLabel": true,
+        "instanceStrideBytes": 32,
+        "transformStrideBytes": 64,
+        "singleDrawCall": true,
+        "gpuDrawObserved": true,
+        "exactSubmittedInstanceCount": true,
+        "nonTransparentOutput": true
+      }
+    }
+  ],
+  "failures": [],
+  "summaries": {
+    "glyphflow": {
+      "setup": {
+        "unit": "ms",
+        "samples": [
+          491.40000000596046
+        ],
+        "min": 491.40000000596046,
+        "p50": 491.40000000596046,
+        "p95": 491.40000000596046,
+        "p99": 491.40000000596046,
+        "max": 491.40000000596046
+      },
+      "frame": {
+        "unit": "ms",
+        "samples": [
+          0.10000002384185791,
+          0,
+          0,
+          0.09999999403953552,
+          0.09999999403953552
+        ],
+        "min": 0,
+        "p50": 0.09999999403953552,
+        "p95": 0.10000002384185791,
+        "p99": 0.10000002384185791,
+        "max": 0.10000002384185791
+      }
+    }
+  }
+}

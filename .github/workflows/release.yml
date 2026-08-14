@@ -23,7 +23,7 @@ jobs:
           package-manager-cache: false
       - run: npm install --global npm@12.0.2
       - run: bun ci
-      - run: bun run audit
+      - run: bun run release:check
       - name: Verify tag and package version
         env:
           RELEASE_TAG: ${{ github.event.release.tag_name }}
@@ -31,4 +31,4 @@ jobs:
           node --input-type=module --eval
           "import pkg from './package.json' with { type: 'json' };
           if ('v' + pkg.version !== process.env.RELEASE_TAG) process.exit(1)"
-      - run: npm publish
+      - run: npm publish --provenance --access public

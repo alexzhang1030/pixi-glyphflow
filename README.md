@@ -7,8 +7,8 @@ worker shaping, bounded glyph atlases, dense culling, and first-class pixi-viewp
 
 - One `TextLayer` retains 1,000,000 labels in 72 MiB of fixed-width CPU storage.
 - One instanced draw submits 8,000,000 visible glyphs through a 32-byte glyph record.
-- `updatePositions` applies 100,000 packed x/y changes in 3.20 ms p95 on the reference M1 Pro.
-- `updateTextPositions` applies 100,000 text and x/y changes in 13.60 ms p95.
+- `updatePositions` applies 100,000 packed x/y changes in 3.40 ms p95 on the reference M1 Pro.
+- `updateTextPositions` applies 100,000 text and x/y changes in 14.20 ms p95.
 - `bindViewport` coalesces drag, deceleration, wheel, pinch, zoom, and rotation camera work.
 - HarfBuzz worker shaping covers Arabic, Devanagari, bidi text, feature selection, and clusters.
 - Optional accessibility, viewport, shaping, and advanced-rendering subpaths keep entry points focused.
@@ -120,11 +120,11 @@ GPU completion, warmup frames, and p95 reporting.
 
 | Workload                          |                           Scale | Frame p95 |
 | --------------------------------- | ------------------------------: | --------: |
-| Million-label viewport            |              1,000,000 resident |   5.30 ms |
-| Dynamic counters                  | 100,000 text + position updates |  14.20 ms |
-| pixi-viewport drag + deceleration |              1,000,000 resident |   5.50 ms |
-| pixi-viewport wheel + pinch zoom  |              1,000,000 resident |   7.20 ms |
-| Position storm                    |          100,000 packed updates |   8.80 ms |
+| Million-label viewport            |              1,000,000 resident |   5.20 ms |
+| Dynamic counters                  | 100,000 text + position updates |  14.80 ms |
+| pixi-viewport drag + deceleration |              1,000,000 resident |   5.40 ms |
+| pixi-viewport wheel + pinch zoom  |              1,000,000 resident |   7.10 ms |
+| Position storm                    |          100,000 packed updates |   9.00 ms |
 | Multilingual stream               |  10,000 resident, 1,000 updates |   3.90 ms |
 
 The [generated performance report](benchmarks/PERFORMANCE.md) links every raw artifact and records

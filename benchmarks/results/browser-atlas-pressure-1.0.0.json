@@ -1,0 +1,122 @@
+{
+  "schemaVersion": 3,
+  "benchmark": "browser-workloads",
+  "packageVersion": "1.0.0",
+  "capturedAt": "2026-08-14T21:47:07.638Z",
+  "runtime": {
+    "bun": "1.3.14",
+    "cpu": "Apple M1 Pro",
+    "platform": "darwin",
+    "release": "27.0.0",
+    "architecture": "arm64"
+  },
+  "workload": "atlas-pressure",
+  "status": "complete",
+  "samples": [
+    {
+      "schemaVersion": 3,
+      "kind": "pixi-glyphflow-browser-sample",
+      "capturedAt": "2026-08-14T21:47:07.452Z",
+      "userAgent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) HeadlessChrome/151.0.0.0 Safari/537.36",
+      "configuration": {
+        "fixture": "glyphflow",
+        "workload": "atlas-pressure",
+        "renderer": "webgl",
+        "labelCount": 20000,
+        "mutationCount": 1,
+        "warmupFrames": 0,
+        "sampleFrames": 20,
+        "width": 1280,
+        "height": 800
+      },
+      "timings": {
+        "setupMs": 2238.300000011921,
+        "frameMs": [
+          2.0999999940395355,
+          1.2000000178813934,
+          1.5,
+          0.5999999940395355,
+          1.0999999940395355,
+          0.5,
+          0.5999999940395355,
+          0.7000000178813934,
+          0.9000000059604645,
+          0.699999988079071,
+          1.5,
+          0.699999988079071,
+          0.800000011920929,
+          0.699999988079071,
+          1.100000023841858,
+          0.699999988079071,
+          426.80000001192093,
+          594,
+          594.8999999761581,
+          607.2000000178814
+        ]
+      },
+      "counters": {
+        "residentLabels": 20000,
+        "submittedLabels": 16384,
+        "visibleGlyphs": 16384,
+        "drawCalls": 0,
+        "atlasBytes": 4194304,
+        "atlasEntries": 16384,
+        "atlasEvictions": 3616,
+        "heapBytes": 26763379
+      },
+      "invariants": {
+        "exactRequests": true,
+        "boundedAtlasBytes": true,
+        "fixedCeilingBytes": 4194304,
+        "evictionActivated": true,
+        "zeroCapacityFailures": true
+      }
+    }
+  ],
+  "failures": [],
+  "summaries": {
+    "glyphflow": {
+      "setup": {
+        "unit": "ms",
+        "samples": [
+          2238.300000011921
+        ],
+        "min": 2238.300000011921,
+        "p50": 2238.300000011921,
+        "p95": 2238.300000011921,
+        "p99": 2238.300000011921,
+        "max": 2238.300000011921
+      },
+      "frame": {
+        "unit": "ms",
+        "samples": [
+          2.0999999940395355,
+          1.2000000178813934,
+          1.5,
+          0.5999999940395355,
+          1.0999999940395355,
+          0.5,
+          0.5999999940395355,
+          0.7000000178813934,
+          0.9000000059604645,
+          0.699999988079071,
+          1.5,
+          0.699999988079071,
+          0.800000011920929,
+          0.699999988079071,
+          1.100000023841858,
+          0.699999988079071,
+          426.80000001192093,
+          594,
+          594.8999999761581,
+          607.2000000178814
+        ],
+        "min": 0.5,
+        "p50": 0.9000000059604645,
+        "p95": 594.8999999761581,
+        "p99": 607.2000000178814,
+        "max": 607.2000000178814
+      }
+    }
+  }
+}

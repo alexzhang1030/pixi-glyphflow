@@ -1,8 +1,12 @@
 {
   "name": "pixi-glyphflow",
-  "version": "0.0.1",
-  "description": "A high-throughput batched text layer for PixiJS v8.",
+  "version": "1.0.0",
+  "description": "A million-label text layer for PixiJS with instanced WebGL/WebGPU rendering.",
   "keywords": [
+    "glyph-atlas",
+    "harfbuzz",
+    "msdf",
+    "pixi-viewport",
     "pixijs",
     "rendering",
     "text",

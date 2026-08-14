@@ -1,0 +1,116 @@
+{
+  "schemaVersion": 3,
+  "benchmark": "browser-workloads",
+  "packageVersion": "1.0.0",
+  "capturedAt": "2026-08-14T21:46:55.701Z",
+  "runtime": {
+    "bun": "1.3.14",
+    "cpu": "Apple M1 Pro",
+    "platform": "darwin",
+    "release": "27.0.0",
+    "architecture": "arm64"
+  },
+  "workload": "dynamic-counters",
+  "status": "complete",
+  "samples": [
+    {
+      "schemaVersion": 3,
+      "kind": "pixi-glyphflow-browser-sample",
+      "capturedAt": "2026-08-14T21:46:55.519Z",
+      "userAgent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) HeadlessChrome/151.0.0.0 Safari/537.36",
+      "configuration": {
+        "fixture": "glyphflow",
+        "workload": "dynamic-counters",
+        "renderer": "webgl",
+        "labelCount": 1000000,
+        "mutationCount": 100000,
+        "warmupFrames": 5,
+        "sampleFrames": 7,
+        "width": 1280,
+        "height": 800
+      },
+      "timings": {
+        "setupMs": 308.89999997615814,
+        "frameMs": [
+          14.799999982118607,
+          14.5,
+          14.5,
+          14.099999994039536,
+          14.199999988079071,
+          13.700000017881393,
+          13.699999988079071
+        ],
+        "mutationMs": [
+          14.199999988079071,
+          13.800000011920929,
+          13.799999982118607,
+          13.399999976158142,
+          13.599999994039536,
+          13.099999994039536,
+          13.099999994039536
+        ],
+        "commitMs": [
+          0.5999999940395355,
+          0.699999988079071,
+          0.7000000178813934,
+          0.7000000178813934,
+          0.5999999940395355,
+          0.6000000238418579,
+          0.5999999940395355
+        ]
+      },
+      "counters": {
+        "residentLabels": 1000000,
+        "submittedLabels": 1000000,
+        "visibleGlyphs": 9000000,
+        "drawCalls": 0,
+        "allocatedStoreBytes": 76021760,
+        "instanceBytes": 0,
+        "transformBytes": 67108864,
+        "labelRevision": 13,
+        "shapedLabels": 0,
+        "transformOnlyLabels": 0,
+        "cullingQueries": 1,
+        "heapBytes": 212574551
+      },
+      "invariants": {
+        "exactResidentLabels": true,
+        "exactMutationCount": true,
+        "revisionPerFrame": true
+      }
+    }
+  ],
+  "failures": [],
+  "summaries": {
+    "glyphflow": {
+      "setup": {
+        "unit": "ms",
+        "samples": [
+          308.89999997615814
+        ],
+        "min": 308.89999997615814,
+        "p50": 308.89999997615814,
+        "p95": 308.89999997615814,
+        "p99": 308.89999997615814,
+        "max": 308.89999997615814
+      },
+      "frame": {
+        "unit": "ms",
+        "samples": [
+          14.799999982118607,
+          14.5,
+          14.5,
+          14.099999994039536,
+          14.199999988079071,
+          13.700000017881393,
+          13.699999988079071
+        ],
+        "min": 13.699999988079071,
+        "p50": 14.199999988079071,
+        "p95": 14.799999982118607,
+        "p99": 14.799999982118607,
+        "max": 14.799999982118607
+      }
+    }
+  }
+}
