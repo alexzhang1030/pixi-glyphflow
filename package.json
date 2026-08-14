@@ -38,6 +38,7 @@
     "access": "public"
   },
   "scripts": {
+    "baseline": "bun benchmarks/baseline.ts",
     "build": "tsdown",
     "dev": "tsdown --watch",
     "format": "oxfmt",
