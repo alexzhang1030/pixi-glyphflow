@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 
-import { GlyphAtlas, type GlyphRaster } from "../src";
+import { GlyphAtlas, type GlyphRaster } from "../src/advanced";
 
 describe("GlyphAtlas", () => {
   test("publishes staged glyphs at frame boundaries and rejects stale generations", () => {

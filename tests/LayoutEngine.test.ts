@@ -1,12 +1,8 @@
 import { describe, expect, test } from "bun:test";
 
-import {
-  FontRegistry,
-  LayoutEngine,
-  type BitmapLayoutInput,
-  type HarfBuzzShapeInput,
-  type PositionedRun,
-} from "../src";
+import { FontRegistry, type PositionedRun } from "../src";
+import { LayoutEngine, type BitmapLayoutInput } from "../src/advanced";
+import type { HarfBuzzShapeInput } from "../src/shaping";
 
 describe("LayoutEngine", () => {
   test("routes system fonts through bitmap layout and binary fonts through HarfBuzz", async () => {

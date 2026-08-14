@@ -1,4 +1,5 @@
-import { FontRegistry, HarfBuzzShaper } from "../src";
+import { FontRegistry } from "../src";
+import { HarfBuzzShaper } from "../src/shaping";
 
 const fontPath = await resolveFontPath();
 const bytes = new Uint8Array(await Bun.file(fontPath).arrayBuffer());

@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 
-import { BitmapLayoutAdapter } from "../src";
+import { BitmapLayoutAdapter } from "../src/advanced";
 
 describe("BitmapLayoutAdapter", () => {
   test("maps PixiJS bitmap layout data into a compact positioned run", () => {

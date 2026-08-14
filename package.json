@@ -33,6 +33,14 @@
       "types": "./dist/index.d.ts",
       "import": "./dist/index.js"
     },
+    "./advanced": {
+      "types": "./dist/advanced/index.d.ts",
+      "import": "./dist/advanced/index.js"
+    },
+    "./shaping": {
+      "types": "./dist/shaping/index.d.ts",
+      "import": "./dist/shaping/index.js"
+    },
     "./viewport": {
       "types": "./dist/viewport/index.d.ts",
       "import": "./dist/viewport/index.js"
@@ -48,7 +56,10 @@
   },
   "scripts": {
     "baseline": "bun benchmarks/baseline.ts",
-    "benchmark": "bun benchmarks/run.ts",
+    "benchmark": "bun benchmarks/index.ts",
+    "benchmark:workload": "bun benchmarks/run.ts",
+    "benchmark:report": "bun benchmarks/report.ts",
+    "benchmark:check": "bun benchmarks/budgets.ts",
     "benchmark:core": "bun benchmarks/layer.ts",
     "benchmark:store": "bun benchmarks/store.ts",
     "build": "tsdown",
@@ -62,11 +73,11 @@
     "test:coverage": "bun test --coverage",
     "audit": "bun audit --audit-level=high",
     "package:lint": "publint",
-    "package:types": "attw --pack . --profile esm-only",
+    "package:types": "NPM_CONFIG_CACHE=/tmp/pixi-glyphflow-npm-cache attw --pack . --profile esm-only",
     "package:smoke": "bun scripts/package-smoke.ts",
     "smoke:harfbuzz": "bun scripts/harfbuzz-smoke.ts",
     "smoke:worker": "bun run build && bun scripts/worker-smoke.ts",
-    "package:dry-run": "npm pack --dry-run",
+    "package:dry-run": "NPM_CONFIG_CACHE=/tmp/pixi-glyphflow-npm-cache npm pack --dry-run",
     "check": "bun run format:check && bun run lint && bun run typecheck && bun test && bun run build && bun run package:lint && bun run package:types",
     "release:check": "bun run check && bun run audit && bun run package:smoke && bun run package:dry-run",
     "prepublishOnly": "bun run check"

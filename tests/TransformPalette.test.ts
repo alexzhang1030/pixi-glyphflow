@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 
-import { TRANSFORM_PALETTE_STRIDE, TransformPalette } from "../src";
+import { TRANSFORM_PALETTE_STRIDE, TransformPalette } from "../src/advanced";
 
 describe("TransformPalette", () => {
   test("stores one affine, anchor, visibility, and premultiplied color record per label", () => {

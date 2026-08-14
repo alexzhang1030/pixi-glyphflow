@@ -26,7 +26,7 @@ import { TextStore } from "./store/TextStore";
 import {
   TextDirty,
   type TextDirtyMask,
-  type TextStoreLabel,
+  type MutableTextStoreLabel,
   type TextStoreLabelPatch,
   type TextStoreSnapshot,
 } from "./store/types";
@@ -47,7 +47,6 @@ import type {
 const EMPTY_STYLE: Readonly<TextStyleOptions> = Object.freeze({});
 const ALL_DIRTY = TextDirty.Content | TextDirty.Transform | TextDirty.Style;
 export const TEXT_LAYER_COMMIT_EVENT = "glyphflow:commit";
-type MutableTextStoreLabel = { -readonly [Key in keyof TextStoreLabel]: TextStoreLabel[Key] };
 
 /**
  * Dense, revisioned text state and the PixiJS scene-object seam for glyph rendering.
@@ -79,8 +78,10 @@ export class TextLayer extends Container {
   readonly #cullingPadding: number;
   #viewportBounds: Readonly<BoundsData> | undefined;
   #viewDirty = false;
+  #visibilityDirty = true;
   #dirtyMasks: Uint8Array;
   #dirtySlots: Uint32Array;
+  #bulkSlots: Uint32Array;
   #dirtyLength = 0;
   #visibleSlots: Uint32Array;
   #visibleCount = 0;
@@ -120,6 +121,7 @@ export class TextLayer extends Container {
     this.#viewportBounds = culling.bounds;
     this.#dirtyMasks = new Uint8Array(this.#store.capacity);
     this.#dirtySlots = new Uint32Array(this.#store.capacity);
+    this.#bulkSlots = new Uint32Array(this.#store.capacity);
     this.#visibleSlots = new Uint32Array(this.#store.capacity);
     this.#renderedEpochs = new Uint32Array(this.#store.capacity);
     this.#renderedSlots = new Uint32Array(this.#store.capacity);
@@ -137,6 +139,7 @@ export class TextLayer extends Container {
     const label = normalizeLabel(spec, this.#labelScratch);
     const id = this.#store.create(label);
     this.#indexLabel(id, label);
+    this.#visibilityDirty = true;
     this.#recordMutation(ALL_DIRTY, 1);
 
     return id;
@@ -158,6 +161,7 @@ export class TextLayer extends Container {
       ids.push(id);
       this.#indexLabel(id, label);
     }
+    if (ids.length > 0) this.#visibilityDirty = true;
     this.#recordMutation(ALL_DIRTY, ids.length);
 
     return ids;
@@ -204,6 +208,7 @@ export class TextLayer extends Container {
       const snapshot = this.#store.get(id);
       if (snapshot === undefined) throw new Error("Updated label disappeared from its store");
       this.#indexLabel(id, snapshot);
+      if (patch.visible !== undefined) this.#visibilityDirty = true;
     }
     if ((dirty & (TextDirty.Content | TextDirty.Style)) !== 0) {
       this.#trustedRuns.delete(id);
@@ -221,26 +226,41 @@ export class TextLayer extends Container {
   /** Apply a validated mutation batch and return the number of changed entries. */
   updateMany(entries: readonly TextUpdate[]): number {
     this.#assertActive();
-    for (const entry of entries) {
-      if (!this.#store.has(entry.id)) {
+    if (this.#bulkSlots.length < entries.length) {
+      this.#bulkSlots = growTypedArray(this.#bulkSlots, nextPowerOfTwo(entries.length));
+    }
+    for (let index = 0; index < entries.length; index += 1) {
+      const entry = entries[index];
+      if (entry === undefined) throw new TypeError(`Missing update at index ${String(index)}`);
+      const slot = this.#store.slotOf(entry.id);
+      if (slot === undefined) {
         throw new RangeError(`Unknown or stale TextId: ${String(entry.id)}`);
       }
       assertLabelPatch(entry.patch);
+      this.#bulkSlots[index] = slot;
     }
 
     let changed = 0;
     let dirty = TextDirty.None as TextDirtyMask;
-    for (const entry of entries) {
-      const entryDirty = this.#store.update(entry.id, normalizePatch(entry.patch));
+    const hasTrustedRuns = this.#trustedRuns.size > 0;
+    for (let index = 0; index < entries.length; index += 1) {
+      const entry = entries[index];
+      const slot = this.#bulkSlots[index];
+      if (entry === undefined || slot === undefined) {
+        throw new Error(`Validated update is unavailable at index ${String(index)}`);
+      }
+      const entryDirty = this.#store.updateAt(slot, normalizePatch(entry.patch));
       if (entryDirty !== TextDirty.None) {
         changed += 1;
         dirty |= entryDirty;
-        if ((entryDirty & (TextDirty.Content | TextDirty.Style)) !== 0) {
+        if (hasTrustedRuns && (entryDirty & (TextDirty.Content | TextDirty.Style)) !== 0) {
           this.#trustedRuns.delete(entry.id);
         }
-        const snapshot = this.#store.get(entry.id);
-        if (snapshot === undefined) throw new Error("Updated label disappeared from its store");
-        this.#indexLabel(entry.id, snapshot);
+        if (!this.#store.copyBoundsLabelAt(slot, this.#labelScratch)) {
+          throw new Error("Updated label disappeared from its store");
+        }
+        this.#reindexCurrentSlot(slot, this.#labelScratch);
+        if (entry.patch.visible !== undefined) this.#visibilityDirty = true;
       }
     }
     this.#recordMutation(dirty, changed);
@@ -266,6 +286,34 @@ export class TextLayer extends Container {
     return changed;
   }
 
+  /** Apply broadcast or per-label text plus packed x/y columns in one transactional pass. */
+  updateTextPositions(
+    ids: readonly TextId[] | Float64Array,
+    texts: string | readonly string[],
+    positions: Float32Array | Float64Array,
+  ): number {
+    this.#assertActive();
+    const hasTrustedRuns = this.#trustedRuns.size > 0;
+    const result = this.#store.updateTextPositions(
+      ids,
+      texts,
+      positions,
+      (slot, index, contentChanged) => {
+        if (contentChanged && hasTrustedRuns) {
+          const id = ids[index];
+          if (id !== undefined) this.#trustedRuns.delete(id as TextId);
+        }
+        if (!this.#store.copyBoundsLabelAt(slot, this.#labelScratch)) {
+          throw new Error("Updated label disappeared from its store");
+        }
+        this.#reindexCurrentSlot(slot, this.#labelScratch);
+      },
+    );
+    this.#recordMutation(result.mask, result.changed);
+
+    return result.changed;
+  }
+
   /** Remove one label and report whether it existed. */
   remove(id: TextId): boolean {
     this.#assertActive();
@@ -275,6 +323,7 @@ export class TextLayer extends Container {
       if (slot === undefined) throw new Error("Removed label slot is unavailable");
       this.#spatial.remove(slot);
       this.#trustedRuns.delete(id);
+      this.#visibilityDirty = true;
     }
     this.#recordMutation(ALL_DIRTY, Number(removed));
 
@@ -295,6 +344,7 @@ export class TextLayer extends Container {
         removed += 1;
       }
     }
+    if (removed > 0) this.#visibilityDirty = true;
     this.#recordMutation(ALL_DIRTY, removed);
 
     return removed;
@@ -308,6 +358,7 @@ export class TextLayer extends Container {
       this.#store.clear();
       this.#spatial.clear();
       this.#trustedRuns.clear();
+      this.#visibilityDirty = true;
       this.#recordMutation(ALL_DIRTY, removed);
     }
 
@@ -456,7 +507,10 @@ export class TextLayer extends Container {
     this.#lastCommitTransformLabels = dirty.transform;
     this.#lastCommitStyleLabels = dirty.style;
     this.#viewDirty = false;
-    this.#visibleCount = this.#queryVisible();
+    if (this.#cullingEnabled || this.#visibilityDirty) {
+      this.#visibleCount = this.#queryVisible();
+      this.#visibilityDirty = false;
+    }
     const changes = coordinator === undefined ? [] : this.#buildRenderChanges();
     this.#clearDirtyMasks();
 
@@ -632,7 +686,28 @@ export class TextLayer extends Container {
   ): void {
     const slot = this.#store.slotOf(id);
     if (slot === undefined) throw new Error("Label slot is unavailable for spatial indexing");
+    this.#indexSlot(slot, label, runBounds);
+  }
+
+  #indexSlot(
+    slot: number,
+    label: Readonly<TextStoreSnapshot> | Parameters<TextStore["create"]>[0],
+    runBounds?: BoundsData,
+  ): void {
     this.#spatial.set(
+      slot,
+      transformedLabelBounds(label, runBounds, this.#boundsScratch),
+      label.zIndex,
+      label.visible,
+    );
+  }
+
+  #reindexCurrentSlot(
+    slot: number,
+    label: Readonly<TextStoreSnapshot> | Parameters<TextStore["create"]>[0],
+    runBounds?: BoundsData,
+  ): void {
+    this.#spatial.updateCurrent(
       slot,
       transformedLabelBounds(label, runBounds, this.#boundsScratch),
       label.zIndex,
@@ -801,6 +876,9 @@ function toRenderSnapshot(
 }
 
 function normalizePatch(patch: TextLabelPatch): TextStoreLabelPatch {
+  if (patch.scale === undefined && patch.anchor === undefined) {
+    return patch;
+  }
   const normalized: {
     -readonly [Key in keyof TextStoreLabelPatch]?: TextStoreLabelPatch[Key];
   } = {};
@@ -828,6 +906,12 @@ function normalizePatch(patch: TextLabelPatch): TextStoreLabelPatch {
   if (patch.style !== undefined) normalized.style = patch.style;
 
   return normalized;
+}
+
+function nextPowerOfTwo(value: number): number {
+  if (value <= 1) return 1;
+
+  return 2 ** Math.ceil(Math.log2(value));
 }
 
 function assertLabelSpec(spec: TextLabelSpec): void {

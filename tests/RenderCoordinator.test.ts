@@ -1,13 +1,12 @@
 import { describe, expect, test } from "bun:test";
 
+import { FontRegistry, type PositionedRun } from "../src";
 import {
-  FontRegistry,
   RenderCoordinator,
   type GlyphRaster,
-  type PositionedRun,
   type RasterGlyphRequest,
   type RenderChange,
-} from "../src";
+} from "../src/advanced";
 
 const CONTENT = 1;
 const TRANSFORM = 2;

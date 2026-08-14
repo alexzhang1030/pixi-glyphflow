@@ -6,7 +6,9 @@ import type {
   BrowserBenchmarkPageState,
   BrowserBenchmarkWorkload,
 } from "../schema";
+import { isBenchmarkWorkload } from "../workloads";
 import { runStaticHudFixture } from "./fixtures";
+import { runGlyphflowWorkload } from "./workloads";
 
 const BROWSER_BENCHMARK_SCHEMA_VERSION = 3;
 
@@ -43,7 +45,9 @@ async function run(): Promise<void> {
   const fixtureResult =
     configuration.workload === "static-hud"
       ? await runStaticHudFixture(app, configuration)
-      : unsupportedWorkload(configuration.workload);
+      : configuration.fixture === "glyphflow"
+        ? await runGlyphflowWorkload(app, configuration)
+        : unsupportedFixture(configuration.fixture, configuration.workload);
   const heapBytes = readHeapBytes();
   window.__glyphflowBenchmark = {
     done: true,
@@ -67,7 +71,9 @@ function readConfiguration(parameters: URLSearchParams): Readonly<BrowserBenchma
   const workload = (parameters.get("workload") ?? "static-hud") as BrowserBenchmarkWorkload;
   const fixture = (parameters.get("fixture") ?? "glyphflow") as BrowserBenchmarkFixture;
   if (!isFixture(fixture)) throw new TypeError(`Unknown benchmark fixture: ${fixture}`);
-  if (!isWorkload(workload)) throw new TypeError(`Unknown benchmark workload: ${workload}`);
+  if (!isBenchmarkWorkload(workload)) {
+    throw new TypeError(`Unknown benchmark workload: ${workload}`);
+  }
 
   return Object.freeze({
     fixture,
@@ -112,23 +118,11 @@ function isFixture(value: string): value is BrowserBenchmarkFixture {
   return ["bitmap-text", "glyphflow", "html-text", "text"].includes(value);
 }
 
-function isWorkload(value: string): value is BrowserBenchmarkWorkload {
-  return [
-    "atlas-pressure",
-    "dynamic-counters",
-    "million-full",
-    "million-viewport",
-    "multilingual-stream",
-    "position-storm",
-    "scale-scan",
-    "static-hud",
-    "viewport-drag",
-    "viewport-zoom",
-  ].includes(value);
-}
-
-function unsupportedWorkload(workload: BrowserBenchmarkWorkload): never {
-  throw new RangeError(`Browser workload is unavailable: ${workload}`);
+function unsupportedFixture(
+  fixture: BrowserBenchmarkFixture,
+  workload: BrowserBenchmarkWorkload,
+): never {
+  throw new RangeError(`${fixture} does not implement the ${workload} workload`);
 }
 
 function readHeapBytes(): number | undefined {

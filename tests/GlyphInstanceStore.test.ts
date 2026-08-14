@@ -1,6 +1,10 @@
 import { describe, expect, test } from "bun:test";
 
-import { GLYPH_INSTANCE_STRIDE, GlyphInstanceStore, type GlyphInstanceBatch } from "../src";
+import {
+  GLYPH_INSTANCE_STRIDE,
+  GlyphInstanceStore,
+  type GlyphInstanceBatch,
+} from "../src/advanced";
 
 describe("GlyphInstanceStore", () => {
   test("packs each glyph into 32 bytes and preserves a reserved buffer across updates", () => {

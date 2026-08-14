@@ -120,6 +120,29 @@ describe("TextLayer 1.0 CRUD", () => {
     layer.destroy();
   });
 
+  test("updates broadcast text and packed positions through one columnar batch", async () => {
+    const layer = new TextLayer({ culling: false });
+    const ids = layer.createMany([
+      { text: "old", x: 1 },
+      { text: "old", x: 2 },
+    ]);
+    await layer.commit();
+    const packedIds = new Float64Array(ids);
+
+    expect(layer.updateTextPositions(packedIds, "new", new Float32Array([10, 20, 30, 40]))).toBe(2);
+    expect(layer.get(ids[0] as TextId)).toMatchObject({ text: "new", x: 10, y: 20 });
+    expect(layer.get(ids[1] as TextId)).toMatchObject({ text: "new", x: 30, y: 40 });
+    expect(() =>
+      layer.updateTextPositions(packedIds, ["valid", "valid"], new Float32Array([1, 2])),
+    ).toThrow(TypeError);
+    expect(layer.get(ids[0] as TextId)).toMatchObject({ text: "new", x: 10, y: 20 });
+
+    await layer.commit();
+    expect(layer.stats.lastCommitContentLabels).toBe(2);
+    expect(layer.stats.lastCommitTransformLabels).toBe(2);
+    layer.destroy();
+  });
+
   test("removes labels idempotently and clears complete batches", async () => {
     const layer = new TextLayer();
     const ids = layer.createMany([{ text: "one" }, { text: "two" }, { text: "three" }]);

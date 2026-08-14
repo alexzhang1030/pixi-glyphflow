@@ -1,13 +1,13 @@
 import { describe, expect, test } from "bun:test";
 
+import { FontRegistry } from "../src";
 import {
-  FontRegistry,
   PrebuiltGlyphProvider,
   RasterGlyphProvider,
   type GlyphMode,
   type GlyphRaster,
   type RasterGlyphRequest,
-} from "../src";
+} from "../src/advanced";
 
 describe("glyph providers", () => {
   test("extracts stable MSDF, SDF, alpha, and color rasters from prebuilt pages", async () => {

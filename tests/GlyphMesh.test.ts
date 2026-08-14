@@ -2,7 +2,7 @@ import { describe, expect, test } from "bun:test";
 
 import { GpuProgram, Shader, Texture } from "pixi.js";
 
-import { GlyphMesh, GlyphInstanceStore } from "../src";
+import { GlyphInstanceStore, GlyphMesh } from "../src/advanced";
 import { GLYPH_FRAGMENT_GLSL, GLYPH_SHADER_WGSL, GLYPH_VERTEX_GLSL } from "../src/render/shaders";
 
 describe("GlyphMesh", () => {

@@ -87,6 +87,19 @@ export class SpatialIndex {
     }
   }
 
+  /** Replace a validated, occupied entry without repeating public-boundary checks. @internal */
+  updateCurrent(slot: number, bounds: BoundsData, zIndex: number, visible: boolean): void {
+    if (slot >= this.#highWater || this.#occupied[slot] !== 1) {
+      throw new RangeError("Spatial update requires a current occupied slot");
+    }
+    this.#minimumX[slot] = bounds.x;
+    this.#minimumY[slot] = bounds.y;
+    this.#maximumX[slot] = bounds.x + bounds.width;
+    this.#maximumY[slot] = bounds.y + bounds.height;
+    this.#zIndex[slot] = zIndex;
+    this.#visible[slot] = Number(visible);
+  }
+
   setVisible(slot: number, visible: boolean): boolean {
     this.#assertActive();
     assertSlot(slot);

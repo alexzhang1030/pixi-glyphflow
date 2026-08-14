@@ -3,6 +3,8 @@ import { defineConfig } from "tsdown";
 export default defineConfig({
   entry: [
     "src/index.ts",
+    "src/advanced/index.ts",
+    "src/shaping/index.ts",
     "src/accessibility/index.ts",
     "src/viewport/index.ts",
     "src/worker/text-worker.ts",

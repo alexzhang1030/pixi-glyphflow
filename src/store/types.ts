@@ -32,6 +32,10 @@ export interface TextStoreLabel {
   readonly style: Readonly<TextStyleOptions>;
 }
 
+export type MutableTextStoreLabel = {
+  -readonly [Key in keyof TextStoreLabel]: TextStoreLabel[Key];
+};
+
 export type TextStoreLabelPatch = Partial<TextStoreLabel>;
 
 export interface TextStoreSnapshot extends TextStoreLabel {

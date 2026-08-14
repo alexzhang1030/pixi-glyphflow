@@ -49,6 +49,8 @@ export interface BrowserBenchmarkTimings {
 export interface BrowserBenchmarkCounters {
   readonly residentLabels: number;
   readonly submittedLabels: number;
+  readonly minimumSubmittedLabels?: number;
+  readonly maximumSubmittedLabels?: number;
   readonly visibleGlyphs: number;
   readonly drawCalls: number;
   readonly allocatedStoreBytes?: number;
@@ -58,6 +60,14 @@ export interface BrowserBenchmarkCounters {
   readonly labelRevision?: number;
   readonly shapedLabels?: number;
   readonly transformOnlyLabels?: number;
+  readonly atlasBytes?: number;
+  readonly atlasEntries?: number;
+  readonly atlasEvictions?: number;
+  readonly cullingQueries?: number;
+  readonly coalescedEvents?: number;
+  readonly observedDrawCalls?: number;
+  readonly maximumInstanceCount?: number;
+  readonly nonTransparentPixels?: number;
 }
 
 export interface BrowserBenchmarkSample {
@@ -75,6 +85,33 @@ export interface BrowserBenchmarkPageState {
   readonly done: boolean;
   readonly result?: Readonly<BrowserBenchmarkSample>;
   readonly error?: string;
+}
+
+export interface BrowserBenchmarkFailure {
+  readonly fixture: BrowserBenchmarkFixture;
+  readonly status: "capacity-limit";
+  readonly detail: string;
+}
+
+export interface BrowserBenchmarkArtifact {
+  readonly schemaVersion: typeof BENCHMARK_SCHEMA_VERSION;
+  readonly benchmark: "browser-workloads";
+  readonly packageVersion: string;
+  readonly capturedAt: string;
+  readonly runtime: Readonly<BenchmarkRuntime>;
+  readonly workload: BrowserBenchmarkWorkload;
+  readonly status: "capacity-limit" | "complete";
+  readonly samples: readonly Readonly<BrowserBenchmarkSample>[];
+  readonly failures: readonly Readonly<BrowserBenchmarkFailure>[];
+  readonly summaries: Readonly<
+    Record<
+      string,
+      Readonly<{
+        setup: Readonly<BenchmarkDistribution>;
+        frame: Readonly<BenchmarkDistribution>;
+      }>
+    >
+  >;
 }
 
 export interface BenchmarkRuntime {

@@ -8,11 +8,13 @@ import {
   BENCHMARK_SCHEMA_VERSION,
   benchmarkRuntime,
   summarize,
+  type BrowserBenchmarkArtifact,
   type BrowserBenchmarkFixture,
   type BrowserBenchmarkPageState,
   type BrowserBenchmarkSample,
   type BrowserBenchmarkWorkload,
 } from "./schema";
+import { getBenchmarkWorkload, isBenchmarkWorkload } from "./workloads";
 
 const projectRoot = resolve(import.meta.dir, "..");
 const packageMetadata = (await Bun.file(resolve(projectRoot, "package.json")).json()) as {
@@ -21,7 +23,9 @@ const packageMetadata = (await Bun.file(resolve(projectRoot, "package.json")).js
 const options = readOptions();
 const fixtures: readonly BrowserBenchmarkFixture[] =
   options.fixture === undefined
-    ? ["text", "bitmap-text", "glyphflow", "html-text"]
+    ? options.workload === "static-hud"
+      ? ["text", "bitmap-text", "glyphflow", "html-text"]
+      : ["glyphflow"]
     : [options.fixture];
 const server = await createServer({
   root: projectRoot,
@@ -98,7 +102,7 @@ try {
   await server.close();
 }
 
-const artifact = {
+const artifact: BrowserBenchmarkArtifact = {
   schemaVersion: BENCHMARK_SCHEMA_VERSION,
   benchmark: "browser-workloads",
   packageVersion: packageMetadata.version,
@@ -176,16 +180,20 @@ function readOptions(): Readonly<RunOptions> {
   ) {
     throw new TypeError(`Unknown benchmark fixture: ${fixture}`);
   }
+  if (!isBenchmarkWorkload(workload)) {
+    throw new TypeError(`Unknown benchmark workload: ${workload}`);
+  }
+  const defaults = getBenchmarkWorkload(workload);
 
   return Object.freeze({
     workload,
     fixture,
     renderer,
-    labels: readPositiveInteger("--labels", workload === "static-hud" ? 1_000 : 1_000_000),
-    mutations: readPositiveInteger("--mutations", 100_000),
-    warmupFrames: readNonNegativeInteger("--warmup", 10),
-    sampleFrames: readPositiveInteger("--frames", 60),
-    timeoutMs: readPositiveInteger("--timeout", 120_000),
+    labels: readPositiveInteger("--labels", defaults.labelCount),
+    mutations: readPositiveInteger("--mutations", defaults.mutationCount),
+    warmupFrames: readNonNegativeInteger("--warmup", defaults.warmupFrames),
+    sampleFrames: readPositiveInteger("--frames", defaults.sampleFrames),
+    timeoutMs: readPositiveInteger("--timeout", defaults.timeoutMs),
   });
 }
 

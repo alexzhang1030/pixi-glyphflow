@@ -12,7 +12,7 @@
   - Verify: rtk rg -n -i with the sanitization pattern returns zero matches.
   - Files: .agents/docs/references
 
-- [ ] Task 0.3: Establish baseline correctness, package, CPU, and browser measurements.
+- [x] Task 0.3: Establish baseline correctness, package, CPU, and browser measurements.
   - Acceptance: Isolated-process baseline artifacts record the 0.0.1 behavior at 1,000,000 labels with 100,000 real mutations plus equal-content PixiJS browser fixtures.
   - Verify: bun run baseline
   - Files: benchmarks/baseline.ts, benchmarks/schema.ts, package.json, benchmarks/results
@@ -117,12 +117,12 @@
   - Verify: bun run benchmark -- --workload static-hud
   - Files: benchmarks/browser/index.ts, benchmarks/browser/fixtures.ts, benchmarks/schema.ts, playground/benchmark.html
 
-- [ ] Task 5.2: Implement every workload driver and report generation.
+- [x] Task 5.2: Implement every workload driver and report generation.
   - Acceptance: Raw JSON and a generated Markdown report exist for every workload, including full visibility, viewport culling, drag, zoom, and 100,000-position-update fixtures with 1,000,000 resident labels.
   - Verify: bun run benchmark
   - Files: benchmarks/workloads.ts, benchmarks/run.ts, benchmarks/report.ts, benchmarks/results
 
-- [ ] Task 5.3: Optimize measured bottlenecks and enforce budgets.
+- [x] Task 5.3: Optimize measured bottlenecks and enforce budgets.
   - Acceptance: Retained changes exceed run variance and every specification budget passes.
   - Verify: bun run benchmark:check
   - Files: benchmarks/budgets.ts, benchmarks/PERFORMANCE.md, package.json, .github/workflows/ci.yml

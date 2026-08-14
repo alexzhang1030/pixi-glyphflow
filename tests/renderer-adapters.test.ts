@@ -8,7 +8,7 @@ import {
   type WebGLUploadContext,
   type WebGPUBufferLike,
   type WebGPUQueueLike,
-} from "../src";
+} from "../src/advanced";
 
 describe("renderer upload adapters", () => {
   test("uses a full WebGL allocation once and partial sub-data for later dirty ranges", () => {

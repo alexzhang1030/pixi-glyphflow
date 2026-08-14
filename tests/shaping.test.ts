@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test";
 
-import { FontRegistry, HarfBuzzShaper, type HarfBuzzRuntimeLoader } from "../src";
+import { FontRegistry } from "../src";
+import { HarfBuzzShaper, type HarfBuzzRuntimeLoader } from "../src/shaping";
 
 describe("HarfBuzzShaper", () => {
   test("lazily shapes complex-script glyphs into compact positioned runs", async () => {

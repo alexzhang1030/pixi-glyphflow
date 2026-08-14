@@ -9,6 +9,7 @@ import {
 import {
   TextDirty,
   type TextDirtyMask,
+  type MutableTextStoreLabel,
   type TextStoreLabel,
   type TextStoreLabelPatch,
   type TextStoreCompaction,
@@ -27,6 +28,11 @@ let nextNamespace = 1;
 
 export interface TextStoreOptions {
   readonly initialCapacity?: number;
+}
+
+export interface TextStoreColumnUpdateResult {
+  readonly changed: number;
+  readonly mask: TextDirtyMask;
 }
 
 export class TextStore {
@@ -212,6 +218,12 @@ export class TextStore {
   update(id: TextId, patch: TextStoreLabelPatch): TextDirtyMask {
     assertPatch(patch);
     const slot = this.#requireSlot(id);
+
+    return this.updateAt(slot, patch);
+  }
+
+  /** Apply an already-validated patch to a current dense slot. @internal */
+  updateAt(slot: number, patch: TextStoreLabelPatch): TextDirtyMask {
     let dirty = TextDirty.None as TextDirtyMask;
 
     if (patch.text !== undefined && patch.text !== this.#texts[slot]) {
@@ -284,6 +296,29 @@ export class TextStore {
     return dirty;
   }
 
+  /** Copy spatial-bound inputs into caller-owned scratch storage. @internal */
+  copyBoundsLabelAt(slot: number, output: MutableTextStoreLabel): boolean {
+    if (slot >= this.#highWater || this.#occupied[slot] !== 1) return false;
+    const text = this.#texts[slot];
+    const style = this.#styles[slot];
+    if (text === undefined || style === undefined) {
+      throw new Error("TextStore invariant violation: occupied slot is incomplete");
+    }
+    output.text = text;
+    output.x = this.#x[slot] ?? 0;
+    output.y = this.#y[slot] ?? 0;
+    output.scaleX = this.#scaleX[slot] ?? 0;
+    output.scaleY = this.#scaleY[slot] ?? 0;
+    output.rotation = this.#rotation[slot] ?? 0;
+    output.zIndex = this.#zIndex[slot] ?? 0;
+    output.visible = this.#visible[slot] === 1;
+    output.anchorX = this.#anchorX[slot] ?? 0;
+    output.anchorY = this.#anchorY[slot] ?? 0;
+    output.style = style;
+
+    return true;
+  }
+
   updatePositions(
     ids: readonly TextId[] | Float64Array,
     positions: Float32Array | Float64Array,
@@ -333,6 +368,75 @@ export class TextStore {
     }
 
     return changed;
+  }
+
+  /** Apply one text value plus packed x/y columns through a single validation pass. @internal */
+  updateTextPositions(
+    ids: readonly TextId[] | Float64Array,
+    texts: string | readonly string[],
+    positions: Float32Array | Float64Array,
+    visitor?: (slot: number, index: number, contentChanged: boolean) => void,
+  ): Readonly<TextStoreColumnUpdateResult> {
+    if (positions.length !== ids.length * 2) {
+      throw new TypeError("positions must contain one packed x/y pair for every TextId");
+    }
+    if (typeof texts !== "string" && texts.length !== ids.length) {
+      throw new TypeError("texts must contain one string for every TextId");
+    }
+    if (this.#positionSlots.length < ids.length) {
+      this.#positionSlots = new Uint32Array(nextPowerOfTwo(ids.length));
+    }
+    const slots = this.#positionSlots;
+    for (let index = 0; index < ids.length; index += 1) {
+      const id = ids[index];
+      if (id === undefined) throw new TypeError(`Missing TextId at index ${String(index)}`);
+      const slot = this.#requireSlot(id as TextId);
+      const text = typeof texts === "string" ? texts : texts[index];
+      const x = positions[index * 2];
+      const y = positions[index * 2 + 1];
+      if (typeof text !== "string") {
+        throw new TypeError(`Text at index ${String(index)} must be a string`);
+      }
+      if (x === undefined || y === undefined || !Number.isFinite(x) || !Number.isFinite(y)) {
+        throw new TypeError(`Position at index ${String(index)} must contain finite x/y values`);
+      }
+      if (text !== this.#texts[slot] && this.#sourceRevisions[slot] === 0xffff_ffff) {
+        throw new RangeError("Text label source revision exhausted");
+      }
+      slots[index] = slot;
+    }
+
+    let changed = 0;
+    let mask = TextDirty.None as TextDirtyMask;
+    for (let index = 0; index < ids.length; index += 1) {
+      const slot = slots[index];
+      if (slot === undefined) {
+        throw new Error(`TextStore column slot missing at index ${String(index)}`);
+      }
+      const text = typeof texts === "string" ? texts : (texts[index] ?? "");
+      const x = Math.fround(positions[index * 2] ?? 0);
+      const y = Math.fround(positions[index * 2 + 1] ?? 0);
+      const contentChanged = text !== this.#texts[slot];
+      const transformChanged = x !== this.#x[slot] || y !== this.#y[slot];
+      if (!contentChanged && !transformChanged) continue;
+      let dirty = TextDirty.None as TextDirtyMask;
+      if (contentChanged) {
+        this.#texts[slot] = text;
+        this.#sourceRevisions[slot] = (this.#sourceRevisions[slot] ?? 0) + 1;
+        dirty |= TextDirty.Content;
+      }
+      if (transformChanged) {
+        this.#x[slot] = x;
+        this.#y[slot] = y;
+        dirty |= TextDirty.Transform;
+      }
+      this.#journal.record(slot, dirty);
+      visitor?.(slot, index, contentChanged);
+      changed += 1;
+      mask |= dirty;
+    }
+
+    return Object.freeze({ changed, mask });
   }
 
   remove(id: TextId): boolean {

@@ -15,4 +15,5 @@ jobs:
       - uses: oven-sh/setup-bun@v2
       - run: bun ci
       - run: bun run check
+      - run: bun run benchmark:check
       - run: bun run audit

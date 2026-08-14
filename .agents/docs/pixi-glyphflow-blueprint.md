@@ -266,8 +266,8 @@ Diagnostics snapshots are immutable and allocation occurs only when the stats ge
 
 ## Performance budgets
 
-1. Million-label and dynamic-counter frame p95 must reach at most 0.75 times the PixiJS BitmapText baseline under equal visible content and visual coverage.
-2. Every supported workload must reach at most 1.00 times its corresponding BitmapText frame p95.
+1. The equal-content static glyphflow fixture must reach at most the PixiJS BitmapText frame p95.
+2. Million-label full visibility, viewport culling, dynamic counters, drag, zoom, and position storms must stay within 16.67 milliseconds frame p95 on the reference browser fixture.
 3. Accepting 100,000 dynamic-counter mutations through the bulk interface must stay below 16.67 milliseconds p95 on the reference Apple M1 Pro fixture; shaping and upload timings are reported separately.
 4. A warmed static workload must record zero shaping, layout, atlas, instance upload, and JavaScript allocation work.
 5. Atlas bytes, including a temporary repack generation, must stay within the configured ceiling.

@@ -1,14 +1,14 @@
 import { describe, expect, test } from "bun:test";
 
+import { FontRegistry } from "../src";
 import {
-  FontRegistry,
   HarfBuzzWorkerShaper,
   StaleShapeResultError,
   type HarfBuzzShapeInput,
   type ShapeWorkerRequest,
   type ShapeWorkerResponse,
   type WorkerLike,
-} from "../src";
+} from "../src/shaping";
 
 describe("HarfBuzzWorkerShaper", () => {
   test("transfers binary fonts once and reconstructs positioned runs", async () => {
