@@ -32,7 +32,8 @@
     ".": {
       "types": "./dist/index.d.ts",
       "import": "./dist/index.js"
-    }
+    },
+    "./text-worker.js": "./dist/worker/text-worker.js"
   },
   "publishConfig": {
     "access": "public"
@@ -54,6 +55,7 @@
     "package:types": "attw --pack . --profile esm-only",
     "package:smoke": "bun scripts/package-smoke.ts",
     "smoke:harfbuzz": "bun scripts/harfbuzz-smoke.ts",
+    "smoke:worker": "bun run build && bun scripts/worker-smoke.ts",
     "package:dry-run": "npm pack --dry-run",
     "check": "bun run format:check && bun run lint && bun run typecheck && bun test && bun run build && bun run package:lint && bun run package:types",
     "release:check": "bun run check && bun run audit && bun run package:smoke && bun run package:dry-run",

@@ -1,6 +1,7 @@
 export { FontRegistry } from "./FontRegistry";
 export { BitmapLayoutAdapter } from "./pixi/compat/bitmapLayout";
 export { HarfBuzzShaper } from "./shaping/HarfBuzzShaper";
+export { HarfBuzzWorkerShaper, StaleShapeResultError } from "./shaping/HarfBuzzWorkerShaper";
 export { TextLayer } from "./TextLayer";
 export type {
   TextId,
@@ -41,3 +42,13 @@ export type {
   HarfBuzzShaperOptions,
   HarfBuzzShaperStats,
 } from "./shaping/types";
+export type {
+  HarfBuzzWorkerShaperOptions,
+  HarfBuzzWorkerShaperStats,
+  WorkerLike,
+} from "./shaping/HarfBuzzWorkerShaper";
+export type {
+  SerializedPositionedRun,
+  ShapeWorkerRequest,
+  ShapeWorkerResponse,
+} from "./worker/protocol";

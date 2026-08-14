@@ -1,7 +1,7 @@
 import { defineConfig } from "tsdown";
 
 export default defineConfig({
-  entry: ["src/index.ts"],
+  entry: ["src/index.ts", "src/worker/text-worker.ts"],
   format: ["esm"],
   platform: "browser",
   dts: true,
@@ -9,6 +9,6 @@ export default defineConfig({
   sourcemap: true,
   target: "es2022",
   deps: {
-    neverBundle: ["pixi.js"],
+    neverBundle: ["pixi.js", "harfbuzzjs", "@zappar/msdf-generator"],
   },
 });
