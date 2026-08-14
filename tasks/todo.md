@@ -73,7 +73,7 @@
   - Verify: bun test tests/GlyphInstanceStore.test.ts
   - Files: src/render/GlyphInstanceStore.ts, src/render/DirtyRanges.ts, src/render/types.ts, tests/GlyphInstanceStore.test.ts
 
-- [ ] Task 3.4: Implement paired GLSL and WGSL instanced Mesh rendering.
+- [x] Task 3.4: Implement paired GLSL and WGSL instanced Mesh rendering.
   - Acceptance: One atlas segment renders in WebGL and WebGPU with equivalent pixels.
   - Verify: bun run test:browser -- glyph-rendering
   - Files: src/render/GlyphMesh.ts, src/render/shaders.ts, src/pixi/compat/createGeometry.ts, tests/browser/glyph-rendering.test.ts

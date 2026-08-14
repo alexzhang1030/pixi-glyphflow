@@ -120,7 +120,7 @@ fn mainVertex(
     @location(3) aPaletteIndex: u32,
     @location(4) aMetadata: u32,
 ) -> VertexOutput {
-    let active = (aMetadata & 0x80000000u) != 0u;
+    let isActive = (aMetadata & 0x80000000u) != 0u;
     let paletteWidth = u32(glyphUniforms.uPaletteWidth);
     let paletteBase = aPaletteIndex * 3u;
     let transform0Index = vec2<i32>(i32(paletteBase % paletteWidth), i32(paletteBase / paletteWidth));
@@ -145,7 +145,7 @@ fn mainVertex(
         * localUniforms.uTransformMatrix
         * vec3<f32>(localPosition, 1.0);
     var clip = vec4<f32>(projected.xy, 0.0, 1.0);
-    if (!active) {
+    if (!isActive) {
         clip = vec4<f32>(2.0, 2.0, 0.0, 1.0);
     }
     return VertexOutput(
@@ -163,15 +163,10 @@ fn median3(value: vec3<f32>) -> f32 {
 @fragment
 fn mainFragment(input: VertexOutput) -> @location(0) vec4<f32> {
     let sampleColor = textureSample(uTexture, uSampler, input.uv);
-    if (input.mode == 3u) {
-        return sampleColor * input.color;
-    }
-    var distanceValue = sampleColor.r;
-    if (input.mode == 0u) {
-        distanceValue = median3(sampleColor.rgb);
-    }
+    let distanceValue = select(sampleColor.r, median3(sampleColor.rgb), input.mode == 0u);
     let smoothing = max(fwidth(distanceValue), 1.0 / 255.0);
     let coverage = smoothstep(0.5 - smoothing, 0.5 + smoothing, distanceValue);
-    return vec4<f32>(input.color.rgb * coverage, input.color.a * coverage);
+    let distanceColor = vec4<f32>(input.color.rgb * coverage, input.color.a * coverage);
+    return select(distanceColor, sampleColor * input.color, input.mode == 3u);
 }
 `;

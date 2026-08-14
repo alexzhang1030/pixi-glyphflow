@@ -6,6 +6,7 @@ import {
   GpuProgram,
   Mesh,
   Shader,
+  ShaderStage,
   type Texture,
 } from "pixi.js";
 
@@ -33,7 +34,7 @@ export class GlyphMesh extends Mesh<Geometry, Shader> {
     }
     const vertexBuffer = new Buffer({
       data: new Float32Array([0, 0, 1, 0, 1, 1, 0, 1]),
-      usage: BufferUsage.VERTEX | BufferUsage.STATIC,
+      usage: BufferUsage.VERTEX,
       label: "pixi-glyphflow-quad",
     });
     const instanceBuffer = new Buffer({
@@ -91,6 +92,48 @@ export class GlyphMesh extends Mesh<Geometry, Shader> {
           name: "pixi-glyphflow",
           vertex: { source: GLYPH_SHADER_WGSL, entryPoint: "mainVertex" },
           fragment: { source: GLYPH_SHADER_WGSL, entryPoint: "mainFragment" },
+          gpuLayout: [
+            [
+              {
+                binding: 0,
+                visibility: ShaderStage.VERTEX,
+                buffer: { type: "uniform" },
+              },
+            ],
+            [
+              {
+                binding: 0,
+                visibility: ShaderStage.VERTEX,
+                buffer: { type: "uniform" },
+              },
+            ],
+            [
+              {
+                binding: 0,
+                visibility: ShaderStage.FRAGMENT,
+                texture: { sampleType: "float", viewDimension: "2d", multisampled: false },
+              },
+              {
+                binding: 1,
+                visibility: ShaderStage.FRAGMENT,
+                sampler: { type: "filtering" },
+              },
+              {
+                binding: 2,
+                visibility: ShaderStage.VERTEX,
+                texture: {
+                  sampleType: "unfilterable-float",
+                  viewDimension: "2d",
+                  multisampled: false,
+                },
+              },
+              {
+                binding: 3,
+                visibility: ShaderStage.VERTEX,
+                buffer: { type: "uniform" },
+              },
+            ],
+          ],
         }),
         resources: {
           uTexture: options.texture.source,

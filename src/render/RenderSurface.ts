@@ -450,30 +450,36 @@ function uploadFloatTextureRanges(
   if (isWebGLRenderer(renderer)) {
     const gl = renderer.gl;
     const resource = renderer.texture.getGlSource(source);
+    const previousPremultiply = gl.getParameter(gl.UNPACK_PREMULTIPLY_ALPHA_WEBGL) as boolean;
     gl.bindTexture(resource.target, resource.texture);
-    for (const range of ranges) {
-      let texel = range.offset / PALETTE_BYTES_PER_TEXEL;
-      let remaining = range.length / PALETTE_BYTES_PER_TEXEL;
-      while (remaining > 0) {
-        const x = texel % textureWidth;
-        const y = Math.floor(texel / textureWidth);
-        const width = Math.min(remaining, textureWidth - x);
-        gl.texSubImage2D(
-          resource.target,
-          0,
-          x,
-          y,
-          width,
-          1,
-          resource.format,
-          resource.type,
-          data.subarray(texel * 4, (texel + width) * 4),
-        );
-        texel += width;
-        remaining -= width;
-        bytes += width * PALETTE_BYTES_PER_TEXEL;
-        writes += 1;
+    gl.pixelStorei(gl.UNPACK_PREMULTIPLY_ALPHA_WEBGL, false);
+    try {
+      for (const range of ranges) {
+        let texel = range.offset / PALETTE_BYTES_PER_TEXEL;
+        let remaining = range.length / PALETTE_BYTES_PER_TEXEL;
+        while (remaining > 0) {
+          const x = texel % textureWidth;
+          const y = Math.floor(texel / textureWidth);
+          const width = Math.min(remaining, textureWidth - x);
+          gl.texSubImage2D(
+            resource.target,
+            0,
+            x,
+            y,
+            width,
+            1,
+            resource.format,
+            resource.type,
+            data.subarray(texel * 4, (texel + width) * 4),
+          );
+          texel += width;
+          remaining -= width;
+          bytes += width * PALETTE_BYTES_PER_TEXEL;
+          writes += 1;
+        }
       }
+    } finally {
+      gl.pixelStorei(gl.UNPACK_PREMULTIPLY_ALPHA_WEBGL, previousPremultiply);
     }
   } else if (isWebGPURenderer(renderer)) {
     const texture = renderer.texture.getGpuSource(source);

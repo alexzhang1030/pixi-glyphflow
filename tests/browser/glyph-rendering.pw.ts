@@ -1,4 +1,5 @@
 import { expect, test } from "@playwright/test";
+import type { Page } from "@playwright/test";
 
 test("renders glyph meshes, uploads transform-only moves, and survives reattachment", async ({
   page,
@@ -6,18 +7,43 @@ test("renders glyph meshes, uploads transform-only moves, and survives reattachm
   const messages: string[] = [];
   page.on("console", (message) => messages.push(`${message.type()}: ${message.text()}`));
   page.on("pageerror", (error) => messages.push(`pageerror: ${error.message}`));
-  await page.goto("/tests/browser/glyph-rendering.html");
-  await page.waitForFunction(() => window.__glyphflow?.done === true);
-  const state = await page.evaluate(() => window.__glyphflow);
+  const webgl = await loadFixture(page, "webgl");
+  const webgpu = await loadFixture(page, "webgpu");
   await testInfo.attach("browser-console", {
     body: messages.join("\n"),
     contentType: "text/plain",
   });
   await testInfo.attach("fixture-state", {
-    body: JSON.stringify(state, undefined, 2),
+    body: JSON.stringify({ webgl, webgpu }, undefined, 2),
     contentType: "application/json",
   });
 
+  const webglResult = assertFixture(webgl, "webgl");
+  const webgpuResult = assertFixture(webgpu, "webgpu");
+  expect(relativeDifference(webglResult.initialPixels, webgpuResult.initialPixels)).toBeLessThan(
+    0.05,
+  );
+  expect(relativeDifference(webglResult.movedPixels, webgpuResult.movedPixels)).toBeLessThan(0.05);
+  expect(
+    relativeDifference(webglResult.reattachedPixels, webgpuResult.reattachedPixels),
+  ).toBeLessThan(0.05);
+  expect(Math.abs(webglResult.initialCentroidX - webgpuResult.initialCentroidX)).toBeLessThan(1);
+  expect(Math.abs(webglResult.movedCentroidX - webgpuResult.movedCentroidX)).toBeLessThan(1);
+});
+
+type FixtureState = typeof window.__glyphflow;
+type RendererAdapter = "webgl" | "webgpu";
+
+async function loadFixture(page: Page, renderer: RendererAdapter): Promise<FixtureState> {
+  await page.goto(`/tests/browser/glyph-rendering.html?renderer=${renderer}`);
+  await page.waitForFunction(() => window.__glyphflow?.done === true);
+  return page.evaluate(() => window.__glyphflow);
+}
+
+function assertFixture(
+  state: FixtureState,
+  renderer: RendererAdapter,
+): NonNullable<FixtureState["result"]> {
   expect(state.error).toBeUndefined();
   expect(state.result).toBeDefined();
   const result = state.result!;
@@ -25,7 +51,7 @@ test("renders glyph meshes, uploads transform-only moves, and survives reattachm
   expect(result.movedPixels).toBeGreaterThan(500);
   expect(result.reattachedPixels).toBeGreaterThan(500);
   expect(result.initialStats).toMatchObject({
-    rendererAdapter: "webgl",
+    rendererAdapter: renderer,
     drawCalls: 1,
     submittedGlyphs: 17,
     atlasTextureCount: 1,
@@ -36,8 +62,15 @@ test("renders glyph meshes, uploads transform-only moves, and survives reattachm
   );
   expect(result.reattachedStats).toMatchObject({
     revision: 2,
-    rendererAdapter: "webgl",
+    rendererAdapter: renderer,
     drawCalls: 1,
     submittedGlyphs: 17,
   });
-});
+  expect(result.movedCentroidX - result.initialCentroidX).toBeGreaterThan(25);
+  expect(Math.abs(result.reattachedCentroidX - result.movedCentroidX)).toBeLessThan(1);
+  return result;
+}
+
+function relativeDifference(first: number, second: number): number {
+  return Math.abs(first - second) / Math.max(first, second, 1);
+}
