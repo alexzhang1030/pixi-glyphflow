@@ -1,2 +1,2 @@
-/** Public entry point for the pixi-glyphflow package. */
-export {};
+export { TextLayer } from "./TextLayer";
+export type { TextId, TextLabelPatch, TextLabelSpec, TextLayerStats, TextRevision } from "./types";
