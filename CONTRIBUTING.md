@@ -39,5 +39,6 @@ bun run check
 
 ## Release
 
-Version tags use `v<package-version>`. The release workflow verifies tag alignment and publishes via
-npm Trusted Publishing from the protected `npm` environment.
+Version tags use `v<package-version>`. Publishing the matching GitHub Release activates the workflow,
+verifies tag alignment, and publishes via npm Trusted Publishing from the protected `npm`
+environment.

@@ -69,7 +69,8 @@ PixiJS 8.19 brings `@webgpu/types@0.1.71` while TypeScript 7 also supplies WebGP
 
 ## Release path
 
-The first release uses an authenticated maintainer session to establish the package. Tagged releases
-use `.github/workflows/release.yml` with npm Trusted Publishing, GitHub OIDC, and automatic
-provenance. The trusted-publisher entry uses repository `alexzhang1030/pixi-glyphflow`, workflow
-`release.yml`, environment `npm`, and the `npm publish` action.
+The first release uses an authenticated maintainer session to establish the package. Publishing a
+GitHub Release activates `.github/workflows/release.yml` with npm Trusted Publishing, GitHub OIDC,
+and automatic provenance. The trusted-publisher entry uses repository
+`alexzhang1030/pixi-glyphflow`, workflow `release.yml`, environment `npm`, and the `npm publish`
+action.

@@ -1,9 +1,9 @@
 name: Publish package
 
 on:
-  push:
-    tags:
-      - "v*"
+  release:
+    types:
+      - published
 
 permissions:
   contents: read
@@ -25,8 +25,10 @@ jobs:
       - run: bun ci
       - run: bun run audit
       - name: Verify tag and package version
+        env:
+          RELEASE_TAG: ${{ github.event.release.tag_name }}
         run: >-
           node --input-type=module --eval
           "import pkg from './package.json' with { type: 'json' };
-          if ('v' + pkg.version !== process.env.GITHUB_REF_NAME) process.exit(1)"
+          if ('v' + pkg.version !== process.env.RELEASE_TAG) process.exit(1)"
       - run: npm publish
