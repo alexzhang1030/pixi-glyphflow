@@ -95,17 +95,17 @@
   - Verify: bun test tests/culling.test.ts
   - Files: src/culling/SpatialIndex.ts, src/TextLayer.ts, src/types.ts, tests/culling.test.ts
 
-- [ ] Task 4.2: Implement appearance effects and transform coverage.
+- [x] Task 4.2: Implement appearance effects and transform coverage.
   - Acceptance: Fill, stroke, shadow, blend, anchor, scale, rotation, alpha, visibility, and z order match visual goldens.
   - Verify: bun run test:browser -- appearance
   - Files: src/render/shaders.ts, src/render/GlyphMesh.ts, src/types.ts, tests/browser/appearance.test.ts
 
-- [ ] Task 4.3: Implement the optional accessibility adapter.
+- [x] Task 4.3: Implement the optional accessibility adapter.
   - Acceptance: Selected labels mirror text, role, bounds, visibility, and focus order incrementally.
   - Verify: bun run test:browser -- accessibility
   - Files: src/accessibility/AccessibilityAdapter.ts, src/TextLayer.ts, src/types.ts, tests/browser/accessibility.test.ts
 
-- [ ] Task 4.4: Implement the optional pixi-viewport 6 binding.
+- [x] Task 4.4: Implement the optional pixi-viewport 6 binding.
   - Acceptance: Drag, deceleration, wheel zoom, pinch zoom, and camera rotation coalesce culling work, preserve label revisions, and release every event listener.
   - Verify: bun run test:browser -- viewport-integration
   - Files: src/viewport/ViewportBinding.ts, src/viewport/types.ts, tests/browser/viewport-integration.test.ts

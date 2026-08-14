@@ -37,6 +37,10 @@
       "types": "./dist/viewport/index.d.ts",
       "import": "./dist/viewport/index.js"
     },
+    "./accessibility": {
+      "types": "./dist/accessibility/index.d.ts",
+      "import": "./dist/accessibility/index.js"
+    },
     "./text-worker.js": "./dist/worker/text-worker.js"
   },
   "publishConfig": {

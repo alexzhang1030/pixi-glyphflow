@@ -1,7 +1,7 @@
 import {
   Container,
+  Matrix,
   type DestroyOptions,
-  type Matrix,
   type Renderer,
   type TextStyleOptions,
 } from "pixi.js";
@@ -46,6 +46,7 @@ import type {
 
 const EMPTY_STYLE: Readonly<TextStyleOptions> = Object.freeze({});
 const ALL_DIRTY = TextDirty.Content | TextDirty.Transform | TextDirty.Style;
+export const TEXT_LAYER_COMMIT_EVENT = "glyphflow:commit";
 type MutableTextStoreLabel = { -readonly [Key in keyof TextStoreLabel]: TextStoreLabel[Key] };
 
 /**
@@ -89,6 +90,7 @@ export class TextLayer extends Container {
   #renderEpoch = 0;
   #renderSequence = 0;
   readonly #boundsScratch: MutableBoundsData = { x: 0, y: 0, width: 0, height: 0 };
+  readonly #matrixScratch = new Matrix();
   readonly #labelScratch: MutableTextStoreLabel = {
     text: "",
     x: 0,
@@ -391,7 +393,7 @@ export class TextLayer extends Container {
     const bounds = this.#spatial.get(slot, target);
     if (bounds === undefined || space === "local") return bounds;
 
-    return transformBounds(bounds, this.worldTransform, target);
+    return transformBounds(bounds, this.getGlobalTransform(this.#matrixScratch), target);
   }
 
   /** Return the topmost visible label at a local or world point. */
@@ -402,7 +404,9 @@ export class TextLayer extends Container {
       throw new TypeError('Hit-test space must be "local" or "world"');
     }
     const localPoint =
-      space === "world" ? inverseTransformPoint(point, this.worldTransform) : point;
+      space === "world"
+        ? inverseTransformPoint(point, this.getGlobalTransform(this.#matrixScratch))
+        : point;
     const slot = this.#spatial.hitTest(localPoint);
     if (slot === undefined) return undefined;
 
@@ -458,7 +462,10 @@ export class TextLayer extends Container {
 
     if (coordinator === undefined || changes.length === 0) {
       this.#lastCommitDurationMs = performance.now() - start;
-      this.#lastCommitPromise = this.#renderTail.then(() => revision);
+      this.#lastCommitPromise = this.#renderTail.then(() => {
+        this.emit(TEXT_LAYER_COMMIT_EVENT, revision);
+        return revision;
+      });
       return this.#lastCommitPromise;
     }
 
@@ -490,6 +497,7 @@ export class TextLayer extends Container {
     this.#lastCommitPromise = renderWork.then(
       () => {
         this.#lastCommitDurationMs = performance.now() - start;
+        this.emit(TEXT_LAYER_COMMIT_EVENT, revision);
         return revision;
       },
       (error: unknown) => {

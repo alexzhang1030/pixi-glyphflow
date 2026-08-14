@@ -1,7 +1,12 @@
 import { defineConfig } from "tsdown";
 
 export default defineConfig({
-  entry: ["src/index.ts", "src/viewport/index.ts", "src/worker/text-worker.ts"],
+  entry: [
+    "src/index.ts",
+    "src/accessibility/index.ts",
+    "src/viewport/index.ts",
+    "src/worker/text-worker.ts",
+  ],
   format: ["esm"],
   platform: "browser",
   dts: true,
