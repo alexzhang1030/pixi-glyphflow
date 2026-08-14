@@ -1,0 +1,68 @@
+{
+  "name": "pixi-glyphflow",
+  "version": "0.0.1",
+  "description": "A high-throughput batched text layer for PixiJS v8.",
+  "keywords": [
+    "pixijs",
+    "rendering",
+    "text",
+    "webgl",
+    "webgpu"
+  ],
+  "homepage": "https://github.com/alexzhang1030/pixi-glyphflow#readme",
+  "bugs": {
+    "url": "https://github.com/alexzhang1030/pixi-glyphflow/issues"
+  },
+  "license": "UNLICENSED",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/alexzhang1030/pixi-glyphflow.git"
+  },
+  "files": [
+    "dist",
+    "README.md",
+    "CHANGELOG.md"
+  ],
+  "type": "module",
+  "sideEffects": false,
+  "module": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "publishConfig": {
+    "access": "public"
+  },
+  "scripts": {
+    "build": "tsdown",
+    "dev": "tsdown --watch",
+    "format": "oxfmt",
+    "format:check": "oxfmt --check",
+    "lint": "oxlint --deny-warnings",
+    "typecheck": "tsc --noEmit",
+    "test": "bun test",
+    "test:coverage": "bun test --coverage",
+    "package:lint": "publint",
+    "package:types": "attw --pack . --profile esm-only",
+    "package:dry-run": "npm pack --dry-run",
+    "check": "bun run format:check && bun run lint && bun run typecheck && bun test && bun run build && bun run package:lint && bun run package:types",
+    "prepublishOnly": "bun run check"
+  },
+  "devDependencies": {
+    "@arethetypeswrong/cli": "0.18.5",
+    "@types/bun": "1.3.14",
+    "oxfmt": "0.63.0",
+    "oxlint": "1.78.0",
+    "pixi.js": "8.19.0",
+    "publint": "0.3.23",
+    "tsdown": "0.22.14",
+    "typescript": "7.0.2"
+  },
+  "peerDependencies": {
+    "pixi.js": "^8.19.0"
+  },
+  "packageManager": "bun@1.3.14"
+}
