@@ -73,6 +73,17 @@ describe("TextStore", () => {
     expect(store.get(second)?.text).toBe("second");
   });
 
+  test("rejects identities owned by another store", () => {
+    const firstStore = new TextStore();
+    const secondStore = new TextStore();
+    const first = firstStore.create(label());
+    const second = secondStore.create(label());
+
+    expect(first).not.toBe(second);
+    expect(secondStore.has(first)).toBe(false);
+    expect(() => secondStore.update(first, { x: 10 })).toThrow(RangeError);
+  });
+
   test("grows geometrically and clears active generations", () => {
     const store = new TextStore({ initialCapacity: 1 });
     const first = store.create(label({ text: "one" }));

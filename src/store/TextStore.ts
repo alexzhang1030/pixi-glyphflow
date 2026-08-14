@@ -8,16 +8,20 @@ import {
   type TextStoreStats,
 } from "./types";
 
-const ID_RADIX = 0x1_0000_0000;
-const MAX_GENERATION = 0x1f_ffff;
+const SLOT_RADIX = 0x100_0000;
+const NAMESPACE_RADIX = 0x2_0000_0000;
+const MAX_GENERATION = 0x1ff;
+const MAX_NAMESPACE = 0xf_ffff;
 const MAX_CAPACITY = 0x100_0000;
 const DEFAULT_CAPACITY = 16;
+let nextNamespace = 1;
 
 export interface TextStoreOptions {
   readonly initialCapacity?: number;
 }
 
 export class TextStore {
+  readonly #idBase: number;
   #capacity: number;
   #size = 0;
   #highWater = 0;
@@ -40,6 +44,12 @@ export class TextStore {
   constructor(options: TextStoreOptions = {}) {
     const requestedCapacity = options.initialCapacity ?? DEFAULT_CAPACITY;
     assertPositiveCapacity(requestedCapacity);
+    if (nextNamespace > MAX_NAMESPACE) {
+      throw new RangeError("TextStore namespace capacity exhausted in this JavaScript realm");
+    }
+    this.#idBase = nextNamespace * NAMESPACE_RADIX;
+    nextNamespace += 1;
+
     this.#capacity = nextPowerOfTwo(requestedCapacity);
     this.#generations = new Uint32Array(this.#capacity);
     this.#occupied = new Uint8Array(this.#capacity);
@@ -102,7 +112,7 @@ export class TextStore {
     this.#write(slot, label);
     this.#size += 1;
 
-    return encodeId(slot, generation);
+    return (this.#idBase + generation * SLOT_RADIX + slot) as TextId;
   }
 
   get(id: TextId): Readonly<TextStoreSnapshot> | undefined {
@@ -347,43 +357,28 @@ export class TextStore {
   }
 
   #resolveSlot(id: TextId): number | undefined {
-    const decoded = decodeId(id);
+    const value = Number(id);
+    const localId = value - this.#idBase;
+    if (!Number.isSafeInteger(value) || localId < SLOT_RADIX || localId >= NAMESPACE_RADIX) {
+      return undefined;
+    }
+
+    const generation = Math.floor(localId / SLOT_RADIX);
+    const slot = localId - generation * SLOT_RADIX;
     if (
-      decoded === undefined ||
-      decoded.slot >= this.#highWater ||
-      this.#occupied[decoded.slot] !== 1 ||
-      this.#generations[decoded.slot] !== decoded.generation
+      generation < 1 ||
+      generation > MAX_GENERATION ||
+      !Number.isSafeInteger(slot) ||
+      slot < 0 ||
+      slot >= this.#highWater ||
+      this.#occupied[slot] !== 1 ||
+      this.#generations[slot] !== generation
     ) {
       return undefined;
     }
 
-    return decoded.slot;
+    return slot;
   }
-}
-
-function encodeId(slot: number, generation: number): TextId {
-  return (generation * ID_RADIX + slot) as TextId;
-}
-
-function decodeId(id: TextId): { readonly slot: number; readonly generation: number } | undefined {
-  const value = Number(id);
-  if (!Number.isSafeInteger(value) || value < ID_RADIX) {
-    return undefined;
-  }
-
-  const generation = Math.floor(value / ID_RADIX);
-  const slot = value - generation * ID_RADIX;
-  if (
-    generation < 1 ||
-    generation > MAX_GENERATION ||
-    !Number.isSafeInteger(slot) ||
-    slot < 0 ||
-    slot >= MAX_CAPACITY
-  ) {
-    return undefined;
-  }
-
-  return { slot, generation };
 }
 
 function assertPositiveCapacity(capacity: number): void {
