@@ -78,7 +78,7 @@
   - Verify: bun run test:browser -- glyph-rendering
   - Files: src/render/GlyphMesh.ts, src/render/shaders.ts, src/pixi/compat/createGeometry.ts, tests/browser/glyph-rendering.test.ts
 
-- [ ] Task 3.5: Implement WebGL and WebGPU upload adapters.
+- [x] Task 3.5: Implement WebGL and WebGPU upload adapters.
   - Acceptance: Partial WebGL updates and bounded WebGPU staging preserve identical instance data.
   - Verify: bun test tests/renderer-adapters.test.ts
   - Files: src/render/WebGLAdapter.ts, src/render/WebGPUAdapter.ts, src/render/RendererAdapter.ts, tests/renderer-adapters.test.ts

@@ -4,7 +4,10 @@ export { PrebuiltGlyphProvider } from "./atlas/PrebuiltGlyphProvider";
 export { RasterGlyphProvider } from "./atlas/RasterGlyphProvider";
 export { LayoutEngine } from "./layout/LayoutEngine";
 export { GlyphInstanceStore } from "./render/GlyphInstanceStore";
+export { GlyphMesh } from "./render/GlyphMesh";
 export { GLYPH_INSTANCE_STRIDE } from "./render/types";
+export { WebGLAdapter } from "./render/WebGLAdapter";
+export { WebGPUAdapter } from "./render/WebGPUAdapter";
 export { BitmapLayoutAdapter } from "./pixi/compat/bitmapLayout";
 export { HarfBuzzShaper } from "./shaping/HarfBuzzShaper";
 export { HarfBuzzWorkerShaper, StaleShapeResultError } from "./shaping/HarfBuzzWorkerShaper";
@@ -16,7 +19,16 @@ export type {
   GlyphInstanceRange,
   GlyphInstanceStoreOptions,
   GlyphInstanceStoreStats,
+  UploadBatchResult,
+  WebGLAdapterStats,
+  WebGLUploadContext,
+  WebGPUAdapterOptions,
+  WebGPUAdapterStats,
+  WebGPUBufferLike,
+  WebGPUQueueLike,
 } from "./render/types";
+export type { GlyphMeshOptions } from "./render/GlyphMesh";
+export type { RendererAdapter } from "./render/RendererAdapter";
 export type {
   AtlasCommit,
   AtlasEntry,

@@ -44,3 +44,50 @@ export interface GlyphInstanceCompactionResult {
   readonly afterBytes: number;
   readonly releasedBytes: number;
 }
+
+export interface UploadBatchResult {
+  readonly uploadedBytes: number;
+  readonly writes: number;
+  readonly deferred: readonly Readonly<DirtyByteRange>[];
+}
+
+export interface WebGLUploadContext {
+  readonly ARRAY_BUFFER: number;
+  readonly DYNAMIC_DRAW: number;
+  bindBuffer(target: number, buffer: unknown): void;
+  bufferData(target: number, data: ArrayBufferView, usage: number): void;
+  bufferSubData(target: number, offset: number, data: ArrayBufferView): void;
+}
+
+export interface WebGLAdapterStats {
+  readonly allocatedBytes: number;
+  readonly fullUploads: number;
+  readonly partialUploads: number;
+  readonly uploadedBytes: number;
+}
+
+export interface WebGPUBufferLike {
+  readonly size: number;
+}
+
+export interface WebGPUQueueLike {
+  writeBuffer(
+    buffer: WebGPUBufferLike,
+    bufferOffset: number,
+    data: ArrayBuffer,
+    dataOffset: number,
+    size: number,
+  ): void;
+}
+
+export interface WebGPUAdapterOptions {
+  readonly maxWriteBytes?: number;
+}
+
+export interface WebGPUAdapterStats {
+  readonly frames: number;
+  readonly writes: number;
+  readonly uploadedBytes: number;
+  readonly deferredBytes: number;
+  readonly maxWriteBytes: number;
+}
