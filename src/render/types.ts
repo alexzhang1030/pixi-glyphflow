@@ -103,6 +103,8 @@ export interface TransformPaletteInput {
   readonly anchorX: number;
   readonly anchorY: number;
   readonly fill?: unknown;
+  readonly stroke?: unknown;
+  readonly dropShadow?: unknown;
 }
 
 export interface TransformRunBounds {

@@ -186,6 +186,8 @@ export class RenderCoordinator {
           anchorX: change.snapshot.anchorX,
           anchorY: change.snapshot.anchorY,
           fill: change.snapshot.style.fill,
+          stroke: change.snapshot.style.stroke,
+          dropShadow: change.snapshot.style.dropShadow,
         },
         run.bounds,
       );

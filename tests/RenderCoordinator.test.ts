@@ -65,7 +65,7 @@ describe("RenderCoordinator", () => {
     expect({ layoutCalls, rasterCalls }).toEqual({ layoutCalls: 1, rasterCalls: 2 });
     expect(coordinator.instances.consumeDirty()).toEqual([]);
     expect(new Uint8Array(coordinator.instances.buffer)).toEqual(instanceBytes);
-    expect(coordinator.transforms.consumeDirty()).toEqual([{ offset: 0, length: 48 }]);
+    expect(coordinator.transforms.consumeDirty()).toEqual([{ offset: 0, length: 64 }]);
 
     await coordinator.commit(3, [{ slot: 0, mask: CONTENT, snapshot: undefined }]);
     expect(coordinator.instances.getRange(0)).toBeUndefined();

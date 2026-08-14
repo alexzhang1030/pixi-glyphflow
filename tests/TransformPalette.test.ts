@@ -23,7 +23,7 @@ describe("TransformPalette", () => {
     );
 
     expect(changed).toBe(true);
-    const values = palette.data.subarray(12, 24);
+    const values = palette.data.subarray(16, 32);
     expect(Array.from(values.slice(0, 4))).toEqual([10, 20, 2, 3]);
     expect(values[4]).toBeCloseTo(1);
     expect(values[5]).toBeCloseTo(0);
@@ -32,6 +32,7 @@ describe("TransformPalette", () => {
     expect(values[9]).toBeCloseTo(0.2);
     expect(values[10]).toBeCloseTo(0.3);
     expect(values[11]).toBeCloseTo(0.5);
+    expect(Array.from(values.slice(12, 16))).toEqual([0, 0, 0, 32_896]);
     expect(palette.consumeDirty()).toEqual([
       { offset: TRANSFORM_PALETTE_STRIDE, length: TRANSFORM_PALETTE_STRIDE },
     ]);
@@ -54,6 +55,40 @@ describe("TransformPalette", () => {
       ),
     ).toBe(false);
     expect(palette.consumeDirty()).toEqual([]);
+
+    palette.destroy();
+  });
+
+  test("packs fill alpha, stroke, and drop shadow into one effect texel", () => {
+    const palette = new TransformPalette({ initialCapacity: 1, textureWidth: 4 });
+    palette.set(
+      0,
+      {
+        x: 0,
+        y: 0,
+        scaleX: 1,
+        scaleY: 1,
+        rotation: 0,
+        alpha: 0.5,
+        visible: true,
+        anchorX: 0,
+        anchorY: 0,
+        fill: { color: 0x336699, alpha: 0.5 },
+        stroke: { color: 0xff0000, width: 2.5, alpha: 0.75 },
+        dropShadow: { color: 0x0000ff, alpha: 0.5, angle: 0, distance: 4, blur: 3 },
+      },
+      { width: 10, height: 10 },
+    );
+
+    const values = palette.data.subarray(0, 16);
+    expect(values[8]).toBeCloseTo(0.05);
+    expect(values[9]).toBeCloseTo(0.1);
+    expect(values[10]).toBeCloseTo(0.15);
+    expect(values[11]).toBeCloseTo(0.25);
+    expect(values[12]).toBe(0xff0000);
+    expect(values[13]).toBe(40 + 96 * 4096);
+    expect(values[14]).toBe(0x0000ff);
+    expect(values[15]).toBe(144 + 128 * 256 + 3 * 65_536 + 4 * 1_048_576);
 
     palette.destroy();
   });
@@ -82,7 +117,7 @@ describe("TransformPalette", () => {
     expect(palette.stats).toMatchObject({ capacity: 8, activeLabels: 1, textureWidth: 4 });
     palette.consumeDirty();
     expect(palette.remove(4)).toBe(true);
-    expect(palette.data[4 * 12 + 11]).toBe(0);
+    expect(palette.data[4 * 16 + 11]).toBe(0);
     expect(palette.consumeDirty()).toEqual([
       { offset: 4 * TRANSFORM_PALETTE_STRIDE, length: TRANSFORM_PALETTE_STRIDE },
     ]);

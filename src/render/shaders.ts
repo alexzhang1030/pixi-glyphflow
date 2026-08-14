@@ -19,6 +19,8 @@ uniform float uPaletteWidth;
 out vec2 vUv;
 out vec4 vColor;
 flat out uint vMode;
+flat out vec4 vEffects;
+flat out vec4 vUvBounds;
 
 vec4 paletteTexel(uint index) {
     uint width = uint(uPaletteWidth);
@@ -27,7 +29,7 @@ vec4 paletteTexel(uint index) {
 
 void main(void) {
     bool isActive = (aMetadata & 0x80000000u) != 0u;
-    uint paletteBase = aPaletteIndex * 3u;
+    uint paletteBase = aPaletteIndex * 4u;
     vec4 transform0 = paletteTexel(paletteBase);
     vec4 transform1 = paletteTexel(paletteBase + 1u);
     vec4 paletteColor = paletteTexel(paletteBase + 2u);
@@ -44,6 +46,8 @@ void main(void) {
     vUv = mix(aInstanceUv.xy, aInstanceUv.zw, aVertex);
     vColor = uWorldColorAlpha * uColor * paletteColor;
     vMode = (aMetadata >> 16u) & 3u;
+    vEffects = paletteTexel(paletteBase + 3u);
+    vUvBounds = aInstanceUv;
 }
 `;
 
@@ -58,6 +62,8 @@ uniform sampler2D uTexture;
 in vec2 vUv;
 in vec4 vColor;
 flat in uint vMode;
+flat in vec4 vEffects;
+flat in vec4 vUvBounds;
 
 out vec4 finalColor;
 
@@ -65,17 +71,95 @@ float median3(vec3 value) {
     return max(min(value.r, value.g), min(max(value.r, value.g), value.b));
 }
 
+vec3 unpackRgb(float packed) {
+    uint value = uint(round(packed));
+    return vec3(
+        float((value >> 16u) & 255u),
+        float((value >> 8u) & 255u),
+        float(value & 255u)
+    ) / 255.0;
+}
+
+vec4 boundedSample(vec2 uv) {
+    bool inside = all(greaterThanEqual(uv, vUvBounds.xy))
+        && all(lessThanEqual(uv, vUvBounds.zw));
+    vec4 sampled = textureLod(uTexture, clamp(uv, vUvBounds.xy, vUvBounds.zw), 0.0);
+    return inside ? sampled : vec4(0.0);
+}
+
+float coverageAt(vec2 uv, float smoothing) {
+    vec4 sampled = boundedSample(uv);
+    float distanceValue = vMode == 0u ? median3(sampled.rgb) : sampled.r;
+    float distanceCoverage = smoothstep(0.5 - smoothing, 0.5 + smoothing, distanceValue);
+    return vMode == 3u ? sampled.a : distanceCoverage;
+}
+
+vec4 premultipliedLayer(vec3 color, float alpha, float coverage) {
+    float outputAlpha = alpha * coverage;
+    return vec4(color * outputAlpha, outputAlpha);
+}
+
+vec4 over(vec4 top, vec4 bottom) {
+    return top + bottom * (1.0 - top.a);
+}
+
 void main(void) {
     vec4 sampleColor = texture(uTexture, vUv);
-    if (vMode == 3u) {
-        finalColor = sampleColor * vColor;
-        return;
-    }
-
     float distanceValue = vMode == 0u ? median3(sampleColor.rgb) : sampleColor.r;
     float smoothing = max(fwidth(distanceValue), 1.0 / 255.0);
-    float coverage = smoothstep(0.5 - smoothing, 0.5 + smoothing, distanceValue);
-    finalColor = vec4(vColor.rgb * coverage, vColor.a * coverage);
+    float fillCoverage = vMode == 3u
+        ? sampleColor.a
+        : smoothstep(0.5 - smoothing, 0.5 + smoothing, distanceValue);
+    vec4 fill = vMode == 3u
+        ? sampleColor * vColor
+        : vec4(vColor.rgb * fillCoverage, vColor.a * fillCoverage);
+    vec2 texel = 1.0 / vec2(textureSize(uTexture, 0));
+
+    uint shadowPacked = uint(round(vEffects.w));
+    float shadowAlpha = float((shadowPacked >> 20u) & 15u) / 15.0;
+    vec4 composed = vec4(0.0);
+    if (shadowAlpha > 0.0) {
+        vec2 shadowOffset = vec2(
+            float(int(shadowPacked & 255u) - 128),
+            float(int((shadowPacked >> 8u) & 255u) - 128)
+        ) * 0.25;
+        float blur = float((shadowPacked >> 16u) & 15u);
+        vec2 sourceUv = vUv - shadowOffset * texel;
+        float shadowCoverage = coverageAt(sourceUv, smoothing);
+        if (blur > 0.0) {
+            vec2 blurUv = texel * blur;
+            shadowCoverage = (
+                shadowCoverage
+                + coverageAt(sourceUv + vec2(blurUv.x, 0.0), smoothing)
+                + coverageAt(sourceUv - vec2(blurUv.x, 0.0), smoothing)
+                + coverageAt(sourceUv + vec2(0.0, blurUv.y), smoothing)
+                + coverageAt(sourceUv - vec2(0.0, blurUv.y), smoothing)
+            ) * 0.2;
+        }
+        composed = premultipliedLayer(unpackRgb(vEffects.z), shadowAlpha, shadowCoverage);
+    }
+
+    uint strokePacked = uint(round(vEffects.y));
+    float strokeWidth = float(strokePacked & 4095u) / 16.0;
+    float strokeAlpha = float((strokePacked >> 12u) & 255u) / 255.0;
+    if (strokeWidth > 0.0 && strokeAlpha > 0.0) {
+        vec2 radius = texel * strokeWidth;
+        vec2 diagonal = radius * 0.70710678118;
+        float expanded = fillCoverage;
+        expanded = max(expanded, coverageAt(vUv + vec2(radius.x, 0.0), smoothing));
+        expanded = max(expanded, coverageAt(vUv - vec2(radius.x, 0.0), smoothing));
+        expanded = max(expanded, coverageAt(vUv + vec2(0.0, radius.y), smoothing));
+        expanded = max(expanded, coverageAt(vUv - vec2(0.0, radius.y), smoothing));
+        expanded = max(expanded, coverageAt(vUv + diagonal, smoothing));
+        expanded = max(expanded, coverageAt(vUv - diagonal, smoothing));
+        expanded = max(expanded, coverageAt(vUv + vec2(diagonal.x, -diagonal.y), smoothing));
+        expanded = max(expanded, coverageAt(vUv + vec2(-diagonal.x, diagonal.y), smoothing));
+        float strokeCoverage = max(0.0, expanded - fillCoverage);
+        vec4 stroke = premultipliedLayer(unpackRgb(vEffects.x), strokeAlpha, strokeCoverage);
+        composed = over(stroke, composed);
+    }
+
+    finalColor = over(fill, composed);
 }
 `;
 
@@ -110,7 +194,13 @@ struct VertexOutput {
     @location(0) uv: vec2<f32>,
     @location(1) color: vec4<f32>,
     @location(2) @interpolate(flat) mode: u32,
+    @location(3) @interpolate(flat) effects: vec4<f32>,
+    @location(4) @interpolate(flat) uvBounds: vec4<f32>,
 };
+
+fn paletteIndex(linear: u32, width: u32) -> vec2<i32> {
+    return vec2<i32>(i32(linear % width), i32(linear / width));
+}
 
 @vertex
 fn mainVertex(
@@ -122,18 +212,11 @@ fn mainVertex(
 ) -> VertexOutput {
     let isActive = (aMetadata & 0x80000000u) != 0u;
     let paletteWidth = u32(glyphUniforms.uPaletteWidth);
-    let paletteBase = aPaletteIndex * 3u;
-    let transform0Index = vec2<i32>(i32(paletteBase % paletteWidth), i32(paletteBase / paletteWidth));
-    let transform1Linear = paletteBase + 1u;
-    let transform1Index = vec2<i32>(
-        i32(transform1Linear % paletteWidth),
-        i32(transform1Linear / paletteWidth),
-    );
-    let colorLinear = paletteBase + 2u;
-    let colorIndex = vec2<i32>(i32(colorLinear % paletteWidth), i32(colorLinear / paletteWidth));
-    let transform0 = textureLoad(uTransformTexture, transform0Index, 0);
-    let transform1 = textureLoad(uTransformTexture, transform1Index, 0);
-    let paletteColor = textureLoad(uTransformTexture, colorIndex, 0);
+    let paletteBase = aPaletteIndex * 4u;
+    let transform0 = textureLoad(uTransformTexture, paletteIndex(paletteBase, paletteWidth), 0);
+    let transform1 = textureLoad(uTransformTexture, paletteIndex(paletteBase + 1u, paletteWidth), 0);
+    let paletteColor = textureLoad(uTransformTexture, paletteIndex(paletteBase + 2u, paletteWidth), 0);
+    let effects = textureLoad(uTransformTexture, paletteIndex(paletteBase + 3u, paletteWidth), 0);
     var localPosition = (aInstanceRect.xy + aVertex * aInstanceRect.zw - transform1.zw)
         * transform0.zw;
     localPosition = vec2<f32>(
@@ -153,6 +236,8 @@ fn mainVertex(
         mix(aInstanceUv.xy, aInstanceUv.zw, aVertex),
         globalUniforms.uWorldColorAlpha * localUniforms.uColor * paletteColor,
         (aMetadata >> 16u) & 3u,
+        effects,
+        aInstanceUv,
     );
 }
 
@@ -160,13 +245,103 @@ fn median3(value: vec3<f32>) -> f32 {
     return max(min(value.r, value.g), min(max(value.r, value.g), value.b));
 }
 
+fn unpackRgb(packed: f32) -> vec3<f32> {
+    let value = u32(round(packed));
+    return vec3<f32>(
+        f32((value >> 16u) & 255u),
+        f32((value >> 8u) & 255u),
+        f32(value & 255u),
+    ) / 255.0;
+}
+
+fn boundedSample(input: VertexOutput, uv: vec2<f32>) -> vec4<f32> {
+    let inside = all(uv >= input.uvBounds.xy) && all(uv <= input.uvBounds.zw);
+    let sampled = textureSampleLevel(
+        uTexture,
+        uSampler,
+        clamp(uv, input.uvBounds.xy, input.uvBounds.zw),
+        0.0,
+    );
+    return select(vec4<f32>(0.0), sampled, inside);
+}
+
+fn coverageAt(input: VertexOutput, uv: vec2<f32>, smoothing: f32) -> f32 {
+    let sampled = boundedSample(input, uv);
+    let distanceValue = select(sampled.r, median3(sampled.rgb), input.mode == 0u);
+    let distanceCoverage = smoothstep(0.5 - smoothing, 0.5 + smoothing, distanceValue);
+    return select(distanceCoverage, sampled.a, input.mode == 3u);
+}
+
+fn premultipliedLayer(color: vec3<f32>, alpha: f32, coverage: f32) -> vec4<f32> {
+    let outputAlpha = alpha * coverage;
+    return vec4<f32>(color * outputAlpha, outputAlpha);
+}
+
+fn over(top: vec4<f32>, bottom: vec4<f32>) -> vec4<f32> {
+    return top + bottom * (1.0 - top.a);
+}
+
 @fragment
 fn mainFragment(input: VertexOutput) -> @location(0) vec4<f32> {
     let sampleColor = textureSample(uTexture, uSampler, input.uv);
     let distanceValue = select(sampleColor.r, median3(sampleColor.rgb), input.mode == 0u);
     let smoothing = max(fwidth(distanceValue), 1.0 / 255.0);
-    let coverage = smoothstep(0.5 - smoothing, 0.5 + smoothing, distanceValue);
-    let distanceColor = vec4<f32>(input.color.rgb * coverage, input.color.a * coverage);
-    return select(distanceColor, sampleColor * input.color, input.mode == 3u);
+    let distanceCoverage = smoothstep(0.5 - smoothing, 0.5 + smoothing, distanceValue);
+    let fillCoverage = select(distanceCoverage, sampleColor.a, input.mode == 3u);
+    let distanceColor = vec4<f32>(input.color.rgb * fillCoverage, input.color.a * fillCoverage);
+    let fill = select(distanceColor, sampleColor * input.color, input.mode == 3u);
+    let texel = 1.0 / vec2<f32>(textureDimensions(uTexture));
+
+    let shadowPacked = u32(round(input.effects.w));
+    let shadowAlpha = f32((shadowPacked >> 20u) & 15u) / 15.0;
+    var composed = vec4<f32>(0.0);
+    if (shadowAlpha > 0.0) {
+        let shadowOffset = vec2<f32>(
+            f32(i32(shadowPacked & 255u) - 128),
+            f32(i32((shadowPacked >> 8u) & 255u) - 128),
+        ) * 0.25;
+        let blur = f32((shadowPacked >> 16u) & 15u);
+        let sourceUv = input.uv - shadowOffset * texel;
+        var shadowCoverage = coverageAt(input, sourceUv, smoothing);
+        if (blur > 0.0) {
+            let blurUv = texel * blur;
+            shadowCoverage = (
+                shadowCoverage
+                + coverageAt(input, sourceUv + vec2<f32>(blurUv.x, 0.0), smoothing)
+                + coverageAt(input, sourceUv - vec2<f32>(blurUv.x, 0.0), smoothing)
+                + coverageAt(input, sourceUv + vec2<f32>(0.0, blurUv.y), smoothing)
+                + coverageAt(input, sourceUv - vec2<f32>(0.0, blurUv.y), smoothing)
+            ) * 0.2;
+        }
+        composed = premultipliedLayer(unpackRgb(input.effects.z), shadowAlpha, shadowCoverage);
+    }
+
+    let strokePacked = u32(round(input.effects.y));
+    let strokeWidth = f32(strokePacked & 4095u) / 16.0;
+    let strokeAlpha = f32((strokePacked >> 12u) & 255u) / 255.0;
+    if (strokeWidth > 0.0 && strokeAlpha > 0.0) {
+        let radius = texel * strokeWidth;
+        let diagonal = radius * 0.70710678118;
+        var expanded = fillCoverage;
+        expanded = max(expanded, coverageAt(input, input.uv + vec2<f32>(radius.x, 0.0), smoothing));
+        expanded = max(expanded, coverageAt(input, input.uv - vec2<f32>(radius.x, 0.0), smoothing));
+        expanded = max(expanded, coverageAt(input, input.uv + vec2<f32>(0.0, radius.y), smoothing));
+        expanded = max(expanded, coverageAt(input, input.uv - vec2<f32>(0.0, radius.y), smoothing));
+        expanded = max(expanded, coverageAt(input, input.uv + diagonal, smoothing));
+        expanded = max(expanded, coverageAt(input, input.uv - diagonal, smoothing));
+        expanded = max(
+            expanded,
+            coverageAt(input, input.uv + vec2<f32>(diagonal.x, -diagonal.y), smoothing),
+        );
+        expanded = max(
+            expanded,
+            coverageAt(input, input.uv + vec2<f32>(-diagonal.x, diagonal.y), smoothing),
+        );
+        let strokeCoverage = max(0.0, expanded - fillCoverage);
+        let stroke = premultipliedLayer(unpackRgb(input.effects.x), strokeAlpha, strokeCoverage);
+        composed = over(stroke, composed);
+    }
+
+    return over(fill, composed);
 }
 `;

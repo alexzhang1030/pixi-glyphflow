@@ -1,3 +1,5 @@
+import { Color } from "pixi.js";
+
 import { DirtyRanges } from "./DirtyRanges";
 import type {
   DirtyByteRange,
@@ -7,9 +9,9 @@ import type {
   TransformRunBounds,
 } from "./types";
 
-export const TRANSFORM_PALETTE_STRIDE = 48;
+export const TRANSFORM_PALETTE_STRIDE = 64;
 const FLOATS_PER_LABEL = TRANSFORM_PALETTE_STRIDE / Float32Array.BYTES_PER_ELEMENT;
-const TEXELS_PER_LABEL = 3;
+const TEXELS_PER_LABEL = 4;
 const DEFAULT_CAPACITY = 1_024;
 const DEFAULT_TEXTURE_WIDTH = 1_024;
 const DEFAULT_MAX_CAPACITY = 0x100_0000;
@@ -46,7 +48,10 @@ export class TransformPalette {
     this.#ensureCapacity(slot + 1);
     const offset = slot * FLOATS_PER_LABEL;
     const alpha = Math.fround(input.visible ? input.alpha : 0);
-    const color = resolveColor(input.fill, alpha);
+    const fill = resolvePaint(input.fill, 0xffffff);
+    const stroke = resolveStroke(input.stroke);
+    const shadow = resolveShadow(input.dropShadow);
+    const fillAlpha = alpha * fill.alpha;
     const next = [
       input.x,
       input.y,
@@ -56,10 +61,14 @@ export class TransformPalette {
       Math.cos(input.rotation),
       input.anchorX * bounds.width,
       input.anchorY * bounds.height,
-      color.r,
-      color.g,
-      color.b,
-      alpha,
+      fill.r * fillAlpha,
+      fill.g * fillAlpha,
+      fill.b * fillAlpha,
+      fillAlpha,
+      stroke.color,
+      packStroke(stroke.width, alpha * stroke.alpha),
+      shadow.color,
+      packShadow(shadow.x, shadow.y, shadow.blur, alpha * shadow.alpha),
     ];
     let changed = this.#occupied[slot] !== 1;
     for (let index = 0; index < FLOATS_PER_LABEL; index += 1) {
@@ -157,22 +166,105 @@ export class TransformPalette {
   }
 }
 
-function resolveColor(fill: unknown, alpha: number): Readonly<{ r: number; g: number; b: number }> {
-  let color = 0xffffff;
-  if (typeof fill === "number" && Number.isFinite(fill)) {
-    color = Math.max(0, Math.min(0xffffff, Math.trunc(fill)));
-  } else if (typeof fill === "string") {
-    const normalized = fill.startsWith("#") ? fill.slice(1) : fill;
-    if (/^[0-9a-f]{6}$/i.test(normalized)) {
-      color = Number.parseInt(normalized, 16);
+interface ResolvedPaint {
+  readonly color: number;
+  readonly r: number;
+  readonly g: number;
+  readonly b: number;
+  readonly alpha: number;
+}
+
+function resolvePaint(input: unknown, fallback: number): ResolvedPaint {
+  let source = input;
+  let alpha = 1;
+  if (typeof input === "object" && input !== null) {
+    const style = input as Readonly<{ color?: unknown; fill?: unknown; alpha?: unknown }>;
+    source = style.color ?? style.fill;
+    if (typeof style.alpha === "number" && Number.isFinite(style.alpha)) {
+      alpha = clamp(style.alpha, 0, 1);
     }
   }
-
+  if (source === undefined || source === null) source = fallback;
+  let color = fallback;
+  try {
+    const parsed = new Color(source as ConstructorParameters<typeof Color>[0]);
+    color = parsed.toNumber();
+    alpha *= parsed.alpha;
+  } catch {
+    color = fallback;
+  }
+  color = Math.max(0, Math.min(0xffffff, Math.trunc(color)));
   return {
-    r: (((color >> 16) & 0xff) / 255) * alpha,
-    g: (((color >> 8) & 0xff) / 255) * alpha,
-    b: ((color & 0xff) / 255) * alpha,
+    color,
+    r: ((color >> 16) & 0xff) / 255,
+    g: ((color >> 8) & 0xff) / 255,
+    b: (color & 0xff) / 255,
+    alpha,
   };
+}
+
+function resolveStroke(input: unknown): Readonly<{ color: number; width: number; alpha: number }> {
+  if (input === undefined || input === null || input === false) {
+    return { color: 0, width: 0, alpha: 0 };
+  }
+  const style =
+    typeof input === "object" && input !== null
+      ? (input as Readonly<{ width?: unknown }>)
+      : undefined;
+  const paint = resolvePaint(input, 0x000000);
+  const width =
+    typeof style?.width === "number" && Number.isFinite(style.width)
+      ? clamp(style.width, 0, 255.9375)
+      : 1;
+  return { color: paint.color, width, alpha: paint.alpha };
+}
+
+function resolveShadow(
+  input: unknown,
+): Readonly<{ color: number; x: number; y: number; blur: number; alpha: number }> {
+  if (input !== true && (typeof input !== "object" || input === null)) {
+    return { color: 0, x: 0, y: 0, blur: 0, alpha: 0 };
+  }
+  const style =
+    input === true
+      ? {}
+      : (input as Readonly<{
+          angle?: unknown;
+          distance?: unknown;
+          blur?: unknown;
+        }>);
+  const paint = resolvePaint(input === true ? 0x000000 : input, 0x000000);
+  const angle =
+    typeof style.angle === "number" && Number.isFinite(style.angle) ? style.angle : Math.PI / 6;
+  const distance =
+    typeof style.distance === "number" && Number.isFinite(style.distance) ? style.distance : 5;
+  const blur =
+    typeof style.blur === "number" && Number.isFinite(style.blur) ? clamp(style.blur, 0, 15) : 0;
+  return {
+    color: paint.color,
+    x: Math.cos(angle) * distance,
+    y: Math.sin(angle) * distance,
+    blur,
+    alpha: paint.alpha,
+  };
+}
+
+function packStroke(width: number, alpha: number): number {
+  const widthBits = Math.round(clamp(width, 0, 255.9375) * 16);
+  const alphaBits = Math.round(clamp(alpha, 0, 1) * 255);
+  return widthBits + alphaBits * 4096;
+}
+
+function packShadow(x: number, y: number, blur: number, alpha: number): number {
+  const xBits = Math.round(clamp(x, -32, 31.75) * 4) + 128;
+  const yBits = Math.round(clamp(y, -32, 31.75) * 4) + 128;
+  const blurBits = Math.round(clamp(blur, 0, 15));
+  const alphaBits = Math.round(clamp(alpha, 0, 1) * 15);
+  return xBits + yBits * 256 + blurBits * 65_536 + alphaBits * 1_048_576;
+}
+
+function clamp(value: number, minimum: number, maximum: number): number {
+  return Math.min(maximum, Math.max(minimum, value));
 }
 
 function validateInput(input: TransformPaletteInput, bounds: TransformRunBounds): void {
