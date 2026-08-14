@@ -48,7 +48,7 @@ Replace the 0.0.1 object-per-label reference backend with a dense, batch-oriente
 ### Checkpoint
 
 - Public-seam tests cover CRUD, bulk behavior, stale identities, no-op commits, compact, and lifecycle.
-- A 100,000-label CPU benchmark records baseline mutation and commit timings.
+- A 1,000,000-label CPU benchmark records creation, 100,000-mutation, commit, removal, and memory timings in isolated sample processes.
 - Core source builds and package smoke passes.
 
 ## Phase 2: Fonts, shaping, and layout
@@ -86,33 +86,37 @@ Replace the 0.0.1 object-per-label reference backend with a dense, batch-oriente
 - Add fill, stroke, shadow, blend, visibility, z order, anchor, scale, and rotation.
 - Add optional accessibility mirroring for selected labels.
 - Add explicit fallback diagnostics and capability policy.
+- Add an optional pixi-viewport 6 binding with coalesced visible-bounds updates and complete listener teardown.
 
 ### Checkpoint
 
 - Browser interaction and visual tests cover all appearance and transform combinations.
 - Culling and hit-testing fixtures match known visible sets.
 - Accessibility mirror updates are deterministic and incremental.
+- Drag, deceleration, wheel zoom, pinch zoom, and camera rotation preserve label revisions and emit deterministic visible sets.
 
 ## Phase 5: Performance laboratory
 
 - Build equal-content Text, BitmapText, HTMLText, and glyphflow fixtures.
 - Record cold and warm frame timing, update timing, draw calls, upload bytes, memory, cache, atlas, and culling metrics.
-- Add dense-label, dynamic-counter, multilingual-stream, scale-scan, atlas-pressure, and static-HUD workloads.
+- Add million-label full-visibility, million-label viewport, dynamic-counter, viewport-drag, viewport-zoom, position-storm, multilingual-stream, scale-scan, atlas-pressure, and static-HUD workloads.
 - Compare repeated samples against run-to-run variance and retain only measured optimizations.
 - Enforce core bundle and benchmark budgets in CI.
 
 ### Checkpoint
 
 - Raw JSON and generated reports exist for every workload.
-- Dense-label and dynamic-counter p95 meet the 0.75 baseline ratio.
+- Million-label and dynamic-counter p95 meet the 0.75 baseline ratio.
 - Every supported workload meets the 1.00 baseline ratio.
 - Reference-hardware update, memory, and steady-state budgets pass.
+- pixi-viewport interaction and position-storm frame budgets pass.
 
 ## Phase 6: English product documentation
 
 - Replace the POC README with 1.0 installation, quick start, recipes, support matrix, and diagnostics.
 - Add getting-started, API, fonts, shaping, architecture, performance, accessibility, migration, and release guides.
 - Add runnable examples and a browser playground.
+- Add a pixi-viewport drag, pinch, wheel, deceleration, rotation, and moving-label stress playground.
 - Generate API documentation from public TypeScript declarations.
 - Update CONTRIBUTING, CHANGELOG, PCR records, and package metadata.
 

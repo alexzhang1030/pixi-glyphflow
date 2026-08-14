@@ -13,7 +13,7 @@
   - Files: .agents/docs/references
 
 - [ ] Task 0.3: Establish baseline correctness, package, CPU, and browser measurements.
-  - Acceptance: Baseline artifacts record the 0.0.1 behavior and equal-content PixiJS fixtures.
+  - Acceptance: Isolated-process baseline artifacts record the 0.0.1 behavior at 1,000,000 labels with 100,000 real mutations plus equal-content PixiJS browser fixtures.
   - Verify: bun run baseline
   - Files: benchmarks/baseline.ts, benchmarks/schema.ts, package.json, benchmarks/results
 
@@ -105,6 +105,11 @@
   - Verify: bun run test:browser -- accessibility
   - Files: src/accessibility/AccessibilityAdapter.ts, src/TextLayer.ts, src/types.ts, tests/browser/accessibility.test.ts
 
+- [ ] Task 4.4: Implement the optional pixi-viewport 6 binding.
+  - Acceptance: Drag, deceleration, wheel zoom, pinch zoom, and camera rotation coalesce culling work, preserve label revisions, and release every event listener.
+  - Verify: bun run test:browser -- viewport-integration
+  - Files: src/viewport/ViewportBinding.ts, src/viewport/types.ts, tests/browser/viewport-integration.test.ts
+
 ## Phase 5
 
 - [ ] Task 5.1: Build browser fixtures and raw metric collection.
@@ -112,8 +117,8 @@
   - Verify: bun run benchmark -- --workload static-hud
   - Files: benchmarks/browser/index.ts, benchmarks/browser/fixtures.ts, benchmarks/schema.ts, playground/benchmark.html
 
-- [ ] Task 5.2: Implement all six workload drivers and report generation.
-  - Acceptance: Raw JSON and a generated Markdown report exist for every workload.
+- [ ] Task 5.2: Implement every workload driver and report generation.
+  - Acceptance: Raw JSON and a generated Markdown report exist for every workload, including full visibility, viewport culling, drag, zoom, and 100,000-position-update fixtures with 1,000,000 resident labels.
   - Verify: bun run benchmark
   - Files: benchmarks/workloads.ts, benchmarks/run.ts, benchmarks/report.ts, benchmarks/results
 
@@ -135,7 +140,7 @@
   - Files: docs/architecture.md, docs/performance.md, docs/accessibility.md, docs/migration.md
 
 - [ ] Task 6.3: Build the runnable playground and examples.
-  - Acceptance: A clean checkout starts every documented example and production build.
+  - Acceptance: A clean checkout starts every documented example, the pixi-viewport stress playground, and the production build.
   - Verify: bun run playground:build
   - Files: playground/index.html, playground/src/main.ts, playground/package.json, package.json
 

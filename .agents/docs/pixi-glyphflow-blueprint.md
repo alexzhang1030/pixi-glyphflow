@@ -10,6 +10,7 @@ Status: unstamped project specification dated 2026-08-15.
 4. WebGL2 is the compatibility baseline. WebGPU uses the same logical glyph-instance contract and activates through capability detection.
 5. The release keeps the current UNLICENSED legal state until a human selects a license.
 6. Performance claims require raw benchmark artifacts from the tagged source and a real browser renderer.
+7. The optional pixi-viewport integration targets pixi-viewport 6 on PixiJS 8 and remains isolated from the core entry.
 
 ## Objective
 
@@ -17,8 +18,9 @@ pixi-glyphflow is a high-throughput text layer for PixiJS v8. One scene object o
 
 Version 1.0 succeeds when applications can:
 
-- render 100,000 labels and up to 1,000,000 visible glyphs through one TextLayer;
+- retain and render 1,000,000 labels through one TextLayer, including a full-visibility stress fixture with 8,000,000 representative glyphs;
 - update dynamic strings and transforms through stable label identities and one commit boundary;
+- sustain viewport drag, deceleration, wheel zoom, pinch zoom, camera rotation, and 100,000 real position mutations per commit;
 - use Latin, CJK, Arabic, Devanagari, emoji, bidirectional text, OpenType features, and font fallback;
 - choose prebuilt bitmap fonts, dynamic browser rasterization, or registered binary fonts;
 - observe renderer, shaping, cache, atlas, culling, draw, upload, and fallback behavior;
@@ -84,6 +86,7 @@ TextLayer is the primary deep module. Callers learn label mutation, commit, font
 | clear() | Removes every label and retires unreferenced resources. |
 | commit() | Publishes accepted mutations as one monotonic TextRevision after required async work. |
 | compact() | Rebuilds sparse CPU and GPU storage during an explicit maintenance point. |
+| updatePositions(ids, positions) | Applies packed x/y coordinates to an identity batch with one validation and journal publication. |
 | attach(renderer) | Creates or reuses renderer-owned resources and selects an adapter. |
 | detach() | Releases renderer-owned resources while retaining accepted label state. |
 | destroy(options) | Releases labels, workers, atlases, buffers, meshes, and renderer associations. |
@@ -223,6 +226,12 @@ TextLayer computes accepted local bounds after layout. A spatial index supports 
 
 getBoundsFor(id) returns local or world bounds without allocating on the hot path when a caller supplies an output rectangle. hitTest(point) returns the topmost visible label identity according to z order.
 
+## pixi-viewport integration
+
+The optional `pixi-glyphflow/viewport` entry binds one TextLayer to a pixi-viewport 6 Viewport. The layer remains a Viewport child so drag, deceleration, wheel zoom, pinch zoom, and camera rotation use one inherited world transform. The binding reads `getVisibleBounds()` after `moved`, `zoomed`, and `frame-end` events, converts the bounds into layer-local coordinates, and schedules one coalesced culling query per rendered frame.
+
+Camera-only interaction updates the layer transform and visible set while preserving every label revision. Applications that move labels independently use `updatePositions(ids, positions)` with Float64 identity storage and packed Float32 coordinates. The binding exposes frame diagnostics and releases every listener through one idempotent destroy path.
+
 ## Diagnostics
 
 TextLayerStats includes:
@@ -242,8 +251,12 @@ Diagnostics snapshots are immutable and allocation occurs only when the stats ge
 
 | Workload | Fixture | Primary pressure |
 | --- | --- | --- |
-| Dense labels | 100,000 labels and 1,000,000 visible glyphs | Scene traversal, culling, instance count, draw submission |
-| Dynamic counters | 10,000 labels, 80,000 glyphs, 10 percent text changes per frame | Shape cache, dirty compaction, partial upload |
+| Million-label full visibility | 1,000,000 labels and 8,000,000 representative visible glyphs | Instance capacity, draw submission, memory, GPU throughput |
+| Million-label viewport | 1,000,000 resident labels with a deterministic visible subset | Spatial indexing, culling, steady-state traversal |
+| Dynamic counters | 1,000,000 resident labels with 100,000 text and transform mutations per commit | Bulk mutation intake, shape cache, dirty compaction, partial upload |
+| Viewport drag | 1,000,000 resident labels, 50,000 visible labels, continuous drag and deceleration | Camera transforms, visible-set queries, allocation stability |
+| Viewport zoom | 1,000,000 resident labels, scale sweep from 0.05 to 32 through wheel and pinch | Level-of-detail policy, culling churn, atlas stability |
+| Position storm | 1,000,000 resident labels with 100,000 packed x/y updates per commit during viewport motion | Identity validation, spatial-index maintenance, transform uploads |
 | Multilingual stream | Latin, CJK, Arabic, Devanagari, emoji, 1,000 mutations per second | Shaping, fallback, atlas misses, async continuity |
 | Scale scan | Camera scale from 0.25 to 16 with rotation | Distance-field quality and cache stability |
 | Atlas pressure | 20,000 unique CJK and emoji graphemes under a fixed byte ceiling | Packing, eviction, generation safety, upload bandwidth |
@@ -251,14 +264,18 @@ Diagnostics snapshots are immutable and allocation occurs only when the stats ge
 
 ## Performance budgets
 
-1. Dense-label and dynamic-counter frame p95 must reach at most 0.75 times the PixiJS BitmapText baseline under equal visible content and visual coverage.
+1. Million-label and dynamic-counter frame p95 must reach at most 0.75 times the PixiJS BitmapText baseline under equal visible content and visual coverage.
 2. Every supported workload must reach at most 1.00 times its corresponding BitmapText frame p95.
-3. Dynamic-counter main-thread update p95 must stay below 1.5 milliseconds on the reference Apple M1 Pro fixture.
+3. Accepting 100,000 dynamic-counter mutations through the bulk interface must stay below 16.67 milliseconds p95 on the reference Apple M1 Pro fixture; shaping and upload timings are reported separately.
 4. A warmed static workload must record zero shaping, layout, atlas, instance upload, and JavaScript allocation work.
 5. Atlas bytes, including a temporary repack generation, must stay within the configured ceiling.
-6. One million glyph instances must stay within the documented instance-byte budget.
-7. The core ESM entry must stay below 40 KiB gzip, excluding optional WebAssembly assets and source maps.
-8. Repeated benchmark samples must exceed measured run-to-run variance before an optimization remains in the codebase.
+6. Fixed-width CPU label storage must stay within 128 MiB per 1,000,000-label allocated capacity, excluding caller text and style payloads.
+7. Glyph instance storage must stay at or below 32 bytes per glyph, yielding a 256 MiB ceiling for the 8,000,000-glyph stress fixture.
+8. The core ESM entry must stay below 40 KiB gzip, excluding optional WebAssembly assets and source maps.
+9. Every million-label sample runs in an isolated process so memory is released between repetitions.
+10. Repeated benchmark samples must exceed measured run-to-run variance before an optimization remains in the codebase.
+11. Viewport drag and zoom with 1,000,000 resident labels and 50,000 visible labels must stay within 16.67 milliseconds frame p95 on the reference browser fixture.
+12. Viewport interaction must produce zero label mutations, zero shaping work, and bounded culling allocations during camera-only frames.
 
 ## Correctness budgets
 
