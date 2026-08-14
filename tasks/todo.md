@@ -41,17 +41,17 @@
   - Verify: bun test tests/FontRegistry.test.ts
   - Files: src/FontRegistry.ts, src/fonts/types.ts, src/types.ts, tests/FontRegistry.test.ts
 
-- [ ] Task 2.2: Implement the PixiJS bitmap layout adapter and PositionedRun.
+- [x] Task 2.2: Implement the PixiJS bitmap layout adapter and PositionedRun.
   - Acceptance: Latin, CJK, emoji, wrapping, alignment, spacing, truncation, and bounds match reference fixtures.
   - Verify: bun test tests/layout.test.ts
   - Files: src/pixi/compat/bitmapLayout.ts, src/layout/LayoutEngine.ts, src/layout/types.ts, tests/layout.test.ts
 
-- [ ] Task 2.3: Implement HarfBuzz worker shaping and binary-font outlines.
+- [x] Task 2.3: Implement HarfBuzz worker shaping and binary-font outlines.
   - Acceptance: Arabic, Devanagari, bidi, feature, cluster, advance, and stale-response fixtures pass.
-  - Verify: bun test tests/shaping.test.ts
+  - Verify: bun test tests/shaping.test.ts tests/worker-shaping.test.ts && bun run smoke:harfbuzz && bun run smoke:worker
   - Files: src/shaping/HarfBuzzShaper.ts, src/worker/text-worker.ts, src/worker/protocol.ts, tests/shaping.test.ts
 
-- [ ] Task 2.4: Implement trusted immutable glyph runs.
+- [x] Task 2.4: Implement trusted immutable glyph runs.
   - Acceptance: Valid runs are adopted in constant time and invalid ownership or revision data is rejected.
   - Verify: bun test tests/trusted-run.test.ts
   - Files: src/shaping/TrustedGlyphRun.ts, src/types.ts, src/TextLayer.ts, tests/trusted-run.test.ts

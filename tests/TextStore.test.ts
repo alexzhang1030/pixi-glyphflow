@@ -22,7 +22,7 @@ describe("TextStore", () => {
     }).toThrow(TypeError);
   });
 
-  test("returns precise dirty domains and preserves revisions for no-op updates", () => {
+  test("returns precise dirty domains and advances shaping revisions for source updates", () => {
     const store = new TextStore();
     const id = store.create(label());
 
@@ -36,9 +36,12 @@ describe("TextStore", () => {
     const style = Object.freeze({ fill: 0x38bdf8, fontSize: 18 });
     expect(store.update(id, { style })).toBe(TextDirty.Style);
     expect(store.get(id)?.sourceRevision).toBe(3);
+
+    expect(store.update(id, { x: 8, rotation: 0.5 })).toBe(TextDirty.Transform);
+    expect(store.get(id)?.sourceRevision).toBe(3);
   });
 
-  test("applies packed positions transactionally with one revision per changed label", () => {
+  test("applies packed positions transactionally while preserving shaping revisions", () => {
     const store = new TextStore();
     const first = store.create(label({ x: 1, y: 2 }));
     const second = store.create(label({ x: 3, y: 4 }));
@@ -46,8 +49,8 @@ describe("TextStore", () => {
 
     expect(store.updatePositions(ids, new Float32Array([10, 20, 30, 40]))).toBe(2);
     const warmedBytes = store.stats.allocatedBytes;
-    expect(store.get(first)).toMatchObject({ x: 10, y: 20, sourceRevision: 2 });
-    expect(store.get(second)).toMatchObject({ x: 30, y: 40, sourceRevision: 2 });
+    expect(store.get(first)).toMatchObject({ x: 10, y: 20, sourceRevision: 1 });
+    expect(store.get(second)).toMatchObject({ x: 30, y: 40, sourceRevision: 1 });
     expect(store.updatePositions(ids, new Float32Array([10, 20, 30, 40]))).toBe(0);
     expect(store.stats.allocatedBytes).toBe(warmedBytes);
 
@@ -56,7 +59,7 @@ describe("TextStore", () => {
     expect(() =>
       store.updatePositions(new Float64Array([second, stale]), new Float32Array([50, 60, 70, 80])),
     ).toThrow(RangeError);
-    expect(store.get(second)).toMatchObject({ x: 30, y: 40, sourceRevision: 2 });
+    expect(store.get(second)).toMatchObject({ x: 30, y: 40, sourceRevision: 1 });
   });
 
   test("reuses free slots with a fresh generation and rejects stale identities", () => {

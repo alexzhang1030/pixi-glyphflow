@@ -34,8 +34,10 @@ export class BitmapLayoutAdapter {
     const fontRevision = input.fontRevision ?? 0;
     const direction = input.direction ?? "ltr";
     const trimEnd = input.trimEnd ?? true;
+    const maxLines = input.maxLines;
+    const ellipsis = input.ellipsis ?? "…";
     const styleKey = this.#styleKey(input.style, textStyle.styleKey);
-    const key = `${input.text}\u0000${styleKey}\u0000${String(fontRevision)}\u0000${direction}\u0000${String(trimEnd)}`;
+    const key = `${input.text}\u0000${styleKey}\u0000${String(fontRevision)}\u0000${direction}\u0000${String(trimEnd)}\u0000${String(maxLines)}\u0000${ellipsis}`;
     const cached = this.#cache.get(key);
     if (cached !== undefined) {
       this.#hits += 1;
@@ -45,7 +47,17 @@ export class BitmapLayoutAdapter {
     this.#misses += 1;
     const font = this.#manager.getFont(input.text, textStyle);
     const layout = this.#manager.getLayout(input.text, textStyle, trimEnd);
-    const glyphCount = layout.lines.reduce((total, line) => total + line.chars.length, 0);
+    const lines = constrainLines(
+      layout.lines,
+      maxLines,
+      ellipsis,
+      this.#manager,
+      textStyle,
+      trimEnd,
+      layout.scale,
+      input.style.wordWrapWidth,
+    );
+    const glyphCount = lines.reduce((total, line) => total + line.chars.length, 0);
     const glyphIds = new Uint32Array(glyphCount);
     const clusters = new Uint32Array(glyphCount);
     const x = new Float32Array(glyphCount);
@@ -61,8 +73,8 @@ export class BitmapLayoutAdapter {
     let glyphIndex = 0;
     let clusterCursor = 0;
 
-    for (let lineIndex = 0; lineIndex < layout.lines.length; lineIndex += 1) {
-      const line = layout.lines[lineIndex];
+    for (let lineIndex = 0; lineIndex < lines.length; lineIndex += 1) {
+      const line = lines[lineIndex];
       if (line === undefined) {
         throw new Error(`Bitmap layout line missing at index ${String(lineIndex)}`);
       }
@@ -110,8 +122,8 @@ export class BitmapLayoutAdapter {
       bounds: Object.freeze({
         x: 0,
         y: 0,
-        width: layout.width,
-        height: layout.height,
+        width: Math.max(0, ...lines.map((line) => line.width * layout.scale)),
+        height: Math.min(layout.height, lines.length * lineHeight),
       }),
     });
 
@@ -169,6 +181,73 @@ function assertInput(input: BitmapLayoutInput): void {
   if (input.direction !== undefined && input.direction !== "ltr" && input.direction !== "rtl") {
     throw new TypeError("direction must be ltr or rtl");
   }
+  if (
+    input.maxLines !== undefined &&
+    (!Number.isSafeInteger(input.maxLines) || input.maxLines <= 0)
+  ) {
+    throw new TypeError("maxLines must be a positive safe integer");
+  }
+  if (input.ellipsis !== undefined && typeof input.ellipsis !== "string") {
+    throw new TypeError("ellipsis must be a string");
+  }
+}
+
+function constrainLines(
+  lines: readonly import("../../layout/types").BitmapLayoutLine[],
+  maxLines: number | undefined,
+  ellipsis: string,
+  manager: BitmapLayoutManager,
+  style: TextStyle,
+  trimEnd: boolean,
+  scale: number,
+  wrapWidth: number | undefined,
+): readonly import("../../layout/types").BitmapLayoutLine[] {
+  if (maxLines === undefined || lines.length <= maxLines) {
+    return lines;
+  }
+
+  const constrained = lines.slice(0, maxLines);
+  if (ellipsis.length === 0) {
+    return constrained;
+  }
+  const last = constrained.at(-1);
+  if (last === undefined) {
+    return constrained;
+  }
+
+  const ellipsisLayout = manager.getLayout(ellipsis, style, trimEnd);
+  const ellipsisLine = ellipsisLayout.lines[0];
+  if (ellipsisLine === undefined || ellipsisLine.chars.length === 0) {
+    return constrained;
+  }
+  const targetWidth =
+    wrapWidth !== undefined && Number.isFinite(wrapWidth) && wrapWidth > 0
+      ? wrapWidth / scale
+      : last.width;
+  const chars = [...last.chars];
+  const charPositions = [...last.charPositions];
+  let keptWidth = last.width;
+  while (chars.length > 0 && keptWidth + ellipsisLine.width > targetWidth) {
+    chars.pop();
+    const removedPosition = charPositions.pop();
+    keptWidth = removedPosition ?? 0;
+  }
+  for (let index = 0; index < ellipsisLine.chars.length; index += 1) {
+    const character = ellipsisLine.chars[index];
+    const position = ellipsisLine.charPositions[index];
+    if (character !== undefined && position !== undefined) {
+      chars.push(character);
+      charPositions.push(keptWidth + position);
+    }
+  }
+
+  constrained[constrained.length - 1] = {
+    width: Math.min(targetWidth, keptWidth + ellipsisLine.width),
+    chars,
+    charPositions,
+  };
+
+  return constrained;
 }
 
 function resolveFontFamily(fontFamily: string | string[] | undefined): string {

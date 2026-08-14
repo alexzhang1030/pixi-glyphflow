@@ -222,12 +222,14 @@ export class TextStore {
       dirty |= TextDirty.Style;
     }
 
-    if (dirty !== TextDirty.None) {
+    if ((dirty & (TextDirty.Content | TextDirty.Style)) !== 0) {
       const revision = this.#sourceRevisions[slot] ?? 0;
       if (revision === 0xffff_ffff) {
         throw new RangeError("Text label source revision exhausted");
       }
       this.#sourceRevisions[slot] = revision + 1;
+    }
+    if (dirty !== TextDirty.None) {
       this.#journal.record(slot, dirty);
     }
 
@@ -257,9 +259,6 @@ export class TextStore {
       if (x === undefined || y === undefined || !Number.isFinite(x) || !Number.isFinite(y)) {
         throw new TypeError(`Position at index ${String(index)} must contain finite x/y values`);
       }
-      if ((this.#sourceRevisions[slot] ?? 0) === 0xffff_ffff) {
-        throw new RangeError(`Text label source revision exhausted at index ${String(index)}`);
-      }
       slots[index] = slot;
     }
 
@@ -277,7 +276,6 @@ export class TextStore {
 
       this.#x[slot] = x;
       this.#y[slot] = y;
-      this.#sourceRevisions[slot] = (this.#sourceRevisions[slot] ?? 0) + 1;
       this.#journal.record(slot, TextDirty.Transform);
       changed += 1;
     }
@@ -323,6 +321,14 @@ export class TextStore {
 
   get pendingDirty(): Readonly<PendingDirty> {
     return this.#journal.pending;
+  }
+
+  markDirty(id: TextId, mask: TextDirtyMask): void {
+    const slot = this.#requireSlot(id);
+    if (!Number.isSafeInteger(mask) || mask <= TextDirty.None || (mask & ~ALL_DIRTY) !== 0) {
+      throw new TypeError("Dirty mask contains unsupported domains");
+    }
+    this.#journal.record(slot, mask);
   }
 
   publishDirty(): Readonly<PublishedDirty> {

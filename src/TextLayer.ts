@@ -1,6 +1,12 @@
 import { Container, type DestroyOptions, type Renderer, type TextStyleOptions } from "pixi.js";
 
 import { FontRegistry } from "./FontRegistry";
+import {
+  assertTrustedGlyphRunOwner,
+  createTrustedGlyphRun,
+  type TrustedGlyphRun,
+  type TrustedGlyphRunInput,
+} from "./shaping/TrustedGlyphRun";
 import { TextStore } from "./store/TextStore";
 import { TextDirty, type TextDirtyMask, type TextStoreLabelPatch } from "./store/types";
 import type {
@@ -27,6 +33,7 @@ const ALL_DIRTY = TextDirty.Content | TextDirty.Transform | TextDirty.Style;
 export class TextLayer extends Container {
   readonly fonts: FontRegistry = new FontRegistry();
   readonly #store: TextStore;
+  readonly #trustedRuns = new Map<TextId, TrustedGlyphRun>();
   #revision = 0;
   #pendingMutations = 0;
   #acceptedMutations = 0;
@@ -109,6 +116,9 @@ export class TextLayer extends Container {
     this.#assertActive();
     assertLabelPatch(patch);
     const dirty = this.#store.update(id, normalizePatch(patch));
+    if ((dirty & (TextDirty.Content | TextDirty.Style)) !== 0) {
+      this.#trustedRuns.delete(id);
+    }
     this.#recordMutation(dirty, dirty === TextDirty.None ? 0 : 1);
 
     return dirty !== TextDirty.None;
@@ -136,6 +146,9 @@ export class TextLayer extends Container {
       if (entryDirty !== TextDirty.None) {
         changed += 1;
         dirty |= entryDirty;
+        if ((entryDirty & (TextDirty.Content | TextDirty.Style)) !== 0) {
+          this.#trustedRuns.delete(entry.id);
+        }
       }
     }
     this.#recordMutation(dirty, changed);
@@ -159,6 +172,9 @@ export class TextLayer extends Container {
   remove(id: TextId): boolean {
     this.#assertActive();
     const removed = this.#store.remove(id);
+    if (removed) {
+      this.#trustedRuns.delete(id);
+    }
     this.#recordMutation(ALL_DIRTY, Number(removed));
 
     return removed;
@@ -169,7 +185,11 @@ export class TextLayer extends Container {
     this.#assertActive();
     let removed = 0;
     for (const id of ids) {
-      removed += Number(this.#store.remove(id as TextId));
+      const currentId = id as TextId;
+      if (this.#store.remove(currentId)) {
+        this.#trustedRuns.delete(currentId);
+        removed += 1;
+      }
     }
     this.#recordMutation(ALL_DIRTY, removed);
 
@@ -182,6 +202,7 @@ export class TextLayer extends Container {
     const removed = this.#store.size;
     if (removed > 0) {
       this.#store.clear();
+      this.#trustedRuns.clear();
       this.#recordMutation(ALL_DIRTY, removed);
     }
 
@@ -192,6 +213,53 @@ export class TextLayer extends Container {
   compact(): Readonly<TextCompactionResult> {
     this.#assertActive();
     return this.#store.compact();
+  }
+
+  /** Stamp a caller-validated positioned run with this layer and the label source revision. */
+  createTrustedRun(id: TextId, input: TrustedGlyphRunInput): TrustedGlyphRun {
+    this.#assertActive();
+    const snapshot = this.#store.get(id);
+    if (snapshot === undefined) {
+      throw new RangeError(`Unknown or stale TextId: ${String(id)}`);
+    }
+    this.#assertTrustedRunSource(snapshot, input);
+
+    return createTrustedGlyphRun(this, snapshot.sourceRevision, input);
+  }
+
+  /** Adopt a trusted run by reference and schedule its glyph content for the next commit. */
+  adoptRun(id: TextId, run: TrustedGlyphRun): boolean {
+    this.#assertActive();
+    assertTrustedGlyphRunOwner(this, run);
+    const snapshot = this.#store.get(id);
+    if (snapshot === undefined) {
+      throw new RangeError(`Unknown or stale TextId: ${String(id)}`);
+    }
+    this.#assertTrustedRunSource(snapshot, run);
+    if (run.sourceRevision !== snapshot.sourceRevision) {
+      throw new RangeError(
+        `Trusted glyph run source revision ${String(run.sourceRevision)} is stale; current revision is ${String(snapshot.sourceRevision)}`,
+      );
+    }
+    if (this.#trustedRuns.get(id) === run) {
+      return false;
+    }
+
+    this.#trustedRuns.set(id, run);
+    this.#store.markDirty(id, TextDirty.Content);
+    this.#recordMutation(TextDirty.Content, 1);
+
+    return true;
+  }
+
+  /** Return the currently adopted trusted run for a label. */
+  getTrustedRun(id: TextId): TrustedGlyphRun | undefined {
+    this.#assertActive();
+    if (!this.#store.has(id)) {
+      return undefined;
+    }
+
+    return this.#trustedRuns.get(id);
   }
 
   /** Publish accepted mutations as one monotonic revision. */
@@ -233,6 +301,7 @@ export class TextLayer extends Container {
   detach(): void {
     this.#assertActive();
     this.#renderer = undefined;
+    this.#trustedRuns.clear();
   }
 
   /** Read an immutable diagnostics snapshot. */
@@ -281,6 +350,22 @@ export class TextLayer extends Container {
 
     this.#pendingMutations += count;
     this.#acceptedMutations += count;
+  }
+
+  #assertTrustedRunSource(
+    snapshot: Pick<TextLabelSnapshot, "text">,
+    input: Pick<TrustedGlyphRunInput, "text" | "fontFamily" | "fontRevision">,
+  ): void {
+    if (input.text !== snapshot.text) {
+      throw new RangeError("Trusted glyph run text differs from the current label text");
+    }
+    const registered = this.fonts.get(input.fontFamily);
+    const currentRevision = registered?.revision ?? 0;
+    if (input.fontRevision !== currentRevision) {
+      throw new RangeError(
+        `Trusted glyph run font revision ${String(input.fontRevision)} is stale; current revision is ${String(currentRevision)}`,
+      );
+    }
   }
 
   #assertActive(): void {

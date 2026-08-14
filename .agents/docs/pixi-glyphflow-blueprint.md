@@ -94,6 +94,8 @@ TextLayer is the primary deep module. Callers learn label mutation, commit, font
 
 Repeated commit calls without accepted mutations return the current revision and schedule zero shaping, layout, atlas, or instance work.
 
+Each label source revision advances for text or style changes. Transform-only updates preserve the source revision, allowing high-frequency position, rotation, scale, alpha, and visibility changes to reuse shaped runs and atlas entries.
+
 ### FontRegistry operations
 
 | Operation | Contract |

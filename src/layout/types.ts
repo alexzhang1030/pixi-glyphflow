@@ -33,6 +33,8 @@ export interface BitmapLayoutInput {
   readonly fontRevision?: number;
   readonly direction?: TextDirection;
   readonly trimEnd?: boolean;
+  readonly maxLines?: number;
+  readonly ellipsis?: string;
 }
 
 export interface BitmapLayoutLine {
@@ -67,4 +69,41 @@ export interface LayoutCacheStats {
   readonly entries: number;
   readonly hits: number;
   readonly misses: number;
+}
+
+export interface TextLayoutInput {
+  readonly text: string;
+  readonly style: Readonly<TextStyleOptions>;
+  readonly direction?: TextDirection;
+  readonly language?: string;
+  readonly script?: string;
+  readonly features?: readonly string[];
+  readonly variations?: Readonly<Record<string, number>>;
+  readonly trimEnd?: boolean;
+  readonly maxLines?: number;
+  readonly ellipsis?: string;
+}
+
+export interface PositionedRunShaper {
+  shape(
+    labelId: number,
+    sourceRevision: number,
+    input: import("../shaping/types").HarfBuzzShapeInput,
+  ): Promise<Readonly<PositionedRun>>;
+  destroy?(): void;
+}
+
+export interface BitmapLayoutAdapterLike {
+  layout(input: BitmapLayoutInput): Readonly<PositionedRun>;
+}
+
+export interface LayoutEngineOptions {
+  readonly bitmapAdapter?: BitmapLayoutAdapterLike;
+  readonly harfbuzzShaper?: PositionedRunShaper;
+}
+
+export interface LayoutEngineStats {
+  readonly layouts: number;
+  readonly bitmapLayouts: number;
+  readonly harfbuzzLayouts: number;
 }
