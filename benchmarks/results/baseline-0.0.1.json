@@ -1,8 +1,8 @@
 {
-  "schemaVersion": 1,
+  "schemaVersion": 2,
   "benchmark": "poc-cpu-api",
   "packageVersion": "0.0.1",
-  "capturedAt": "2026-08-14T16:49:27.324Z",
+  "capturedAt": "2026-08-14T17:01:52.954Z",
   "runtime": {
     "bun": "1.3.14",
     "cpu": "Apple M1 Pro",
@@ -10,120 +10,32 @@
     "release": "27.0.0",
     "architecture": "arm64"
   },
+  "isolation": {
+    "processPerSample": true,
+    "maxRssBytes": 2147483648,
+    "timeoutMs": 120000
+  },
   "workload": {
-    "labelCount": 10000,
+    "labelCount": 1000000,
     "mutationRate": 0.1,
-    "mutationCount": 1000,
-    "sampleCount": 7,
+    "mutationCount": 100000,
+    "requestedSampleCount": 3,
+    "completedSampleCount": 0,
     "text": "Counter 000000"
   },
-  "measurements": {
-    "create": {
-      "unit": "ms",
-      "samples": [
-        39.857749999999996,
-        33.15004099999999,
-        32.97833299999999,
-        30.894333000000017,
-        30.371958000000006,
-        32.26387500000004,
-        31.44795899999997
-      ],
-      "min": 30.371958000000006,
-      "p50": 32.26387500000004,
-      "p95": 39.857749999999996,
-      "p99": 39.857749999999996,
-      "max": 39.857749999999996
-    },
-    "createCommit": {
-      "unit": "ms",
-      "samples": [
-        0.025500000000022283,
-        0.027667000000008102,
-        0.010041999999998552,
-        0.016374999999982265,
-        0.014999999999986358,
-        0.014834000000007563,
-        0.01212500000002592
-      ],
-      "min": 0.010041999999998552,
-      "p50": 0.014999999999986358,
-      "p95": 0.027667000000008102,
-      "p99": 0.027667000000008102,
-      "max": 0.027667000000008102
-    },
-    "update": {
-      "unit": "ms",
-      "samples": [
-        0.5504999999999995,
-        0.3931659999999795,
-        0.3641669999999806,
-        0.34558400000003076,
-        0.38604099999997743,
-        0.2740840000000162,
-        0.34625000000005457
-      ],
-      "min": 0.2740840000000162,
-      "p50": 0.3641669999999806,
-      "p95": 0.5504999999999995,
-      "p99": 0.5504999999999995,
-      "max": 0.5504999999999995
-    },
-    "updateCommit": {
-      "unit": "ms",
-      "samples": [
-        0.0028749999999888587,
-        0.003250000000008413,
-        0.0022919999999828633,
-        0.0012500000000272848,
-        0.0010419999999840002,
-        0.0013330000000451037,
-        0.0013329999999882602
-      ],
-      "min": 0.0010419999999840002,
-      "p50": 0.0013330000000451037,
-      "p95": 0.003250000000008413,
-      "p99": 0.003250000000008413,
-      "max": 0.003250000000008413
-    },
-    "remove": {
-      "unit": "ms",
-      "samples": [
-        10.566541,
-        11.027332999999999,
-        8.744665999999995,
-        9.965666999999996,
-        9.267500000000041,
-        9.911417000000029,
-        8.75970799999999
-      ],
-      "min": 8.744665999999995,
-      "p50": 9.911417000000029,
-      "p95": 11.027332999999999,
-      "p99": 11.027332999999999,
-      "max": 11.027332999999999
-    },
-    "heapDelta": {
-      "unit": "bytes",
-      "samples": [
-        9997805,
-        22244620,
-        -9116510,
-        15755940,
-        -23312173,
-        23554629,
-        -21949331
-      ],
-      "min": -23312173,
-      "p50": 9997805,
-      "p95": 23554629,
-      "p99": 23554629,
-      "max": 23554629
+  "status": "capacity-limit",
+  "failures": [
+    {
+      "status": "resource-limit",
+      "stage": "create",
+      "completedLabels": 733184,
+      "rssBytes": 2148220928,
+      "detail": "Object backend reached 2148220928 RSS bytes at 733184 create operations; limit is 2147483648 bytes"
     }
-  },
+  ],
   "limitations": [
-    "This CPU baseline creates the 0.0.1 object-per-label backend without a browser renderer.",
-    "Browser frame, draw-call, upload, texture, and visual baselines are recorded separately.",
-    "Heap deltas are observational because this process does not force garbage collection."
+    "This CPU baseline runs the 0.0.1 object-per-label backend in a renderer-free process.",
+    "Browser frame, draw-call, upload, texture, interaction, and visual baselines are recorded separately.",
+    "Each measured sample runs in a fresh process and reports observational heap and peak RSS values."
   ]
 }
