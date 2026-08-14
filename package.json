@@ -53,10 +53,15 @@
     "package:lint": "publint",
     "package:types": "attw --pack . --profile esm-only",
     "package:smoke": "bun scripts/package-smoke.ts",
+    "smoke:harfbuzz": "bun scripts/harfbuzz-smoke.ts",
     "package:dry-run": "npm pack --dry-run",
     "check": "bun run format:check && bun run lint && bun run typecheck && bun test && bun run build && bun run package:lint && bun run package:types",
     "release:check": "bun run check && bun run audit && bun run package:smoke && bun run package:dry-run",
     "prepublishOnly": "bun run check"
+  },
+  "dependencies": {
+    "@zappar/msdf-generator": "1.2.4",
+    "harfbuzzjs": "1.6.0"
   },
   "devDependencies": {
     "@arethetypeswrong/cli": "0.18.5",
