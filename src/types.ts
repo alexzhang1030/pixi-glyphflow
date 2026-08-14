@@ -68,6 +68,15 @@ export interface TextUpdate {
   readonly patch: TextLabelPatch;
 }
 
+/** Memory effect of an explicit CPU-store compaction. */
+export interface TextCompactionResult {
+  readonly beforeCapacity: number;
+  readonly afterCapacity: number;
+  readonly beforeBytes: number;
+  readonly afterBytes: number;
+  readonly releasedBytes: number;
+}
+
 /** Observable core state. Rendering, atlas, culling, and worker fields extend this shape. */
 export interface TextLayerStats {
   readonly backend: "glyphflow-core";
@@ -75,6 +84,7 @@ export interface TextLayerStats {
   readonly capacity: number;
   readonly pendingMutations: number;
   readonly pendingDirtyMask: number;
+  readonly pendingDirtyLabels: number;
   readonly revision: TextRevision;
   readonly attached: boolean;
   readonly acceptedMutations: number;
@@ -83,6 +93,10 @@ export interface TextLayerStats {
   readonly referenceSlotBytes: number;
   readonly allocatedStoreBytes: number;
   readonly lastCommitDurationMs: number;
+  readonly lastCommitDirtyLabels: number;
+  readonly lastCommitContentLabels: number;
+  readonly lastCommitTransformLabels: number;
+  readonly lastCommitStyleLabels: number;
 }
 
 /** Type-only forward declaration used by API documentation links. */

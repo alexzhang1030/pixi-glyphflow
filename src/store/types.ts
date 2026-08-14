@@ -45,3 +45,11 @@ export interface TextStoreStats {
   readonly referenceSlotBytes: number;
   readonly allocatedBytes: number;
 }
+
+export interface TextStoreCompaction {
+  readonly beforeCapacity: number;
+  readonly afterCapacity: number;
+  readonly beforeBytes: number;
+  readonly afterBytes: number;
+  readonly releasedBytes: number;
+}

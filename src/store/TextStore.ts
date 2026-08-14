@@ -1,9 +1,11 @@
 import type { TextId } from "../types";
+import { DirtyJournal, type PendingDirty, type PublishedDirty } from "./DirtyJournal";
 import {
   TextDirty,
   type TextDirtyMask,
   type TextStoreLabel,
   type TextStoreLabelPatch,
+  type TextStoreCompaction,
   type TextStoreSnapshot,
   type TextStoreStats,
 } from "./types";
@@ -14,6 +16,7 @@ const MAX_GENERATION = 0x1ff;
 const MAX_NAMESPACE = 0xf_ffff;
 const MAX_CAPACITY = 0x100_0000;
 const DEFAULT_CAPACITY = 16;
+const ALL_DIRTY = TextDirty.Content | TextDirty.Transform | TextDirty.Style;
 let nextNamespace = 1;
 
 export interface TextStoreOptions {
@@ -41,6 +44,7 @@ export class TextStore {
   #styles: Array<Readonly<TextStoreLabel["style"]> | undefined>;
   readonly #freeSlots: number[] = [];
   #positionSlots = new Uint32Array();
+  readonly #journal: DirtyJournal;
 
   constructor(options: TextStoreOptions = {}) {
     const requestedCapacity = options.initialCapacity ?? DEFAULT_CAPACITY;
@@ -66,6 +70,7 @@ export class TextStore {
     this.#anchorY = new Float32Array(this.#capacity);
     this.#texts = Array.from({ length: this.#capacity }, () => undefined);
     this.#styles = Array.from({ length: this.#capacity }, () => undefined);
+    this.#journal = new DirtyJournal(this.#capacity);
   }
 
   get size(): number {
@@ -105,7 +110,8 @@ export class TextStore {
       this.#visible.byteLength +
       this.#anchorX.byteLength +
       this.#anchorY.byteLength +
-      this.#positionSlots.byteLength;
+      this.#positionSlots.byteLength +
+      this.#journal.allocatedBytes;
     const referenceSlotBytes = this.#capacity * 2 * 8;
 
     return Object.freeze({
@@ -127,6 +133,7 @@ export class TextStore {
     this.#occupied[slot] = 1;
     this.#sourceRevisions[slot] = 1;
     this.#write(slot, label);
+    this.#journal.record(slot, ALL_DIRTY);
     this.#size += 1;
 
     return (this.#idBase + generation * SLOT_RADIX + slot) as TextId;
@@ -221,6 +228,7 @@ export class TextStore {
         throw new RangeError("Text label source revision exhausted");
       }
       this.#sourceRevisions[slot] = revision + 1;
+      this.#journal.record(slot, dirty);
     }
 
     return dirty;
@@ -270,6 +278,7 @@ export class TextStore {
       this.#x[slot] = x;
       this.#y[slot] = y;
       this.#sourceRevisions[slot] = (this.#sourceRevisions[slot] ?? 0) + 1;
+      this.#journal.record(slot, TextDirty.Transform);
       changed += 1;
     }
 
@@ -287,6 +296,7 @@ export class TextStore {
     this.#texts[slot] = undefined;
     this.#styles[slot] = undefined;
     this.#size -= 1;
+    this.#journal.record(slot, ALL_DIRTY);
     this.#retireSlot(slot);
 
     return true;
@@ -301,6 +311,7 @@ export class TextStore {
         this.#sourceRevisions[slot] = 0;
         this.#texts[slot] = undefined;
         this.#styles[slot] = undefined;
+        this.#journal.record(slot, ALL_DIRTY);
         this.#retireSlot(slot);
       } else if ((this.#generations[slot] ?? 0) < MAX_GENERATION) {
         this.#freeSlots.push(slot);
@@ -308,6 +319,49 @@ export class TextStore {
     }
 
     this.#size = 0;
+  }
+
+  get pendingDirty(): Readonly<PendingDirty> {
+    return this.#journal.pending;
+  }
+
+  publishDirty(): Readonly<PublishedDirty> {
+    return this.#journal.publish();
+  }
+
+  compact(): Readonly<TextStoreCompaction> {
+    const beforeCapacity = this.#capacity;
+    const beforeBytes = this.stats.allocatedBytes;
+    const minimumCapacity = Math.max(DEFAULT_CAPACITY, this.#highWater);
+    const afterCapacity = nextPowerOfTwo(minimumCapacity);
+
+    if (afterCapacity < beforeCapacity) {
+      this.#generations = resizeTypedArray(this.#generations, afterCapacity);
+      this.#occupied = resizeTypedArray(this.#occupied, afterCapacity);
+      this.#sourceRevisions = resizeTypedArray(this.#sourceRevisions, afterCapacity);
+      this.#x = resizeTypedArray(this.#x, afterCapacity);
+      this.#y = resizeTypedArray(this.#y, afterCapacity);
+      this.#scaleX = resizeTypedArray(this.#scaleX, afterCapacity);
+      this.#scaleY = resizeTypedArray(this.#scaleY, afterCapacity);
+      this.#rotation = resizeTypedArray(this.#rotation, afterCapacity);
+      this.#alpha = resizeTypedArray(this.#alpha, afterCapacity);
+      this.#visible = resizeTypedArray(this.#visible, afterCapacity);
+      this.#anchorX = resizeTypedArray(this.#anchorX, afterCapacity);
+      this.#anchorY = resizeTypedArray(this.#anchorY, afterCapacity);
+      this.#texts.length = afterCapacity;
+      this.#styles.length = afterCapacity;
+      this.#journal.resize(afterCapacity);
+      this.#capacity = afterCapacity;
+    }
+
+    const afterBytes = this.stats.allocatedBytes;
+    return Object.freeze({
+      beforeCapacity,
+      afterCapacity: this.#capacity,
+      beforeBytes,
+      afterBytes,
+      releasedBytes: beforeBytes - afterBytes,
+    });
   }
 
   dispose(): void {
@@ -330,6 +384,7 @@ export class TextStore {
     this.#styles = [];
     this.#freeSlots.length = 0;
     this.#positionSlots = new Uint32Array();
+    this.#journal.dispose();
   }
 
   #allocateSlot(): number {
@@ -364,6 +419,7 @@ export class TextStore {
     this.#anchorY = growTypedArray(this.#anchorY, capacity);
     this.#texts.length = capacity;
     this.#styles.length = capacity;
+    this.#journal.reserve(capacity);
     this.#capacity = capacity;
   }
 
@@ -501,6 +557,22 @@ function growTypedArray<T extends Uint8Array | Uint32Array | Float32Array>(
         : new Float32Array(capacity)
   ) as T;
   target.set(source);
+
+  return target;
+}
+
+function resizeTypedArray<T extends Uint8Array | Uint32Array | Float32Array>(
+  source: T,
+  capacity: number,
+): T {
+  const target = (
+    source instanceof Uint8Array
+      ? new Uint8Array(capacity)
+      : source instanceof Uint32Array
+        ? new Uint32Array(capacity)
+        : new Float32Array(capacity)
+  ) as T;
+  target.set(source.subarray(0, capacity));
 
   return target;
 }

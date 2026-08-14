@@ -29,10 +29,10 @@
   - Verify: bun test tests/TextLayer.crud.test.ts; bun run benchmark:core
   - Files: src/TextLayer.ts, src/types.ts, src/index.ts, tests/TextLayer.crud.test.ts, benchmarks/layer.ts, benchmarks/layer-worker.ts
 
-- [ ] Task 1.3: Implement revision journals, no-op commits, compact, and core diagnostics.
+- [x] Task 1.3: Implement revision journals, no-op commits, compact, and core diagnostics.
   - Acceptance: Dirty domains remain minimal, revisions are monotonic, no-op commits schedule zero work, and compact preserves IDs.
   - Verify: bun test tests/TextLayer.commit.test.ts
-  - Files: src/TextLayer.ts, src/store/DirtyJournal.ts, src/types.ts, tests/TextLayer.commit.test.ts
+  - Files: src/TextLayer.ts, src/store/DirtyJournal.ts, src/store/TextStore.ts, src/types.ts, tests/DirtyJournal.test.ts, tests/TextLayer.commit.test.ts
 
 ## Phase 2
 

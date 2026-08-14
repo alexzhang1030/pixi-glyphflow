@@ -4,6 +4,7 @@ import { TextStore } from "./store/TextStore";
 import { TextDirty, type TextDirtyMask, type TextStoreLabelPatch } from "./store/types";
 import type {
   TextId,
+  TextCompactionResult,
   TextLabelPatch,
   TextLabelSnapshot,
   TextLabelSpec,
@@ -26,10 +27,13 @@ export class TextLayer extends Container {
   readonly #store: TextStore;
   #revision = 0;
   #pendingMutations = 0;
-  #pendingDirtyMask: TextDirtyMask = TextDirty.None;
   #acceptedMutations = 0;
   #commits = 0;
   #lastCommitDurationMs = 0;
+  #lastCommitDirtyLabels = 0;
+  #lastCommitContentLabels = 0;
+  #lastCommitTransformLabels = 0;
+  #lastCommitStyleLabels = 0;
   #renderer: Renderer | undefined;
 
   constructor(options: TextLayerOptions = {}) {
@@ -182,11 +186,21 @@ export class TextLayer extends Container {
     return removed;
   }
 
+  /** Shrink unused reserved CPU capacity while preserving every current identity. */
+  compact(): Readonly<TextCompactionResult> {
+    this.#assertActive();
+    return this.#store.compact();
+  }
+
   /** Publish accepted mutations as one monotonic revision. */
   commit(): Promise<TextRevision> {
     this.#assertActive();
     if (this.#pendingMutations === 0) {
       this.#lastCommitDurationMs = 0;
+      this.#lastCommitDirtyLabels = 0;
+      this.#lastCommitContentLabels = 0;
+      this.#lastCommitTransformLabels = 0;
+      this.#lastCommitStyleLabels = 0;
       return Promise.resolve(this.#revision as TextRevision);
     }
     if (this.#revision === Number.MAX_SAFE_INTEGER) {
@@ -194,10 +208,14 @@ export class TextLayer extends Container {
     }
 
     const start = performance.now();
+    const dirty = this.#store.publishDirty();
     this.#revision += 1;
     this.#pendingMutations = 0;
-    this.#pendingDirtyMask = TextDirty.None;
     this.#commits += 1;
+    this.#lastCommitDirtyLabels = dirty.labels;
+    this.#lastCommitContentLabels = dirty.content;
+    this.#lastCommitTransformLabels = dirty.transform;
+    this.#lastCommitStyleLabels = dirty.style;
     this.#lastCommitDurationMs = performance.now() - start;
 
     return Promise.resolve(this.#revision as TextRevision);
@@ -218,13 +236,15 @@ export class TextLayer extends Container {
   /** Read an immutable diagnostics snapshot. */
   get stats(): Readonly<TextLayerStats> {
     const store = this.#store.stats;
+    const pendingDirty = this.#store.pendingDirty;
 
     return Object.freeze({
       backend: "glyphflow-core",
       labelCount: store.size,
       capacity: store.capacity,
       pendingMutations: this.#pendingMutations,
-      pendingDirtyMask: this.#pendingDirtyMask,
+      pendingDirtyMask: pendingDirty.mask,
+      pendingDirtyLabels: pendingDirty.labels,
       revision: this.#revision as TextRevision,
       attached: this.#renderer !== undefined,
       acceptedMutations: this.#acceptedMutations,
@@ -233,6 +253,10 @@ export class TextLayer extends Container {
       referenceSlotBytes: store.referenceSlotBytes,
       allocatedStoreBytes: store.allocatedBytes,
       lastCommitDurationMs: this.#lastCommitDurationMs,
+      lastCommitDirtyLabels: this.#lastCommitDirtyLabels,
+      lastCommitContentLabels: this.#lastCommitContentLabels,
+      lastCommitTransformLabels: this.#lastCommitTransformLabels,
+      lastCommitStyleLabels: this.#lastCommitStyleLabels,
     });
   }
 
@@ -253,7 +277,6 @@ export class TextLayer extends Container {
     }
 
     this.#pendingMutations += count;
-    this.#pendingDirtyMask |= dirty;
     this.#acceptedMutations += count;
   }
 
