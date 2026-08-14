@@ -1,0 +1,32 @@
+name: Publish package
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: read
+  id-token: write
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    environment: npm
+    steps:
+      - uses: actions/checkout@v7
+      - uses: oven-sh/setup-bun@v2
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
+          registry-url: https://registry.npmjs.org
+          package-manager-cache: false
+      - run: npm install --global npm@12.0.2
+      - run: bun ci
+      - run: bun run audit
+      - name: Verify tag and package version
+        run: >-
+          node --input-type=module --eval
+          "import pkg from './package.json' with { type: 'json' };
+          if ('v' + pkg.version !== process.env.GITHUB_REF_NAME) process.exit(1)"
+      - run: npm publish
