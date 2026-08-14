@@ -61,6 +61,7 @@ async function runSample(
     scaleY: 1,
     rotation: 0,
     zIndex: 0,
+    blendMode: "normal",
     alpha: 1,
     visible: true,
     anchorX: 0,

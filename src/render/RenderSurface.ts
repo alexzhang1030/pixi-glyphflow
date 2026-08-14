@@ -1,6 +1,7 @@
 import {
   BufferImageSource,
   Texture,
+  type BLEND_MODES,
   type Container,
   type Renderer,
   type WebGLRenderer,
@@ -24,11 +25,25 @@ interface AtlasTexturePage {
 }
 
 interface SurfaceMesh {
-  readonly page: number;
+  page: number;
+  blendMode: BLEND_MODES;
   readonly mesh: GlyphMesh;
   data: ArrayBuffer;
   compact: boolean;
   initialized: boolean;
+}
+
+interface DrawSpan {
+  readonly offset: number;
+  count: number;
+}
+
+interface DrawSegment {
+  readonly page: number;
+  readonly zIndex: number;
+  readonly blendMode: BLEND_MODES;
+  readonly spans: DrawSpan[];
+  count: number;
 }
 
 export interface RenderSurfaceStats {
@@ -78,7 +93,7 @@ export class RenderSurface {
     const transformRanges = this.#coordinator.transforms.consumeDirty();
     const instanceRanges = this.#coordinator.instances.consumeDirty();
     this.#syncPalette(transformRanges);
-    if (instanceRanges.length > 0 || this.#meshes.size === 0) {
+    if (instanceRanges.length > 0 || result.drawOrderChanged || this.#meshes.size === 0) {
       this.#syncMeshes(instanceRanges);
     }
   }
@@ -201,43 +216,96 @@ export class RenderSurface {
     }
     const data = store.buffer;
     const view = new DataView(data);
-    const counts = new Map<number, number>();
-    for (let index = 0; index < storeStats.highWater; index += 1) {
-      const metadata = view.getUint32(index * GLYPH_INSTANCE_STRIDE + 28, true);
-      if ((metadata & ACTIVE_BIT) === 0) continue;
-      const page = metadata & PAGE_MASK;
-      counts.set(page, (counts.get(page) ?? 0) + 1);
-    }
-    if (counts.size === 1 && storeStats.highWater <= storeStats.activeInstances * 2) {
-      const page = counts.keys().next().value as number | undefined;
-      if (page === undefined) throw new Error("Active glyph page is unavailable");
-      this.#syncDirectMesh(page, data, storeStats.highWater, ranges);
+    const { segments, naturalOrder } = this.#buildDrawSegments(view);
+    if (
+      segments.length === 1 &&
+      naturalOrder &&
+      storeStats.highWater <= storeStats.activeInstances * 2
+    ) {
+      const segment = segments[0];
+      if (segment === undefined) throw new Error("Active glyph segment is unavailable");
+      this.#syncDirectMesh(segment.page, segment.blendMode, data, storeStats.highWater, ranges);
       this.#submittedGlyphs = storeStats.activeInstances;
       return;
     }
 
-    this.#syncCompactMeshes(data, view, storeStats.highWater, counts);
+    this.#syncCompactMeshes(data, segments);
     this.#submittedGlyphs = storeStats.activeInstances;
+  }
+
+  #buildDrawSegments(view: DataView): Readonly<{
+    segments: DrawSegment[];
+    naturalOrder: boolean;
+  }> {
+    const segments: DrawSegment[] = [];
+    let lastSourceIndex = -1;
+    let naturalOrder = true;
+    for (const state of this.#coordinator.getDrawStates()) {
+      const range = this.#coordinator.instances.getRange(state.slot);
+      if (range === undefined) continue;
+      for (let index = 0; index < range.count; index += 1) {
+        const sourceIndex = range.offset + index;
+        const metadata = view.getUint32(sourceIndex * GLYPH_INSTANCE_STRIDE + 28, true);
+        if ((metadata & ACTIVE_BIT) === 0) {
+          throw new Error(`Inactive glyph found in label range ${String(state.slot)}`);
+        }
+        if (sourceIndex <= lastSourceIndex) naturalOrder = false;
+        lastSourceIndex = sourceIndex;
+        const page = metadata & PAGE_MASK;
+        let segment = segments[segments.length - 1];
+        if (
+          segment === undefined ||
+          segment.page !== page ||
+          segment.zIndex !== state.zIndex ||
+          segment.blendMode !== state.blendMode
+        ) {
+          segment = {
+            page,
+            zIndex: state.zIndex,
+            blendMode: state.blendMode,
+            spans: [],
+            count: 0,
+          };
+          segments.push(segment);
+        }
+        const span = segment.spans[segment.spans.length - 1];
+        if (span !== undefined && span.offset + span.count === sourceIndex) {
+          span.count += 1;
+        } else {
+          segment.spans.push({ offset: sourceIndex, count: 1 });
+        }
+        segment.count += 1;
+      }
+    }
+    if (
+      segments.reduce((sum, segment) => sum + segment.count, 0) !==
+      this.#coordinator.instances.stats.activeInstances
+    ) {
+      throw new Error("Draw segment glyph count differs from active instance count");
+    }
+    return { segments, naturalOrder };
   }
 
   #syncDirectMesh(
     page: number,
+    blendMode: BLEND_MODES,
     data: ArrayBuffer,
     instanceCount: number,
     ranges: readonly Readonly<DirtyByteRange>[],
   ): void {
-    for (const [pageId, surface] of this.#meshes) {
-      if (pageId !== page) this.#destroyMesh(pageId, surface);
+    for (const [key, surface] of this.#meshes) {
+      if (key !== 0) this.#destroyMesh(key, surface);
     }
-    let surface = this.#meshes.get(page);
+    let surface = this.#meshes.get(0);
     if (surface === undefined) {
-      surface = this.#createMesh(page, data, instanceCount, false);
+      surface = this.#createMesh(0, page, blendMode, data, instanceCount, false);
       initializeBuffer(this.#renderer, surface.mesh);
       surface.initialized = true;
       this.#instanceUploadBytes += data.byteLength;
       this.#instanceWrites += 1;
       return;
     }
+    this.#configureMesh(surface, page, blendMode, 0);
     surface.compact = false;
     if (surface.data !== data) {
       surface.data = data;
@@ -261,64 +329,70 @@ export class RenderSurface {
     this.#instanceWrites += uploaded.writes;
   }
 
-  #syncCompactMeshes(
-    source: ArrayBuffer,
-    view: DataView,
-    highWater: number,
-    counts: ReadonlyMap<number, number>,
-  ): void {
-    for (const [page, surface] of this.#meshes) {
-      if (!counts.has(page)) this.#destroyMesh(page, surface);
+  #syncCompactMeshes(source: ArrayBuffer, segments: readonly DrawSegment[]): void {
+    for (const [key, surface] of this.#meshes) {
+      if (key >= segments.length) this.#destroyMesh(key, surface);
     }
-    const buffers = new Map<number, ArrayBuffer>();
-    const targets = new Map<number, Uint8Array>();
-    const offsets = new Map<number, number>();
-    for (const [page, count] of counts) {
-      const current = this.#meshes.get(page);
-      const capacity = nextPowerOfTwo(count);
+    const bytes = new Uint8Array(source);
+    for (let key = 0; key < segments.length; key += 1) {
+      const segment = segments[key];
+      if (segment === undefined) throw new Error(`Draw segment ${String(key)} is unavailable`);
+      const current = this.#meshes.get(key);
+      const capacity = nextPowerOfTwo(segment.count);
       const buffer =
         current !== undefined &&
         current.compact &&
         current.data.byteLength >= capacity * GLYPH_INSTANCE_STRIDE
           ? current.data
           : new ArrayBuffer(capacity * GLYPH_INSTANCE_STRIDE);
-      buffers.set(page, buffer);
-      targets.set(page, new Uint8Array(buffer));
-      offsets.set(page, 0);
-    }
-    const bytes = new Uint8Array(source);
-    for (let index = 0; index < highWater; index += 1) {
-      const metadata = view.getUint32(index * GLYPH_INSTANCE_STRIDE + 28, true);
-      if ((metadata & ACTIVE_BIT) === 0) continue;
-      const page = metadata & PAGE_MASK;
-      const target = targets.get(page);
-      const offset = offsets.get(page) ?? 0;
-      if (target === undefined)
-        throw new Error(`Compact glyph page ${String(page)} is unavailable`);
-      const sourceOffset = index * GLYPH_INSTANCE_STRIDE;
-      target.set(bytes.subarray(sourceOffset, sourceOffset + GLYPH_INSTANCE_STRIDE), offset);
-      offsets.set(page, offset + GLYPH_INSTANCE_STRIDE);
-    }
-    for (const [page, count] of counts) {
-      const buffer = buffers.get(page);
-      if (buffer === undefined) throw new Error(`Compact buffer ${String(page)} is unavailable`);
-      let surface = this.#meshes.get(page);
+      const target = new Uint8Array(buffer);
+      let targetOffset = 0;
+      for (const span of segment.spans) {
+        const sourceOffset = span.offset * GLYPH_INSTANCE_STRIDE;
+        const byteLength = span.count * GLYPH_INSTANCE_STRIDE;
+        target.set(bytes.subarray(sourceOffset, sourceOffset + byteLength), targetOffset);
+        targetOffset += byteLength;
+      }
+      let surface = current;
       if (surface === undefined) {
-        surface = this.#createMesh(page, buffer, count, true);
+        surface = this.#createMesh(
+          key,
+          segment.page,
+          segment.blendMode,
+          buffer,
+          segment.count,
+          true,
+        );
       } else {
+        this.#configureMesh(surface, segment.page, segment.blendMode, key);
         surface.data = buffer;
         surface.compact = true;
-        surface.mesh.updateInstances(buffer, count);
+        surface.mesh.updateInstances(buffer, segment.count);
       }
       initializeBuffer(this.#renderer, surface.mesh);
       surface.initialized = true;
-      this.#instanceUploadBytes += count * GLYPH_INSTANCE_STRIDE;
+      this.#instanceUploadBytes += segment.count * GLYPH_INSTANCE_STRIDE;
       this.#instanceWrites += 1;
     }
+    this.#orderSegmentMeshes(segments.length);
     this.#pageRebuilds += 1;
   }
 
-  #createMesh(page: number, data: ArrayBuffer, count: number, compact: boolean): SurfaceMesh {
+  #orderSegmentMeshes(count: number): void {
+    for (let key = 0; key < count; key += 1) {
+      const surface = this.#meshes.get(key);
+      if (surface !== undefined) this.#owner.addChild(surface.mesh);
+    }
+  }
+
+  #createMesh(
+    key: number,
+    page: number,
+    blendMode: BLEND_MODES,
+    data: ArrayBuffer,
+    count: number,
+    compact: boolean,
+  ): SurfaceMesh {
     const atlasPage = this.#ensureAtlasPage(page);
     const paletteWidth = this.#coordinator.transforms.stats.textureWidth;
     const mesh = new GlyphMesh({
@@ -328,22 +402,43 @@ export class RenderSurface {
       instanceData: data,
       instanceCount: count,
     });
-    mesh.label = `pixi-glyphflow-page-${String(page)}`;
+    mesh.label = `pixi-glyphflow-segment-${String(key)}-page-${String(page)}`;
+    mesh.blendMode = blendMode;
     this.#owner.addChild(mesh);
-    const surface: SurfaceMesh = { page, mesh, data, compact, initialized: false };
-    this.#meshes.set(page, surface);
+    const surface: SurfaceMesh = {
+      page,
+      blendMode,
+      mesh,
+      data,
+      compact,
+      initialized: false,
+    };
+    this.#meshes.set(key, surface);
 
     return surface;
   }
 
-  #destroyMesh(page: number, surface: SurfaceMesh): void {
+  #configureMesh(surface: SurfaceMesh, page: number, blendMode: BLEND_MODES, key: number): void {
+    if (surface.page !== page) {
+      surface.page = page;
+      surface.mesh.setTexture(this.#ensureAtlasPage(page).texture);
+    }
+    if (surface.blendMode !== blendMode) {
+      surface.blendMode = blendMode;
+      surface.mesh.blendMode = blendMode;
+    }
+    surface.mesh.label = `pixi-glyphflow-segment-${String(key)}-page-${String(page)}`;
+    this.#owner.addChild(surface.mesh);
+  }
+
+  #destroyMesh(key: number, surface: SurfaceMesh): void {
     surface.mesh.removeFromParent();
     surface.mesh.destroy();
-    this.#meshes.delete(page);
+    this.#meshes.delete(key);
   }
 
   #destroyMeshes(): void {
-    for (const [page, surface] of this.#meshes) this.#destroyMesh(page, surface);
+    for (const [key, surface] of this.#meshes) this.#destroyMesh(key, surface);
   }
 
   #assertActive(): void {

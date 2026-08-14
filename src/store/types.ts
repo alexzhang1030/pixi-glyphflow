@@ -1,4 +1,4 @@
-import type { TextStyleOptions } from "pixi.js";
+import type { BLEND_MODES, TextStyleOptions } from "pixi.js";
 
 import type { TextId } from "../types";
 
@@ -24,6 +24,7 @@ export interface TextStoreLabel {
   readonly scaleY: number;
   readonly rotation: number;
   readonly zIndex: number;
+  readonly blendMode: BLEND_MODES;
   readonly alpha: number;
   readonly visible: boolean;
   readonly anchorX: number;

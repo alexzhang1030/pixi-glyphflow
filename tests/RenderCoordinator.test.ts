@@ -137,6 +137,8 @@ function label(
     scaleY: 1,
     rotation: 0,
     zIndex: 0,
+    order: 1,
+    blendMode: "normal",
     alpha: 1,
     visible: true,
     anchorX: 0,

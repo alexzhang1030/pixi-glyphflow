@@ -26,6 +26,7 @@ describe("TextLayer 1.0 CRUD", () => {
       rotation: 0,
       alpha: 1,
       visible: true,
+      blendMode: "normal",
       anchor: { x: 0.5, y: 0.5 },
     });
     expect(Object.isFrozen(snapshot)).toBe(true);

@@ -21,6 +21,7 @@ import {
   type TrustedGlyphRun,
   type TrustedGlyphRunInput,
 } from "./shaping/TrustedGlyphRun";
+import { assertBlendMode } from "./store/blendModes";
 import { TextStore } from "./store/TextStore";
 import {
   TextDirty,
@@ -96,6 +97,7 @@ export class TextLayer extends Container {
     scaleY: 1,
     rotation: 0,
     zIndex: 0,
+    blendMode: "normal",
     alpha: 1,
     visible: true,
     anchorX: 0,
@@ -177,6 +179,7 @@ export class TextLayer extends Container {
       scaleY: snapshot.scaleY,
       rotation: snapshot.rotation,
       zIndex: snapshot.zIndex,
+      blendMode: snapshot.blendMode,
       alpha: snapshot.alpha,
       visible: snapshot.visible,
       anchor: Object.freeze({ x: snapshot.anchorX, y: snapshot.anchorY }),
@@ -664,11 +667,13 @@ export class TextLayer extends Container {
       if (wasRendered && dirtyMask === TextDirty.None) continue;
       const snapshot = this.#store.snapshotAt(slot);
       if (snapshot === undefined) throw new Error("Visible label snapshot is unavailable");
+      const order = this.#spatial.orderOf(slot);
+      if (order === undefined) throw new Error("Visible label order is unavailable");
       const trustedRun = this.#trustedRuns.get(snapshot.id);
       changes.push({
         slot,
         mask: wasRendered ? dirtyMask : ALL_DIRTY,
-        snapshot: toRenderSnapshot(snapshot),
+        snapshot: toRenderSnapshot(snapshot, order),
         ...(trustedRun === undefined ? {} : { trustedRun }),
       });
     }
@@ -754,6 +759,7 @@ function normalizeLabel(
   output.scaleY = spec.scaleY ?? scaleY;
   output.rotation = spec.rotation ?? 0;
   output.zIndex = spec.zIndex ?? 0;
+  output.blendMode = spec.blendMode ?? "normal";
   output.alpha = spec.alpha ?? 1;
   output.visible = spec.visible ?? true;
   output.anchorX = anchorX;
@@ -763,7 +769,10 @@ function normalizeLabel(
   return output;
 }
 
-function toRenderSnapshot(snapshot: Readonly<TextStoreSnapshot>): Readonly<RenderLabelSnapshot> {
+function toRenderSnapshot(
+  snapshot: Readonly<TextStoreSnapshot>,
+  order: number,
+): Readonly<RenderLabelSnapshot> {
   return Object.freeze({
     sourceRevision: snapshot.sourceRevision,
     text: snapshot.text,
@@ -773,6 +782,8 @@ function toRenderSnapshot(snapshot: Readonly<TextStoreSnapshot>): Readonly<Rende
     scaleY: snapshot.scaleY,
     rotation: snapshot.rotation,
     zIndex: snapshot.zIndex,
+    order,
+    blendMode: snapshot.blendMode,
     alpha: snapshot.alpha,
     visible: snapshot.visible,
     anchorX: snapshot.anchorX,
@@ -798,6 +809,7 @@ function normalizePatch(patch: TextLabelPatch): TextStoreLabelPatch {
   if (patch.scaleY !== undefined) normalized.scaleY = patch.scaleY;
   if (patch.rotation !== undefined) normalized.rotation = patch.rotation;
   if (patch.zIndex !== undefined) normalized.zIndex = patch.zIndex;
+  if (patch.blendMode !== undefined) normalized.blendMode = patch.blendMode;
   if (patch.alpha !== undefined) normalized.alpha = patch.alpha;
   if (patch.visible !== undefined) normalized.visible = patch.visible;
   if (patch.anchor !== undefined) {
@@ -833,6 +845,7 @@ function assertLabelPatch(patch: TextLabelPatch): void {
   assertFiniteField("scaleY", patch.scaleY);
   assertFiniteField("rotation", patch.rotation);
   assertFiniteField("zIndex", patch.zIndex);
+  if (patch.blendMode !== undefined) assertBlendMode(patch.blendMode);
   assertFiniteField("alpha", patch.alpha);
   if (patch.visible !== undefined && typeof patch.visible !== "boolean") {
     throw new TypeError("visible must be a boolean");

@@ -1,4 +1,4 @@
-import type { TextStyleOptions } from "pixi.js";
+import type { BLEND_MODES, TextStyleOptions } from "pixi.js";
 
 import { GlyphAtlas } from "../atlas/GlyphAtlas";
 import { RasterGlyphProvider } from "../atlas/RasterGlyphProvider";
@@ -26,6 +26,8 @@ export interface RenderLabelSnapshot {
   readonly scaleY: number;
   readonly rotation: number;
   readonly zIndex: number;
+  readonly order: number;
+  readonly blendMode: BLEND_MODES;
   readonly alpha: number;
   readonly visible: boolean;
   readonly anchorX: number;
@@ -73,6 +75,14 @@ export interface RenderCommitResult {
   readonly glyphs: number;
   readonly atlasUploads: number;
   readonly atlasCommit: Readonly<AtlasCommit>;
+  readonly drawOrderChanged: boolean;
+}
+
+export interface RenderDrawState {
+  readonly slot: number;
+  readonly zIndex: number;
+  readonly order: number;
+  readonly blendMode: BLEND_MODES;
 }
 
 export interface RenderCoordinatorStats {
@@ -109,6 +119,7 @@ export class RenderCoordinator {
   readonly #ownsInstances: boolean;
   readonly #ownsTransforms: boolean;
   readonly #runs = new Map<number, Readonly<PositionedRun>>();
+  readonly #drawStates = new Map<number, Readonly<RenderDrawState>>();
   readonly #pendingGlyphs = new Map<string, Promise<void>>();
   #ticket = 0;
   #revisions = 0;
@@ -117,6 +128,8 @@ export class RenderCoordinator {
   #shapedLabels = 0;
   #transformOnlyLabels = 0;
   #removedLabels = 0;
+  #lastAddedOrder = 0;
+  #needsDrawSort = false;
   #destroyed = false;
 
   constructor(options: RenderCoordinatorOptions) {
@@ -145,15 +158,17 @@ export class RenderCoordinator {
     const prepared = await Promise.all(changes.map((change) => this.#prepare(change, ticket)));
     if (ticket !== this.#ticket) {
       this.#staleRevisions += 1;
-      return this.#result(revision, true, 0, EMPTY_ATLAS_COMMIT);
+      return this.#result(revision, true, 0, EMPTY_ATLAS_COMMIT, false);
     }
 
     const atlasCommit = this.atlas.commitFrame();
     let appliedLabels = 0;
+    let drawOrderChanged = false;
     for (const item of prepared) {
       const { change, run } = item;
       if (change.snapshot === undefined) {
         this.#runs.delete(change.slot);
+        drawOrderChanged = this.#drawStates.delete(change.slot) || drawOrderChanged;
         this.instances.remove(change.slot);
         this.transforms.remove(change.slot);
         this.#removedLabels += 1;
@@ -162,6 +177,31 @@ export class RenderCoordinator {
       }
       if (run === undefined) {
         throw new Error(`Prepared render run missing for slot ${String(change.slot)}`);
+      }
+      const previousDrawState = this.#drawStates.get(change.slot);
+      if (
+        previousDrawState === undefined ||
+        previousDrawState.zIndex !== change.snapshot.zIndex ||
+        previousDrawState.order !== change.snapshot.order ||
+        previousDrawState.blendMode !== change.snapshot.blendMode
+      ) {
+        if (previousDrawState === undefined) {
+          if (change.snapshot.order < this.#lastAddedOrder) this.#needsDrawSort = true;
+          this.#lastAddedOrder = Math.max(this.#lastAddedOrder, change.snapshot.order);
+        }
+        if (change.snapshot.zIndex !== 0 || previousDrawState?.zIndex !== 0) {
+          this.#needsDrawSort = true;
+        }
+        this.#drawStates.set(
+          change.slot,
+          Object.freeze({
+            slot: change.slot,
+            zIndex: change.snapshot.zIndex,
+            order: change.snapshot.order,
+            blendMode: change.snapshot.blendMode,
+          }),
+        );
+        drawOrderChanged = true;
       }
       const sourceChanged =
         (change.mask & (TextDirty.Content | TextDirty.Style)) !== 0 ||
@@ -196,12 +236,21 @@ export class RenderCoordinator {
     this.#revisions += 1;
     this.#appliedLabels += appliedLabels;
 
-    return this.#result(revision, false, appliedLabels, atlasCommit);
+    return this.#result(revision, false, appliedLabels, atlasCommit, drawOrderChanged);
   }
 
   getRun(slot: number): Readonly<PositionedRun> | undefined {
     this.#assertActive();
     return this.#runs.get(slot);
+  }
+
+  getDrawStates(): readonly Readonly<RenderDrawState>[] {
+    this.#assertActive();
+    const states = Array.from(this.#drawStates.values());
+    if (this.#needsDrawSort) {
+      states.sort((left, right) => left.zIndex - right.zIndex || left.order - right.order);
+    }
+    return states;
   }
 
   get stats(): Readonly<RenderCoordinatorStats> {
@@ -221,6 +270,7 @@ export class RenderCoordinator {
     if (this.#destroyed) return;
     this.#ticket += 1;
     this.#runs.clear();
+    this.#drawStates.clear();
     this.#pendingGlyphs.clear();
     if (this.#ownsLayout) this.#layout.destroy();
     if (this.#ownsProvider) void this.#provider.destroy();
@@ -346,6 +396,7 @@ export class RenderCoordinator {
     stale: boolean,
     appliedLabels: number,
     atlasCommit: Readonly<AtlasCommit>,
+    drawOrderChanged: boolean,
   ): Readonly<RenderCommitResult> {
     return Object.freeze({
       revision,
@@ -354,6 +405,7 @@ export class RenderCoordinator {
       glyphs: this.instances.stats.activeInstances,
       atlasUploads: atlasCommit.uploads.length,
       atlasCommit,
+      drawOrderChanged,
     });
   }
 

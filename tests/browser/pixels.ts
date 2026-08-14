@@ -15,6 +15,9 @@ export interface PixelProfile extends PixelMeasure {
   readonly redDominant: number;
   readonly greenDominant: number;
   readonly blueDominant: number;
+  readonly redSum: number;
+  readonly greenSum: number;
+  readonly blueSum: number;
 }
 
 export async function measureVisiblePixels(
@@ -35,6 +38,21 @@ export async function measurePixelProfile(
 ): Promise<PixelProfile> {
   const image = await readTargetPixels(app, target, width, height);
   return profileRows(image.pixels, image.width, image.height, image.bytesPerRow);
+}
+
+export async function measureCanvasPixelProfile(
+  canvas: HTMLCanvasElement,
+  width: number = canvas.width,
+  height: number = canvas.height,
+): Promise<PixelProfile> {
+  const bitmap = await createImageBitmap(canvas);
+  const surface = new OffscreenCanvas(width, height);
+  const context = surface.getContext("2d", { willReadFrequently: true });
+  if (context === null) throw new Error("Canvas 2D context is unavailable");
+  context.drawImage(bitmap, 0, 0);
+  bitmap.close();
+  const image = context.getImageData(0, 0, width, height);
+  return profileRows(image.data, width, height, width * 4);
 }
 
 async function readTargetPixels(
@@ -125,6 +143,9 @@ function profileRows(
   let redDominant = 0;
   let greenDominant = 0;
   let blueDominant = 0;
+  let redSum = 0;
+  let greenSum = 0;
+  let blueSum = 0;
   for (let y = 0; y < height; y += 1) {
     for (let x = 0; x < width; x += 1) {
       const offset = y * bytesPerRow + x * 4;
@@ -136,6 +157,9 @@ function profileRows(
       count += 1;
       xSum += x;
       alphaSum += alpha;
+      redSum += red;
+      greenSum += green;
+      blueSum += blue;
       maxAlpha = Math.max(maxAlpha, alpha);
       minX = Math.min(minX, x);
       minY = Math.min(minY, y);
@@ -158,5 +182,8 @@ function profileRows(
     redDominant,
     greenDominant,
     blueDominant,
+    redSum,
+    greenSum,
+    blueSum,
   };
 }

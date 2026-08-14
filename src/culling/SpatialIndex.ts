@@ -144,6 +144,14 @@ export class SpatialIndex {
     return target;
   }
 
+  /** Return the stable insertion order used for z-index ties. @internal */
+  orderOf(slot: number): number | undefined {
+    this.#assertActive();
+    assertSlot(slot);
+    if (slot >= this.#highWater || this.#occupied[slot] !== 1) return undefined;
+    return this.#order[slot];
+  }
+
   query(bounds: BoundsData, output: Uint32Array, padding = 0): number {
     this.#assertActive();
     assertBounds(bounds);

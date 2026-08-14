@@ -1,4 +1,5 @@
 import type { TextId } from "../types";
+import { assertBlendMode, decodeBlendMode, encodeBlendMode } from "./blendModes";
 import {
   DirtyJournal,
   type DirtySlotVisitor,
@@ -42,6 +43,7 @@ export class TextStore {
   #scaleY: Float32Array;
   #rotation: Float32Array;
   #zIndex: Float64Array;
+  #blendModes: Uint8Array;
   #alpha: Float32Array;
   #visible: Uint8Array;
   #anchorX: Float32Array;
@@ -71,6 +73,7 @@ export class TextStore {
     this.#scaleY = new Float32Array(this.#capacity);
     this.#rotation = new Float32Array(this.#capacity);
     this.#zIndex = new Float64Array(this.#capacity);
+    this.#blendModes = new Uint8Array(this.#capacity);
     this.#alpha = new Float32Array(this.#capacity);
     this.#visible = new Uint8Array(this.#capacity);
     this.#anchorX = new Float32Array(this.#capacity);
@@ -114,6 +117,7 @@ export class TextStore {
       this.#scaleY.byteLength +
       this.#rotation.byteLength +
       this.#zIndex.byteLength +
+      this.#blendModes.byteLength +
       this.#alpha.byteLength +
       this.#visible.byteLength +
       this.#anchorX.byteLength +
@@ -192,6 +196,7 @@ export class TextStore {
       scaleY: this.#scaleY[slot] ?? 0,
       rotation: this.#rotation[slot] ?? 0,
       zIndex: this.#zIndex[slot] ?? 0,
+      blendMode: decodeBlendMode(this.#blendModes[slot] ?? 1),
       alpha: this.#alpha[slot] ?? 0,
       visible: this.#visible[slot] === 1,
       anchorX: this.#anchorX[slot] ?? 0,
@@ -235,6 +240,13 @@ export class TextStore {
     }
     if (patch.zIndex !== undefined && patch.zIndex !== this.#zIndex[slot]) {
       this.#zIndex[slot] = patch.zIndex;
+      dirty |= TextDirty.Transform;
+    }
+    if (
+      patch.blendMode !== undefined &&
+      encodeBlendMode(patch.blendMode) !== this.#blendModes[slot]
+    ) {
+      this.#blendModes[slot] = encodeBlendMode(patch.blendMode);
       dirty |= TextDirty.Transform;
     }
     if (patch.alpha !== undefined && patch.alpha !== this.#alpha[slot]) {
@@ -406,6 +418,7 @@ export class TextStore {
       this.#scaleY = resizeTypedArray(this.#scaleY, afterCapacity);
       this.#rotation = resizeTypedArray(this.#rotation, afterCapacity);
       this.#zIndex = resizeTypedArray(this.#zIndex, afterCapacity);
+      this.#blendModes = resizeTypedArray(this.#blendModes, afterCapacity);
       this.#alpha = resizeTypedArray(this.#alpha, afterCapacity);
       this.#visible = resizeTypedArray(this.#visible, afterCapacity);
       this.#anchorX = resizeTypedArray(this.#anchorX, afterCapacity);
@@ -439,6 +452,7 @@ export class TextStore {
     this.#scaleY = new Float32Array();
     this.#rotation = new Float32Array();
     this.#zIndex = new Float64Array();
+    this.#blendModes = new Uint8Array();
     this.#alpha = new Float32Array();
     this.#visible = new Uint8Array();
     this.#anchorX = new Float32Array();
@@ -477,6 +491,7 @@ export class TextStore {
     this.#scaleY = growTypedArray(this.#scaleY, capacity);
     this.#rotation = growTypedArray(this.#rotation, capacity);
     this.#zIndex = growTypedArray(this.#zIndex, capacity);
+    this.#blendModes = growTypedArray(this.#blendModes, capacity);
     this.#alpha = growTypedArray(this.#alpha, capacity);
     this.#visible = growTypedArray(this.#visible, capacity);
     this.#anchorX = growTypedArray(this.#anchorX, capacity);
@@ -495,6 +510,7 @@ export class TextStore {
     this.#scaleY[slot] = label.scaleY;
     this.#rotation[slot] = label.rotation;
     this.#zIndex[slot] = label.zIndex;
+    this.#blendModes[slot] = encodeBlendMode(label.blendMode);
     this.#alpha[slot] = label.alpha;
     this.#visible[slot] = Number(label.visible);
     this.#anchorX[slot] = label.anchorX;
@@ -569,6 +585,7 @@ function assertLabel(label: TextStoreLabel): void {
   if (typeof label.style !== "object" || label.style === null) {
     throw new TypeError("style must be an object");
   }
+  assertBlendMode(label.blendMode);
   assertFiniteFields(label);
 }
 
@@ -582,6 +599,7 @@ function assertPatch(patch: TextStoreLabelPatch): void {
   if (patch.style !== undefined && (typeof patch.style !== "object" || patch.style === null)) {
     throw new TypeError("style must be an object");
   }
+  if (patch.blendMode !== undefined) assertBlendMode(patch.blendMode);
   assertFiniteFields(patch);
 }
 

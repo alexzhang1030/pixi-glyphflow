@@ -1,4 +1,4 @@
-import type { PointData, Renderer, TextStyleOptions } from "pixi.js";
+import type { BLEND_MODES, PointData, Renderer, TextStyleOptions } from "pixi.js";
 
 import type { BoundsData, MutableBoundsData, PointLike } from "./culling/types";
 import type { RenderCoordinatorOptions } from "./render/RenderCoordinator";
@@ -51,6 +51,8 @@ export interface TextLabelSpec {
   readonly rotation?: number;
   /** Draw and hit-test order. Higher values appear above lower values. */
   readonly zIndex?: number;
+  /** PixiJS blend mode applied to this label's ordered draw segment. */
+  readonly blendMode?: BLEND_MODES;
   /** Opacity multiplier. */
   readonly alpha?: number;
   /** Render visibility. */
@@ -75,6 +77,7 @@ export interface TextLabelSnapshot {
   readonly scaleY: number;
   readonly rotation: number;
   readonly zIndex: number;
+  readonly blendMode: BLEND_MODES;
   readonly alpha: number;
   readonly visible: boolean;
   readonly anchor: Readonly<PointData>;

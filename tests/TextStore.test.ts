@@ -41,6 +41,17 @@ describe("TextStore", () => {
     expect(store.get(id)?.sourceRevision).toBe(3);
   });
 
+  test("stores blend modes compactly as transform-only state", () => {
+    const store = new TextStore();
+    const id = store.create(label());
+    store.publishDirty();
+
+    expect(store.get(id)?.blendMode).toBe("normal");
+    expect(store.update(id, { blendMode: "add" })).toBe(TextDirty.Transform);
+    expect(store.get(id)?.blendMode).toBe("add");
+    expect(() => store.update(id, { blendMode: "invalid" as "normal" })).toThrow(TypeError);
+  });
+
   test("applies packed positions transactionally while preserving shaping revisions", () => {
     const store = new TextStore();
     const first = store.create(label({ x: 1, y: 2 }));
@@ -143,5 +154,6 @@ function label(patch: TextStoreLabelPatch = {}): TextStoreLabel {
     anchorY: 0,
     style: defaultStyle,
     ...patch,
+    blendMode: patch.blendMode ?? "normal",
   };
 }
