@@ -1,6 +1,8 @@
 import { expect, test } from "@playwright/test";
 import type { Page } from "@playwright/test";
 
+import { hasWebGpuAdapter } from "./webgpu-support";
+
 test("renders glyph meshes, uploads transform-only moves, and survives reattachment", async ({
   page,
 }, testInfo) => {
@@ -8,18 +10,21 @@ test("renders glyph meshes, uploads transform-only moves, and survives reattachm
   page.on("console", (message) => messages.push(`${message.type()}: ${message.text()}`));
   page.on("pageerror", (error) => messages.push(`pageerror: ${error.message}`));
   const webgl = await loadFixture(page, "webgl");
+  const webgpuAvailable = await hasWebGpuAdapter(page);
   const webgpu = await loadFixture(page, "webgpu");
   await testInfo.attach("browser-console", {
     body: messages.join("\n"),
     contentType: "text/plain",
   });
   await testInfo.attach("fixture-state", {
-    body: JSON.stringify({ webgl, webgpu }, undefined, 2),
+    body: JSON.stringify({ webgl, webgpu, webgpuAvailable }, undefined, 2),
     contentType: "application/json",
   });
 
   const webglResult = assertFixture(webgl, "webgl");
-  const webgpuResult = assertFixture(webgpu, "webgpu");
+  const webgpuResult = assertFixture(webgpu, webgpuAvailable ? "webgpu" : "webgl");
+  if (!webgpuAvailable) return;
+
   expect(relativeDifference(webglResult.initialPixels, webgpuResult.initialPixels)).toBeLessThan(
     0.05,
   );

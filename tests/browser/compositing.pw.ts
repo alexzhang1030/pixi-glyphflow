@@ -1,23 +1,28 @@
 import { expect, test } from "@playwright/test";
 import type { Page } from "@playwright/test";
 
+import { hasWebGpuAdapter } from "./webgpu-support";
+
 test("orders z-index ties and splits blend-mode draw segments", async ({ page }, testInfo) => {
   const messages: string[] = [];
   page.on("console", (message) => messages.push(`${message.type()}: ${message.text()}`));
   page.on("pageerror", (error) => messages.push(`pageerror: ${error.message}`));
   const webgl = await loadFixture(page, "webgl");
+  const webgpuAvailable = await hasWebGpuAdapter(page);
   const webgpu = await loadFixture(page, "webgpu");
   await testInfo.attach("browser-console", {
     body: messages.join("\n"),
     contentType: "text/plain",
   });
   await testInfo.attach("compositing-state", {
-    body: JSON.stringify({ webgl, webgpu }, undefined, 2),
+    body: JSON.stringify({ webgl, webgpu, webgpuAvailable }, undefined, 2),
     contentType: "application/json",
   });
 
   const webglResult = assertFixture(webgl, "webgl");
-  const webgpuResult = assertFixture(webgpu, "webgpu");
+  const webgpuResult = assertFixture(webgpu, webgpuAvailable ? "webgpu" : "webgl");
+  if (!webgpuAvailable) return;
+
   for (const state of ["blueOnTop", "redOnTop", "additive"] as const) {
     expect(relativeDifference(webglResult[state].count, webgpuResult[state].count)).toBeLessThan(
       0.08,
