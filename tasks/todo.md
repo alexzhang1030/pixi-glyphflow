@@ -129,17 +129,17 @@
 
 ## Phase 6
 
-- [ ] Task 6.1: Write English installation, getting-started, and API documentation.
+- [x] Task 6.1: Write English installation, getting-started, and API documentation.
   - Acceptance: Every public export has a stable reference and runnable example.
   - Verify: bun run docs:check
   - Files: README.md, docs/getting-started.md, docs/api.md, docs/fonts.md
 
-- [ ] Task 6.2: Write English architecture, performance, accessibility, and migration guides.
+- [x] Task 6.2: Write English architecture, performance, accessibility, and migration guides.
   - Acceptance: Operational constraints, benchmark method, accessibility behavior, and 0.0.1 migration are explicit.
   - Verify: bun run docs:check
   - Files: docs/architecture.md, docs/performance.md, docs/accessibility.md, docs/migration.md
 
-- [ ] Task 6.3: Build the runnable playground and examples.
+- [x] Task 6.3: Build the runnable playground and examples.
   - Acceptance: A clean checkout starts every documented example, the pixi-viewport stress playground, and the production build.
   - Verify: bun run playground:build
   - Files: playground/index.html, playground/src/main.ts, playground/package.json, package.json

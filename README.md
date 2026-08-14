@@ -1,11 +1,17 @@
 # pixi-glyphflow
 
-A high-throughput batched text layer for PixiJS v8.
+A million-label text layer for PixiJS 8 with compact CPU storage, instanced WebGL/WebGPU rendering,
+worker shaping, bounded glyph atlases, dense culling, and first-class pixi-viewport integration.
 
-`0.0.1` is a contract POC. It provides a working `TextLayer` backed by PixiJS Canvas Text,
-stable label identities, mutation commits, lifecycle management, and diagnostics. The shared glyph
-atlas and instanced GPU renderer enter the M1 implementation milestone, followed by benchmark-backed
-performance claims.
+## Highlights
+
+- One `TextLayer` retains 1,000,000 labels in 72 MiB of fixed-width CPU storage.
+- One instanced draw submits 8,000,000 visible glyphs through a 32-byte glyph record.
+- `updatePositions` applies 100,000 packed x/y changes in 3.20 ms p95 on the reference M1 Pro.
+- `updateTextPositions` applies 100,000 text and x/y changes in 13.60 ms p95.
+- `bindViewport` coalesces drag, deceleration, wheel, pinch, zoom, and rotation camera work.
+- HarfBuzz worker shaping covers Arabic, Devanagari, bidi text, feature selection, and clusters.
+- Optional accessibility, viewport, shaping, and advanced-rendering subpaths keep entry points focused.
 
 ## Install
 
@@ -13,85 +19,150 @@ performance claims.
 bun add pixi-glyphflow pixi.js
 ```
 
-The package is ESM-only and declares `pixi.js@^8.19.0` as a peer dependency.
+Add `pixi-viewport` when the scene uses the viewport binding:
 
-## Usage
+```bash
+bun add pixi-viewport
+```
+
+The package ships ESM for PixiJS 8.19 and pixi-viewport 6.
+
+## Create a text layer
 
 ```ts
 import { Application } from "pixi.js";
 import { TextLayer } from "pixi-glyphflow";
 
 const app = new Application();
-await app.init({ resizeTo: window });
+await app.init({ resizeTo: window, preference: "webgl" });
+document.body.append(app.canvas);
 
-const layer = new TextLayer();
-app.stage.addChild(layer);
-layer.attach(app.renderer);
+const labels = new TextLayer({
+  renderer: app.renderer,
+  initialCapacity: 100_000,
+  culling: { bounds: { x: 0, y: 0, width: 1280, height: 720 } },
+});
+app.stage.addChild(labels);
 
-const fpsLabel = layer.create({
-  text: "上海 120 FPS",
+const temperature = labels.create({
+  text: "Shanghai 24 C",
   x: 24,
-  y: 24,
-  style: {
-    fill: 0xffffff,
-    fontFamily: "Inter, Noto Sans CJK SC",
-    fontSize: 18,
-  },
+  y: 32,
+  style: { fontFamily: "Inter", fontSize: 18, fill: 0xffffff },
 });
 
-layer.updateLabel(fpsLabel, { text: "上海 121 FPS" });
-const revision = await layer.commit();
-
-console.log(revision, layer.stats);
+labels.update(temperature, { text: "Shanghai 25 C" });
+await labels.commit();
 ```
 
-## POC contract
+Mutations are synchronous. `commit()` publishes the accepted dirty set through one monotonic
+revision and completes associated shaping, atlas, upload, and visibility work.
 
-| API                             | Contract in `0.0.1`                                                              |
-| ------------------------------- | -------------------------------------------------------------------------------- |
-| `create(spec)`                  | Creates one visible PixiJS `Text` and returns a stable `TextId`.                 |
-| `updateLabel(id, patch)`        | Applies text, position, style, alpha, visibility, rotation, and anchor changes.  |
-| `remove(id)`                    | Releases the label and its PixiJS text resources.                                |
-| `commit()`                      | Publishes pending mutations as one monotonic `TextRevision`.                     |
-| `attach(renderer)` / `detach()` | Establishes the renderer ownership seam used by future GPU resources.            |
-| `stats`                         | Reports backend, label count, pending mutations, revision, and attachment state. |
+## Bind pixi-viewport
 
-`stats.backend` is `"pixi-text-poc"` for this release. The M1 backend will preserve the public
-mutation seam while moving labels into shared glyph-instance storage.
+```ts
+import { Viewport } from "pixi-viewport";
+import { bindViewport } from "pixi-glyphflow/viewport";
+
+const viewport = new Viewport({
+  screenWidth: app.screen.width,
+  screenHeight: app.screen.height,
+  events: app.renderer.events,
+});
+viewport.drag().decelerate().wheel().pinch();
+app.stage.addChild(viewport);
+
+const binding = bindViewport(labels, viewport, { addChild: true });
+await binding.whenIdle();
+
+binding.destroy();
+labels.destroy();
+viewport.destroy();
+```
+
+Camera frames preserve label revisions and shaping results. The binding converts rotated viewport
+corners into layer-local bounds and schedules one culling commit per viewport frame.
+
+## Stream 100,000 positions
+
+```ts
+const ids = new Float64Array(100_000);
+const positions = new Float32Array(200_000);
+
+// Fill ids from createMany() results and write packed x/y values.
+labels.updatePositions(ids, positions);
+await labels.commit();
+```
+
+Broadcast one counter string alongside the packed positions through one transactional columnar
+pass:
+
+```ts
+labels.updateTextPositions(ids, "42.7 ms", positions);
+await labels.commit();
+```
+
+## Package entry points
+
+| Import                          | Purpose                                                   |
+| ------------------------------- | --------------------------------------------------------- |
+| `pixi-glyphflow`                | `TextLayer`, `FontRegistry`, and primary types            |
+| `pixi-glyphflow/viewport`       | pixi-viewport binding                                     |
+| `pixi-glyphflow/accessibility`  | Sparse DOM accessibility mirror                           |
+| `pixi-glyphflow/shaping`        | HarfBuzz main-thread and worker shapers                   |
+| `pixi-glyphflow/advanced`       | Atlas, mesh, layout, upload, and spatial primitives       |
+| `pixi-glyphflow/text-worker.js` | Worker module used by the default complex-script pipeline |
+
+## Reference performance
+
+The committed browser artifacts use Chrome, WebGL 2, an Apple M1 Pro, isolated processes, explicit
+GPU completion, warmup frames, and p95 reporting.
+
+| Workload                          |                           Scale | Frame p95 |
+| --------------------------------- | ------------------------------: | --------: |
+| Million-label viewport            |              1,000,000 resident |   5.30 ms |
+| Dynamic counters                  | 100,000 text + position updates |  14.20 ms |
+| pixi-viewport drag + deceleration |              1,000,000 resident |   5.50 ms |
+| pixi-viewport wheel + pinch zoom  |              1,000,000 resident |   7.20 ms |
+| Position storm                    |          100,000 packed updates |   8.80 ms |
+| Multilingual stream               |  10,000 resident, 1,000 updates |   3.90 ms |
+
+The [generated performance report](benchmarks/PERFORMANCE.md) links every raw artifact and records
+memory, atlas, draw, fixture, and invariant evidence.
 
 ## Development
 
-The repository pins a native-first toolchain: Bun 1.3, TypeScript 7, tsdown, Oxlint, Oxfmt,
-publint, and Are the Types Wrong.
+The repository pins Bun, TypeScript 7, tsdown, Oxlint, Oxfmt, Playwright, publint, and Are the Types
+Wrong.
 
 ```bash
 bun install
 bun run check
+bun run test:browser
+bun run benchmark:check
+bun run playground:build
 ```
 
-| Command                 | Purpose                                                          |
-| ----------------------- | ---------------------------------------------------------------- |
-| `bun test`              | Run the Bun unit suite.                                          |
-| `bun run typecheck`     | Run the native TypeScript 7 compiler.                            |
-| `bun run lint`          | Run Oxlint with warnings as failures.                            |
-| `bun run format`        | Format project-owned files with Oxfmt.                           |
-| `bun run build`         | Build ESM JavaScript, declarations, and source maps with tsdown. |
-| `bun run package:lint`  | Validate package metadata and exports with publint.              |
-| `bun run package:types` | Validate ESM consumer types with Are the Types Wrong.            |
-| `bun run package:smoke` | Install the tarball and run runtime plus TypeScript probes.      |
-| `bun run audit`         | Check high and critical dependency advisories.                   |
+| Command                                         | Purpose                                                        |
+| ----------------------------------------------- | -------------------------------------------------------------- |
+| `bun run benchmark`                             | Run every isolated browser workload and regenerate the report  |
+| `bun run benchmark -- --workload viewport-drag` | Run one workload                                               |
+| `bun run benchmark:check`                       | Enforce committed performance and capacity budgets             |
+| `bun run docs:check`                            | Validate English documentation, links, and public API coverage |
+| `bun run playground:dev`                        | Start the interactive million-label pixi-viewport POC          |
+| `bun run release:check`                         | Run source, dependency, package, and tarball release gates     |
 
-TypeScript 7 consumers use `skipLibCheck: true` while PixiJS 8.19 ships `@webgpu/types`
-alongside the WebGPU declarations in TypeScript 7's `lib.dom`. Project source and generated public
-declarations remain under strict type checking.
+## Documentation
 
-## Project documents
-
-- [POC contract and release path](https://github.com/alexzhang1030/pixi-glyphflow/blob/main/docs/POC.md)
-- [Performance text rendering blueprint](https://github.com/alexzhang1030/pixi-glyphflow/blob/main/.agents/docs/pixi-glyphflow-blueprint.md)
-- [Project context map](https://github.com/alexzhang1030/pixi-glyphflow/blob/main/.agents/docs/README.md)
+- [Getting started](docs/getting-started.md)
+- [API reference](docs/api.md)
+- [Fonts and shaping](docs/fonts.md)
+- [Architecture](docs/architecture.md)
+- [Performance](docs/performance.md)
+- [Accessibility](docs/accessibility.md)
+- [Migration from 0.0.1](docs/migration.md)
+- [Release POC](docs/POC.md)
 
 ## License
 
-The source is currently `UNLICENSED`. A future release can carry an explicit open-source license
-after the project records that legal decision.
+The published package and repository currently use `UNLICENSED` terms.

@@ -1,0 +1,75 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta
+      name="description"
+      content="Interactive million-label pixi-glyphflow and pixi-viewport stress POC"
+    />
+    <title>pixi-glyphflow million-label POC</title>
+    <link rel="icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22/>" />
+    <link rel="stylesheet" href="./src/style.css" />
+  </head>
+  <body>
+    <main id="scene" aria-label="Interactive million-label text scene">
+      <section class="hud" aria-live="polite">
+        <div class="title-row">
+          <div>
+            <p class="eyebrow">pixi-glyphflow 1.0</p>
+            <h1>Million-label viewport lab</h1>
+          </div>
+          <span id="state" class="state">Loading</span>
+        </div>
+
+        <dl class="metrics">
+          <div>
+            <dt>Resident</dt>
+            <dd id="resident">0</dd>
+          </div>
+          <div>
+            <dt>Visible</dt>
+            <dd id="visible">0</dd>
+          </div>
+          <div>
+            <dt>Moving</dt>
+            <dd id="moving">0</dd>
+          </div>
+          <div>
+            <dt>Revision</dt>
+            <dd id="revision">0</dd>
+          </div>
+          <div>
+            <dt>Last storm</dt>
+            <dd id="storm-time">0 ms</dd>
+          </div>
+          <div>
+            <dt>Viewport commit</dt>
+            <dd id="viewport-time">0 ms</dd>
+          </div>
+          <div>
+            <dt>Draw calls</dt>
+            <dd id="draws">0</dd>
+          </div>
+          <div>
+            <dt>Glyphs</dt>
+            <dd id="glyphs">0</dd>
+          </div>
+        </dl>
+
+        <div class="controls">
+          <button id="toggle-storm" type="button">Pause position storm</button>
+          <button id="reset-camera" type="button">Reset camera</button>
+          <label>
+            Rotation
+            <input id="rotation" type="range" min="-45" max="45" value="0" step="1" />
+          </label>
+        </div>
+
+        <p class="hint">Drag with inertia. Scroll or pinch to zoom. Rotate with the slider.</p>
+      </section>
+      <div id="loading" class="loading">Allocating dense label columns...</div>
+    </main>
+    <script type="module" src="./src/main.ts"></script>
+  </body>
+</html>
