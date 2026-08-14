@@ -1,5 +1,6 @@
 import { Container, type DestroyOptions, type Renderer, type TextStyleOptions } from "pixi.js";
 
+import { FontRegistry } from "./FontRegistry";
 import { TextStore } from "./store/TextStore";
 import { TextDirty, type TextDirtyMask, type TextStoreLabelPatch } from "./store/types";
 import type {
@@ -24,6 +25,7 @@ const ALL_DIRTY = TextDirty.Content | TextDirty.Transform | TextDirty.Style;
  * revision and provides the async boundary used by shaping, atlas, and upload stages.
  */
 export class TextLayer extends Container {
+  readonly fonts: FontRegistry = new FontRegistry();
   readonly #store: TextStore;
   #revision = 0;
   #pendingMutations = 0;
@@ -267,6 +269,7 @@ export class TextLayer extends Container {
     }
 
     this.#renderer = undefined;
+    this.fonts.destroy();
     this.#store.dispose();
     super.destroy(options);
   }

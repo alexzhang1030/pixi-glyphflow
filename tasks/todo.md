@@ -36,7 +36,7 @@
 
 ## Phase 2
 
-- [ ] Task 2.1: Implement FontRegistry sources, fallback chains, revisions, and lifetime.
+- [x] Task 2.1: Implement FontRegistry sources, fallback chains, revisions, and lifetime.
   - Acceptance: System, prebuilt bitmap, and binary sources register and retire deterministically.
   - Verify: bun test tests/FontRegistry.test.ts
   - Files: src/FontRegistry.ts, src/fonts/types.ts, src/types.ts, tests/FontRegistry.test.ts
