@@ -1,5 +1,11 @@
-import { FontRegistry } from "../dist/index.js";
-import { HarfBuzzWorkerShaper } from "../dist/shaping/index.js";
+export {};
+
+const rootModulePath = "../dist/index.js";
+const shapingModulePath = "../dist/shaping/index.js";
+const { FontRegistry } = (await import(rootModulePath)) as typeof import("../src");
+const { HarfBuzzWorkerShaper } = (await import(
+  shapingModulePath
+)) as typeof import("../src/shaping");
 
 const fontPath = await resolveFontPath();
 const bytes = new Uint8Array(await Bun.file(fontPath).arrayBuffer());
