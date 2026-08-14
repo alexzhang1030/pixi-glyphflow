@@ -47,11 +47,10 @@ export class TransformPalette {
     validateInput(input, bounds);
     this.#ensureCapacity(slot + 1);
     const offset = slot * FLOATS_PER_LABEL;
-    const alpha = Math.fround(input.visible ? input.alpha : 0);
+    const labelAlpha = Math.fround(input.visible ? input.alpha : 0);
     const fill = resolvePaint(input.fill, 0xffffff);
     const stroke = resolveStroke(input.stroke);
     const shadow = resolveShadow(input.dropShadow);
-    const fillAlpha = alpha * fill.alpha;
     const next = [
       input.x,
       input.y,
@@ -61,14 +60,14 @@ export class TransformPalette {
       Math.cos(input.rotation),
       input.anchorX * bounds.width,
       input.anchorY * bounds.height,
-      fill.r * fillAlpha,
-      fill.g * fillAlpha,
-      fill.b * fillAlpha,
-      fillAlpha,
+      fill.r,
+      fill.g,
+      fill.b,
+      packFillAlpha(fill.alpha, labelAlpha),
       stroke.color,
-      packStroke(stroke.width, alpha * stroke.alpha),
+      packStroke(stroke.width, stroke.alpha, shadow.alpha),
       shadow.color,
-      packShadow(shadow.x, shadow.y, shadow.blur, alpha * shadow.alpha),
+      packShadow(shadow.x, shadow.y, shadow.blur, shadow.alpha),
     ];
     let changed = this.#occupied[slot] !== 1;
     for (let index = 0; index < FLOATS_PER_LABEL; index += 1) {
@@ -249,18 +248,25 @@ function resolveShadow(
   };
 }
 
-function packStroke(width: number, alpha: number): number {
+function packFillAlpha(fillAlpha: number, labelAlpha: number): number {
+  const fillBits = Math.round(clamp(fillAlpha, 0, 1) * 255);
+  const labelBits = Math.round(clamp(labelAlpha, 0, 1) * 255);
+  return fillBits + labelBits * 256;
+}
+
+function packStroke(width: number, alpha: number, shadowAlpha: number): number {
   const widthBits = Math.round(clamp(width, 0, 255.9375) * 16);
   const alphaBits = Math.round(clamp(alpha, 0, 1) * 255);
-  return widthBits + alphaBits * 4096;
+  const shadowAlphaBits = Math.round(clamp(shadowAlpha, 0, 1) * 255);
+  return widthBits + alphaBits * 4096 + (shadowAlphaBits & 15) * 1_048_576;
 }
 
 function packShadow(x: number, y: number, blur: number, alpha: number): number {
   const xBits = Math.round(clamp(x, -32, 31.75) * 4) + 128;
   const yBits = Math.round(clamp(y, -32, 31.75) * 4) + 128;
   const blurBits = Math.round(clamp(blur, 0, 15));
-  const alphaBits = Math.round(clamp(alpha, 0, 1) * 15);
-  return xBits + yBits * 256 + blurBits * 65_536 + alphaBits * 1_048_576;
+  const alphaBits = Math.round(clamp(alpha, 0, 1) * 255);
+  return xBits + yBits * 256 + blurBits * 65_536 + (alphaBits >> 4) * 1_048_576;
 }
 
 function clamp(value: number, minimum: number, maximum: number): number {

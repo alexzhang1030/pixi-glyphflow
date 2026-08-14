@@ -28,10 +28,10 @@ describe("TransformPalette", () => {
     expect(values[4]).toBeCloseTo(1);
     expect(values[5]).toBeCloseTo(0);
     expect(Array.from(values.slice(6, 8))).toEqual([20, 10]);
-    expect(values[8]).toBeCloseTo(0.1);
-    expect(values[9]).toBeCloseTo(0.2);
-    expect(values[10]).toBeCloseTo(0.3);
-    expect(values[11]).toBeCloseTo(0.5);
+    expect(values[8]).toBeCloseTo(0.2);
+    expect(values[9]).toBeCloseTo(0.4);
+    expect(values[10]).toBeCloseTo(0.6);
+    expect(values[11]).toBe(255 + 128 * 256);
     expect(Array.from(values.slice(12, 16))).toEqual([0, 0, 0, 32_896]);
     expect(palette.consumeDirty()).toEqual([
       { offset: TRANSFORM_PALETTE_STRIDE, length: TRANSFORM_PALETTE_STRIDE },
@@ -81,14 +81,14 @@ describe("TransformPalette", () => {
     );
 
     const values = palette.data.subarray(0, 16);
-    expect(values[8]).toBeCloseTo(0.05);
-    expect(values[9]).toBeCloseTo(0.1);
-    expect(values[10]).toBeCloseTo(0.15);
-    expect(values[11]).toBeCloseTo(0.25);
+    expect(values[8]).toBeCloseTo(0.2);
+    expect(values[9]).toBeCloseTo(0.4);
+    expect(values[10]).toBeCloseTo(0.6);
+    expect(values[11]).toBe(128 + 128 * 256);
     expect(values[12]).toBe(0xff0000);
-    expect(values[13]).toBe(40 + 96 * 4096);
+    expect(values[13]).toBe(40 + 191 * 4096);
     expect(values[14]).toBe(0x0000ff);
-    expect(values[15]).toBe(144 + 128 * 256 + 3 * 65_536 + 4 * 1_048_576);
+    expect(values[15]).toBe(144 + 128 * 256 + 3 * 65_536 + 8 * 1_048_576);
 
     palette.destroy();
   });

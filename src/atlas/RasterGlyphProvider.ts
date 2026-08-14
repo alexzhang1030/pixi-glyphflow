@@ -223,7 +223,7 @@ async function defaultCanvasRasterizer(request: RasterGlyphRequest): Promise<Gly
   }
   context.font = `${String(request.fontSize)}px ${quoteFamily(request.family)}`;
   const measurement = context.measureText(request.glyphText);
-  const padding = Math.max(2, Math.ceil(request.fontSize * 0.125));
+  const padding = Math.max(8, Math.ceil(request.fontSize * 0.25));
   const left = measurement.actualBoundingBoxLeft || 0;
   const right = measurement.actualBoundingBoxRight || measurement.width;
   const ascent = measurement.actualBoundingBoxAscent || request.fontSize;
