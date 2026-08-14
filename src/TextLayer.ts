@@ -14,6 +14,7 @@ import {
   type RenderChange,
   type RenderLabelSnapshot,
 } from "./render/RenderCoordinator";
+import { RenderSurface } from "./render/RenderSurface";
 import {
   assertTrustedGlyphRunOwner,
   createTrustedGlyphRun,
@@ -69,6 +70,7 @@ export class TextLayer extends Container {
   #renderer: Renderer | undefined;
   readonly #renderingOptions: false | TextLayerRenderingOptions;
   #renderCoordinator: RenderCoordinator | undefined;
+  #renderSurface: RenderSurface | undefined;
   #renderTail: Promise<void> = Promise.resolve();
   #lastCommitPromise: Promise<TextRevision> = Promise.resolve(0 as TextRevision);
   readonly #cullingEnabled: boolean;
@@ -422,6 +424,7 @@ export class TextLayer extends Container {
 
     const start = performance.now();
     const coordinator = this.#renderCoordinator;
+    const surface = this.#renderSurface;
     this.#ensureScratchCapacity();
     this.#dirtyLength = 0;
     const dirty = hasLabelChanges
@@ -462,7 +465,8 @@ export class TextLayer extends Container {
     this.#renderSequence += 1;
     const renderSequence = this.#renderSequence;
     const renderWork = this.#renderTail.then(async () => {
-      await coordinator.commit(renderSequence, changes);
+      const result = await coordinator.commit(renderSequence, changes);
+      surface?.apply(result);
       for (const change of changes) {
         if (change.snapshot === undefined) continue;
         const run = coordinator.getRun(change.slot);
@@ -503,6 +507,8 @@ export class TextLayer extends Container {
     if (this.#renderer === renderer && this.#renderCoordinator !== undefined) {
       return;
     }
+    this.#renderSurface?.destroy();
+    this.#renderSurface = undefined;
     this.#renderCoordinator?.destroy();
     this.#resetRenderedSet();
     this.#renderer = renderer;
@@ -513,6 +519,8 @@ export class TextLayer extends Container {
   /** Release the current renderer association. */
   detach(): void {
     this.#assertActive();
+    this.#renderSurface?.destroy();
+    this.#renderSurface = undefined;
     this.#renderCoordinator?.destroy();
     this.#renderCoordinator = undefined;
     this.#renderer = undefined;
@@ -526,6 +534,7 @@ export class TextLayer extends Container {
     const store = this.#store.stats;
     const pendingDirty = this.#store.pendingDirty;
     const render = this.#renderCoordinator?.stats;
+    const surface = this.#renderSurface?.stats;
     const spatial = this.#spatial.stats;
 
     return Object.freeze({
@@ -556,6 +565,13 @@ export class TextLayer extends Container {
       culledLabelCount: Math.max(0, store.size - this.#visibleCount),
       spatialIndexBytes: spatial.allocatedBytes,
       cullingQueries: spatial.queries,
+      rendererAdapter: this.#renderer === undefined ? "detached" : (surface?.adapter ?? "unknown"),
+      drawCalls: surface?.meshes ?? 0,
+      submittedGlyphs: surface?.submittedGlyphs ?? 0,
+      atlasTextureCount: surface?.atlasTextures ?? 0,
+      instanceUploadBytes: surface?.instanceUploadBytes ?? 0,
+      transformUploadBytes: surface?.transformUploadBytes ?? 0,
+      atlasUploadBytes: surface?.atlasUploadBytes ?? 0,
     });
   }
 
@@ -566,6 +582,8 @@ export class TextLayer extends Container {
     }
 
     this.#renderer = undefined;
+    this.#renderSurface?.destroy();
+    this.#renderSurface = undefined;
     this.#renderCoordinator?.destroy();
     this.#renderCoordinator = undefined;
     this.fonts.destroy();
@@ -591,6 +609,9 @@ export class TextLayer extends Container {
       ...this.#renderingOptions,
       registry: this.fonts,
     });
+    if (this.#renderer !== undefined && ("gl" in this.#renderer || "gpu" in this.#renderer)) {
+      this.#renderSurface = new RenderSurface(this.#renderer, this, this.#renderCoordinator);
+    }
   }
 
   #indexLabel(

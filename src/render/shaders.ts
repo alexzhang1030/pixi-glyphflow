@@ -1,4 +1,6 @@
 export const GLYPH_VERTEX_GLSL = /* glsl */ `
+#version 300 es
+
 in vec2 aVertex;
 in vec4 aInstanceRect;
 in vec4 aInstanceUv;
@@ -24,7 +26,7 @@ vec4 paletteTexel(uint index) {
 }
 
 void main(void) {
-    bool active = (aMetadata & 0x80000000u) != 0u;
+    bool isActive = (aMetadata & 0x80000000u) != 0u;
     uint paletteBase = aPaletteIndex * 3u;
     vec4 transform0 = paletteTexel(paletteBase);
     vec4 transform1 = paletteTexel(paletteBase + 1u);
@@ -38,7 +40,7 @@ void main(void) {
     localPosition = rotatedPosition + transform0.xy;
     vec3 projected = uProjectionMatrix * uWorldTransformMatrix * uTransformMatrix
         * vec3(localPosition, 1.0);
-    gl_Position = active ? vec4(projected.xy, 0.0, 1.0) : vec4(2.0, 2.0, 0.0, 1.0);
+    gl_Position = isActive ? vec4(projected.xy, 0.0, 1.0) : vec4(2.0, 2.0, 0.0, 1.0);
     vUv = mix(aInstanceUv.xy, aInstanceUv.zw, aVertex);
     vColor = uWorldColorAlpha * uColor * paletteColor;
     vMode = (aMetadata >> 16u) & 3u;
@@ -46,6 +48,8 @@ void main(void) {
 `;
 
 export const GLYPH_FRAGMENT_GLSL = /* glsl */ `
+#version 300 es
+
 precision highp float;
 precision highp int;
 

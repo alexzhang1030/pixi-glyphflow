@@ -41,6 +41,14 @@ export interface AtlasUpload {
   readonly pixels: Uint8Array;
 }
 
+export interface AtlasPageInfo {
+  readonly id: number;
+  readonly mode: GlyphMode;
+  readonly width: number;
+  readonly height: number;
+  readonly bytes: number;
+}
+
 export interface AtlasCommit {
   readonly entries: readonly Readonly<AtlasEntry>[];
   readonly uploads: readonly Readonly<AtlasUpload>[];

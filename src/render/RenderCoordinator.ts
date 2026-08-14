@@ -3,6 +3,7 @@ import type { TextStyleOptions } from "pixi.js";
 import { GlyphAtlas } from "../atlas/GlyphAtlas";
 import { RasterGlyphProvider } from "../atlas/RasterGlyphProvider";
 import type { GlyphAtlasOptions, GlyphMode, GlyphRaster, RasterGlyphRequest } from "../atlas/types";
+import type { AtlasCommit } from "../atlas/types";
 import type { FontRegistry } from "../FontRegistry";
 import { LayoutEngine } from "../layout/LayoutEngine";
 import type { PositionedRun, TextLayoutInput } from "../layout/types";
@@ -71,6 +72,7 @@ export interface RenderCommitResult {
   readonly appliedLabels: number;
   readonly glyphs: number;
   readonly atlasUploads: number;
+  readonly atlasCommit: Readonly<AtlasCommit>;
 }
 
 export interface RenderCoordinatorStats {
@@ -88,6 +90,12 @@ interface PreparedChange {
   readonly change: RenderChange;
   readonly run?: Readonly<PositionedRun>;
 }
+
+const EMPTY_ATLAS_COMMIT: Readonly<AtlasCommit> = Object.freeze({
+  entries: Object.freeze([]),
+  uploads: Object.freeze([]),
+  evictedKeys: Object.freeze([]),
+});
 
 export class RenderCoordinator {
   readonly instances: GlyphInstanceStore;
@@ -137,7 +145,7 @@ export class RenderCoordinator {
     const prepared = await Promise.all(changes.map((change) => this.#prepare(change, ticket)));
     if (ticket !== this.#ticket) {
       this.#staleRevisions += 1;
-      return this.#result(revision, true, 0, 0);
+      return this.#result(revision, true, 0, EMPTY_ATLAS_COMMIT);
     }
 
     const atlasCommit = this.atlas.commitFrame();
@@ -186,7 +194,7 @@ export class RenderCoordinator {
     this.#revisions += 1;
     this.#appliedLabels += appliedLabels;
 
-    return this.#result(revision, false, appliedLabels, atlasCommit.uploads.length);
+    return this.#result(revision, false, appliedLabels, atlasCommit);
   }
 
   getRun(slot: number): Readonly<PositionedRun> | undefined {
@@ -335,14 +343,15 @@ export class RenderCoordinator {
     revision: number,
     stale: boolean,
     appliedLabels: number,
-    atlasUploads: number,
+    atlasCommit: Readonly<AtlasCommit>,
   ): Readonly<RenderCommitResult> {
     return Object.freeze({
       revision,
       stale,
       appliedLabels,
       glyphs: this.instances.stats.activeInstances,
-      atlasUploads,
+      atlasUploads: atlasCommit.uploads.length,
+      atlasCommit,
     });
   }
 

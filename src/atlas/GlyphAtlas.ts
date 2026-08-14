@@ -2,6 +2,7 @@ import { Packer, type PackedRectangle } from "./Packer";
 import type {
   AtlasCommit,
   AtlasEntry,
+  AtlasPageInfo,
   AtlasUpload,
   GlyphAtlasOptions,
   GlyphAtlasStats,
@@ -149,6 +150,23 @@ export class GlyphAtlas {
     }
 
     return entry;
+  }
+
+  getPage(page: number): Readonly<AtlasPageInfo> | undefined {
+    this.#assertActive();
+    if (!Number.isSafeInteger(page) || page < 0) {
+      throw new TypeError("Atlas page must be a non-negative safe integer");
+    }
+    const value = this.#pages[page];
+    if (value === undefined) return undefined;
+
+    return Object.freeze({
+      id: value.id,
+      mode: value.mode,
+      width: value.width,
+      height: value.height,
+      bytes: value.bytes,
+    });
   }
 
   pin(key: string): boolean {

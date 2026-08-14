@@ -117,6 +117,11 @@ export class GlyphMesh extends Mesh<Geometry, Shader> {
     this.geometry.instanceCount = instanceCount;
   }
 
+  setInstanceCount(instanceCount: number): void {
+    validateInstanceData(this.instanceBuffer.data.buffer as ArrayBuffer, instanceCount);
+    this.geometry.instanceCount = instanceCount;
+  }
+
   setTexture(texture: Texture): void {
     this.texture = texture;
     this.#ownedShader.resources.uTexture = texture.source;

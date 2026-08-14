@@ -125,6 +125,13 @@ export interface TextLayerStats {
   readonly culledLabelCount: number;
   readonly spatialIndexBytes: number;
   readonly cullingQueries: number;
+  readonly rendererAdapter: "detached" | "webgl" | "webgpu" | "unknown";
+  readonly drawCalls: number;
+  readonly submittedGlyphs: number;
+  readonly atlasTextureCount: number;
+  readonly instanceUploadBytes: number;
+  readonly transformUploadBytes: number;
+  readonly atlasUploadBytes: number;
 }
 
 /** Type-only forward declaration used by API documentation links. */

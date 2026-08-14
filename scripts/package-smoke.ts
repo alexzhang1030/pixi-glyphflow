@@ -41,8 +41,9 @@ const layer = new TextLayer();
 const id = layer.create({ text: "package smoke", x: 12, y: 24 });
 layer.updateLabel(id, { text: "package smoke passed" });
 const revision = await layer.commit();
+const snapshot = layer.get(id);
 
-if (Number(revision) !== 1 || layer.children[0]?.text !== "package smoke passed") {
+if (Number(revision) !== 1 || snapshot?.text !== "package smoke passed") {
   throw new Error("Packed package smoke test failed");
 }
 

@@ -48,6 +48,7 @@ export type { RendererAdapter } from "./render/RendererAdapter";
 export type {
   AtlasCommit,
   AtlasEntry,
+  AtlasPageInfo,
   AtlasUpload,
   GlyphAtlasOptions,
   GlyphAtlasStats,
