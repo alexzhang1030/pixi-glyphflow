@@ -1,5 +1,6 @@
 import type { PointData, Renderer, TextStyleOptions } from "pixi.js";
 
+import type { BoundsData, MutableBoundsData, PointLike } from "./culling/types";
 import type { RenderCoordinatorOptions } from "./render/RenderCoordinator";
 
 declare const textIdBrand: unique symbol;
@@ -19,10 +20,18 @@ export interface TextLayerOptions {
   readonly renderer?: Renderer;
   /** Rendering coordinator overrides, or false for a CPU-only layer. */
   readonly rendering?: false | TextLayerRenderingOptions;
+  /** Dense viewport culling policy. */
+  readonly culling?: false | TextLayerCullingOptions;
 }
 
 /** Advanced construction seams for custom shaping, rasterization, atlas, and storage policies. */
 export type TextLayerRenderingOptions = Omit<RenderCoordinatorOptions, "registry">;
+
+export interface TextLayerCullingOptions {
+  readonly enabled?: boolean;
+  readonly padding?: number;
+  readonly bounds?: BoundsData;
+}
 
 /** Label state accepted by {@link TextLayer.create}. */
 export interface TextLabelSpec {
@@ -40,6 +49,8 @@ export interface TextLabelSpec {
   readonly scaleY?: number;
   /** Rotation in radians. */
   readonly rotation?: number;
+  /** Draw and hit-test order. Higher values appear above lower values. */
+  readonly zIndex?: number;
   /** Opacity multiplier. */
   readonly alpha?: number;
   /** Render visibility. */
@@ -63,6 +74,7 @@ export interface TextLabelSnapshot {
   readonly scaleX: number;
   readonly scaleY: number;
   readonly rotation: number;
+  readonly zIndex: number;
   readonly alpha: number;
   readonly visible: boolean;
   readonly anchor: Readonly<PointData>;
@@ -109,6 +121,10 @@ export interface TextLayerStats {
   readonly transformOnlyLabels: number;
   readonly removedRenderLabels: number;
   readonly staleRenderRevisions: number;
+  readonly visibleLabelCount: number;
+  readonly culledLabelCount: number;
+  readonly spatialIndexBytes: number;
+  readonly cullingQueries: number;
 }
 
 /** Type-only forward declaration used by API documentation links. */
@@ -118,4 +134,11 @@ export interface TextLayer {
   create(spec: TextLabelSpec): TextId;
   get(id: TextId): Readonly<TextLabelSnapshot> | undefined;
   update(id: TextId, patch: TextLabelPatch): boolean;
+  setViewportBounds(bounds: BoundsData | undefined): void;
+  getBoundsFor(
+    id: TextId,
+    output?: MutableBoundsData,
+    space?: "local" | "world",
+  ): Readonly<BoundsData> | undefined;
+  hitTest(point: PointLike, space?: "local" | "world"): TextId | undefined;
 }

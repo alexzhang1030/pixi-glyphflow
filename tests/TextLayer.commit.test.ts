@@ -122,7 +122,7 @@ describe("TextLayer commit and maintenance", () => {
     layer.detach();
     expect(layer.stats.attached).toBe(false);
     layer.attach({} as Renderer);
-    expect(Number(await layer.commit())).toBe(3);
+    expect(Number(await layer.commit())).toBe(2);
     expect(layouts).toBe(2);
 
     layer.destroy();

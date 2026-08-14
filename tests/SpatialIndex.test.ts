@@ -1,0 +1,56 @@
+import { describe, expect, test } from "bun:test";
+
+import { SpatialIndex } from "../src/culling/SpatialIndex";
+
+describe("SpatialIndex", () => {
+  test("updates dense bounds and queries visible slots without allocating output", () => {
+    const index = new SpatialIndex({ initialCapacity: 2 });
+    index.set(0, { x: 0, y: 0, width: 20, height: 10 }, 1, true);
+    index.set(4, { x: 90, y: 90, width: 20, height: 20 }, 2, true);
+    index.set(2, { x: 5, y: 5, width: 2, height: 2 }, 3, false);
+    const output = new Uint32Array(8);
+
+    expect(index.query({ x: -5, y: -5, width: 30, height: 30 }, output)).toBe(1);
+    expect([...output.subarray(0, 1)]).toEqual([0]);
+
+    index.setVisible(2, true);
+    expect(index.query({ x: 0, y: 0, width: 10, height: 10 }, output)).toBe(2);
+    expect([...output.subarray(0, 2)]).toEqual([0, 2]);
+
+    index.translate(4, -80, -80);
+    expect(index.query({ x: 0, y: 0, width: 40, height: 40 }, output)).toBe(3);
+    expect(index.stats).toMatchObject({ entries: 3, capacity: 8, queries: 3 });
+
+    index.destroy();
+  });
+
+  test("returns topmost hits by z index and insertion order", () => {
+    const index = new SpatialIndex();
+    index.set(7, { x: 0, y: 0, width: 20, height: 20 }, 4, true);
+    index.set(3, { x: 0, y: 0, width: 20, height: 20 }, 4, true);
+    index.set(1, { x: 0, y: 0, width: 20, height: 20 }, 8, true);
+
+    expect(index.hitTest({ x: 10, y: 10 })).toBe(1);
+    index.setVisible(1, false);
+    expect(index.hitTest({ x: 10, y: 10 })).toBe(3);
+    expect(index.remove(3)).toBe(true);
+    expect(index.hitTest({ x: 10, y: 10 })).toBe(7);
+    expect(index.remove(3)).toBe(false);
+
+    index.destroy();
+  });
+
+  test("validates output capacity and finite geometry transactionally", () => {
+    const index = new SpatialIndex();
+    index.set(0, { x: 0, y: 0, width: 1, height: 1 });
+    index.set(1, { x: 1, y: 1, width: 1, height: 1 });
+
+    expect(() => index.query({ x: 0, y: 0, width: 10, height: 10 }, new Uint32Array(1))).toThrow(
+      RangeError,
+    );
+    expect(() => index.set(2, { x: Number.NaN, y: 0, width: 1, height: 1 })).toThrow(TypeError);
+    expect(index.stats.entries).toBe(2);
+
+    index.destroy();
+  });
+});

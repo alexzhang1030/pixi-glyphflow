@@ -1,4 +1,5 @@
 export { FontRegistry } from "./FontRegistry";
+export { SpatialIndex } from "./culling/SpatialIndex";
 export { GlyphAtlas } from "./atlas/GlyphAtlas";
 export { PrebuiltGlyphProvider } from "./atlas/PrebuiltGlyphProvider";
 export { RasterGlyphProvider } from "./atlas/RasterGlyphProvider";
@@ -72,11 +73,19 @@ export type {
   TextLabelSnapshot,
   TextLabelSpec,
   TextLayerOptions,
+  TextLayerCullingOptions,
   TextLayerRenderingOptions,
   TextLayerStats,
   TextRevision,
   TextUpdate,
 } from "./types";
+export type {
+  BoundsData,
+  MutableBoundsData,
+  PointLike,
+  SpatialIndexOptions,
+  SpatialIndexStats,
+} from "./culling/types";
 export type {
   BinaryFontData,
   FontRegistration,

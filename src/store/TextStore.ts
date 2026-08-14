@@ -41,6 +41,7 @@ export class TextStore {
   #scaleX: Float32Array;
   #scaleY: Float32Array;
   #rotation: Float32Array;
+  #zIndex: Float64Array;
   #alpha: Float32Array;
   #visible: Uint8Array;
   #anchorX: Float32Array;
@@ -69,6 +70,7 @@ export class TextStore {
     this.#scaleX = new Float32Array(this.#capacity);
     this.#scaleY = new Float32Array(this.#capacity);
     this.#rotation = new Float32Array(this.#capacity);
+    this.#zIndex = new Float64Array(this.#capacity);
     this.#alpha = new Float32Array(this.#capacity);
     this.#visible = new Uint8Array(this.#capacity);
     this.#anchorX = new Float32Array(this.#capacity);
@@ -111,6 +113,7 @@ export class TextStore {
       this.#scaleX.byteLength +
       this.#scaleY.byteLength +
       this.#rotation.byteLength +
+      this.#zIndex.byteLength +
       this.#alpha.byteLength +
       this.#visible.byteLength +
       this.#anchorX.byteLength +
@@ -188,6 +191,7 @@ export class TextStore {
       scaleX: this.#scaleX[slot] ?? 0,
       scaleY: this.#scaleY[slot] ?? 0,
       rotation: this.#rotation[slot] ?? 0,
+      zIndex: this.#zIndex[slot] ?? 0,
       alpha: this.#alpha[slot] ?? 0,
       visible: this.#visible[slot] === 1,
       anchorX: this.#anchorX[slot] ?? 0,
@@ -229,6 +233,10 @@ export class TextStore {
       this.#rotation[slot] = patch.rotation;
       dirty |= TextDirty.Transform;
     }
+    if (patch.zIndex !== undefined && patch.zIndex !== this.#zIndex[slot]) {
+      this.#zIndex[slot] = patch.zIndex;
+      dirty |= TextDirty.Transform;
+    }
     if (patch.alpha !== undefined && patch.alpha !== this.#alpha[slot]) {
       this.#alpha[slot] = patch.alpha;
       dirty |= TextDirty.Transform;
@@ -267,6 +275,7 @@ export class TextStore {
   updatePositions(
     ids: readonly TextId[] | Float64Array,
     positions: Float32Array | Float64Array,
+    visitor?: (slot: number, x: number, y: number, previousX: number, previousY: number) => void,
   ): number {
     if (positions.length !== ids.length * 2) {
       throw new TypeError("positions must contain one packed x/y pair for every TextId");
@@ -298,13 +307,16 @@ export class TextStore {
       }
       const x = Math.fround(positions[index * 2] ?? 0);
       const y = Math.fround(positions[index * 2 + 1] ?? 0);
-      if (x === this.#x[slot] && y === this.#y[slot]) {
+      const previousX = this.#x[slot] ?? 0;
+      const previousY = this.#y[slot] ?? 0;
+      if (x === previousX && y === previousY) {
         continue;
       }
 
       this.#x[slot] = x;
       this.#y[slot] = y;
       this.#journal.record(slot, TextDirty.Transform);
+      visitor?.(slot, x, y, previousX, previousY);
       changed += 1;
     }
 
@@ -393,6 +405,7 @@ export class TextStore {
       this.#scaleX = resizeTypedArray(this.#scaleX, afterCapacity);
       this.#scaleY = resizeTypedArray(this.#scaleY, afterCapacity);
       this.#rotation = resizeTypedArray(this.#rotation, afterCapacity);
+      this.#zIndex = resizeTypedArray(this.#zIndex, afterCapacity);
       this.#alpha = resizeTypedArray(this.#alpha, afterCapacity);
       this.#visible = resizeTypedArray(this.#visible, afterCapacity);
       this.#anchorX = resizeTypedArray(this.#anchorX, afterCapacity);
@@ -425,6 +438,7 @@ export class TextStore {
     this.#scaleX = new Float32Array();
     this.#scaleY = new Float32Array();
     this.#rotation = new Float32Array();
+    this.#zIndex = new Float64Array();
     this.#alpha = new Float32Array();
     this.#visible = new Uint8Array();
     this.#anchorX = new Float32Array();
@@ -462,6 +476,7 @@ export class TextStore {
     this.#scaleX = growTypedArray(this.#scaleX, capacity);
     this.#scaleY = growTypedArray(this.#scaleY, capacity);
     this.#rotation = growTypedArray(this.#rotation, capacity);
+    this.#zIndex = growTypedArray(this.#zIndex, capacity);
     this.#alpha = growTypedArray(this.#alpha, capacity);
     this.#visible = growTypedArray(this.#visible, capacity);
     this.#anchorX = growTypedArray(this.#anchorX, capacity);
@@ -479,6 +494,7 @@ export class TextStore {
     this.#scaleX[slot] = label.scaleX;
     this.#scaleY[slot] = label.scaleY;
     this.#rotation[slot] = label.rotation;
+    this.#zIndex[slot] = label.zIndex;
     this.#alpha[slot] = label.alpha;
     this.#visible[slot] = Number(label.visible);
     this.#anchorX[slot] = label.anchorX;
@@ -575,6 +591,7 @@ function assertFiniteFields(label: TextStoreLabelPatch): void {
   assertFiniteField("scaleX", label.scaleX);
   assertFiniteField("scaleY", label.scaleY);
   assertFiniteField("rotation", label.rotation);
+  assertFiniteField("zIndex", label.zIndex);
   assertFiniteField("alpha", label.alpha);
   assertFiniteField("anchorX", label.anchorX);
   assertFiniteField("anchorY", label.anchorY);
@@ -594,7 +611,7 @@ function freezeStyle(style: Readonly<TextStoreLabel["style"]>): Readonly<TextSto
   return Object.freeze({ ...style });
 }
 
-function growTypedArray<T extends Uint8Array | Uint32Array | Float32Array>(
+function growTypedArray<T extends Uint8Array | Uint32Array | Float32Array | Float64Array>(
   source: T,
   capacity: number,
 ): T {
@@ -603,14 +620,16 @@ function growTypedArray<T extends Uint8Array | Uint32Array | Float32Array>(
       ? new Uint8Array(capacity)
       : source instanceof Uint32Array
         ? new Uint32Array(capacity)
-        : new Float32Array(capacity)
+        : source instanceof Float64Array
+          ? new Float64Array(capacity)
+          : new Float32Array(capacity)
   ) as T;
   target.set(source);
 
   return target;
 }
 
-function resizeTypedArray<T extends Uint8Array | Uint32Array | Float32Array>(
+function resizeTypedArray<T extends Uint8Array | Uint32Array | Float32Array | Float64Array>(
   source: T,
   capacity: number,
 ): T {
@@ -619,7 +638,9 @@ function resizeTypedArray<T extends Uint8Array | Uint32Array | Float32Array>(
       ? new Uint8Array(capacity)
       : source instanceof Uint32Array
         ? new Uint32Array(capacity)
-        : new Float32Array(capacity)
+        : source instanceof Float64Array
+          ? new Float64Array(capacity)
+          : new Float32Array(capacity)
   ) as T;
   target.set(source.subarray(0, capacity));
 

@@ -1,5 +1,13 @@
-import { Container, type DestroyOptions, type Renderer, type TextStyleOptions } from "pixi.js";
+import {
+  Container,
+  type DestroyOptions,
+  type Matrix,
+  type Renderer,
+  type TextStyleOptions,
+} from "pixi.js";
 
+import { SpatialIndex } from "./culling/SpatialIndex";
+import type { BoundsData, MutableBoundsData, PointLike } from "./culling/types";
 import { FontRegistry } from "./FontRegistry";
 import {
   RenderCoordinator,
@@ -16,6 +24,7 @@ import { TextStore } from "./store/TextStore";
 import {
   TextDirty,
   type TextDirtyMask,
+  type TextStoreLabel,
   type TextStoreLabelPatch,
   type TextStoreSnapshot,
 } from "./store/types";
@@ -26,6 +35,7 @@ import type {
   TextLabelSnapshot,
   TextLabelSpec,
   TextLayerOptions,
+  TextLayerCullingOptions,
   TextLayerRenderingOptions,
   TextLayerStats,
   TextRevision,
@@ -34,6 +44,7 @@ import type {
 
 const EMPTY_STYLE: Readonly<TextStyleOptions> = Object.freeze({});
 const ALL_DIRTY = TextDirty.Content | TextDirty.Transform | TextDirty.Style;
+type MutableTextStoreLabel = { -readonly [Key in keyof TextStoreLabel]: TextStoreLabel[Key] };
 
 /**
  * Dense, revisioned text state and the PixiJS scene-object seam for glyph rendering.
@@ -44,6 +55,7 @@ const ALL_DIRTY = TextDirty.Content | TextDirty.Transform | TextDirty.Style;
 export class TextLayer extends Container {
   readonly fonts: FontRegistry = new FontRegistry();
   readonly #store: TextStore;
+  readonly #spatial: SpatialIndex;
   readonly #trustedRuns = new Map<TextId, TrustedGlyphRun>();
   #revision = 0;
   #pendingMutations = 0;
@@ -59,6 +71,35 @@ export class TextLayer extends Container {
   #renderCoordinator: RenderCoordinator | undefined;
   #renderTail: Promise<void> = Promise.resolve();
   #lastCommitPromise: Promise<TextRevision> = Promise.resolve(0 as TextRevision);
+  readonly #cullingEnabled: boolean;
+  readonly #cullingPadding: number;
+  #viewportBounds: Readonly<BoundsData> | undefined;
+  #viewDirty = false;
+  #dirtyMasks: Uint8Array;
+  #dirtySlots: Uint32Array;
+  #dirtyLength = 0;
+  #visibleSlots: Uint32Array;
+  #visibleCount = 0;
+  #renderedEpochs: Uint32Array;
+  #renderedSlots: Uint32Array;
+  #renderedCount = 0;
+  #renderEpoch = 0;
+  #renderSequence = 0;
+  readonly #boundsScratch: MutableBoundsData = { x: 0, y: 0, width: 0, height: 0 };
+  readonly #labelScratch: MutableTextStoreLabel = {
+    text: "",
+    x: 0,
+    y: 0,
+    scaleX: 1,
+    scaleY: 1,
+    rotation: 0,
+    zIndex: 0,
+    alpha: 1,
+    visible: true,
+    anchorX: 0,
+    anchorY: 0,
+    style: EMPTY_STYLE,
+  };
 
   constructor(options: TextLayerOptions = {}) {
     super();
@@ -66,6 +107,16 @@ export class TextLayer extends Container {
       options.initialCapacity === undefined
         ? new TextStore()
         : new TextStore({ initialCapacity: options.initialCapacity });
+    const culling = resolveCullingOptions(options.culling);
+    this.#spatial = new SpatialIndex({ initialCapacity: this.#store.capacity });
+    this.#cullingEnabled = culling.enabled;
+    this.#cullingPadding = culling.padding;
+    this.#viewportBounds = culling.bounds;
+    this.#dirtyMasks = new Uint8Array(this.#store.capacity);
+    this.#dirtySlots = new Uint32Array(this.#store.capacity);
+    this.#visibleSlots = new Uint32Array(this.#store.capacity);
+    this.#renderedEpochs = new Uint32Array(this.#store.capacity);
+    this.#renderedSlots = new Uint32Array(this.#store.capacity);
     this.#renderer = options.renderer;
     this.#renderingOptions = options.rendering ?? {};
     if (this.#renderer !== undefined) {
@@ -77,7 +128,9 @@ export class TextLayer extends Container {
   create(spec: TextLabelSpec): TextId {
     this.#assertActive();
     assertLabelSpec(spec);
-    const id = this.#store.create(normalizeLabel(spec));
+    const label = normalizeLabel(spec, this.#labelScratch);
+    const id = this.#store.create(label);
+    this.#indexLabel(id, label);
     this.#recordMutation(ALL_DIRTY, 1);
 
     return id;
@@ -90,10 +143,14 @@ export class TextLayer extends Container {
       assertLabelSpec(spec);
     }
     this.#store.reserve(specs.length);
+    this.#spatial.reserve(this.#store.capacity);
 
     const ids: TextId[] = [];
     for (const spec of specs) {
-      ids.push(this.#store.create(normalizeLabel(spec)));
+      const label = normalizeLabel(spec, this.#labelScratch);
+      const id = this.#store.create(label);
+      ids.push(id);
+      this.#indexLabel(id, label);
     }
     this.#recordMutation(ALL_DIRTY, ids.length);
 
@@ -117,6 +174,7 @@ export class TextLayer extends Container {
       scaleX: snapshot.scaleX,
       scaleY: snapshot.scaleY,
       rotation: snapshot.rotation,
+      zIndex: snapshot.zIndex,
       alpha: snapshot.alpha,
       visible: snapshot.visible,
       anchor: Object.freeze({ x: snapshot.anchorX, y: snapshot.anchorY }),
@@ -135,6 +193,11 @@ export class TextLayer extends Container {
     this.#assertActive();
     assertLabelPatch(patch);
     const dirty = this.#store.update(id, normalizePatch(patch));
+    if (dirty !== TextDirty.None) {
+      const snapshot = this.#store.get(id);
+      if (snapshot === undefined) throw new Error("Updated label disappeared from its store");
+      this.#indexLabel(id, snapshot);
+    }
     if ((dirty & (TextDirty.Content | TextDirty.Style)) !== 0) {
       this.#trustedRuns.delete(id);
     }
@@ -168,6 +231,9 @@ export class TextLayer extends Container {
         if ((entryDirty & (TextDirty.Content | TextDirty.Style)) !== 0) {
           this.#trustedRuns.delete(entry.id);
         }
+        const snapshot = this.#store.get(entry.id);
+        if (snapshot === undefined) throw new Error("Updated label disappeared from its store");
+        this.#indexLabel(entry.id, snapshot);
       }
     }
     this.#recordMutation(dirty, changed);
@@ -181,7 +247,13 @@ export class TextLayer extends Container {
     positions: Float32Array | Float64Array,
   ): number {
     this.#assertActive();
-    const changed = this.#store.updatePositions(ids, positions);
+    const changed = this.#store.updatePositions(
+      ids,
+      positions,
+      (slot, x, y, previousX, previousY) => {
+        this.#spatial.translate(slot, x - previousX, y - previousY);
+      },
+    );
     this.#recordMutation(TextDirty.Transform, changed);
 
     return changed;
@@ -190,8 +262,11 @@ export class TextLayer extends Container {
   /** Remove one label and report whether it existed. */
   remove(id: TextId): boolean {
     this.#assertActive();
+    const slot = this.#store.slotOf(id);
     const removed = this.#store.remove(id);
     if (removed) {
+      if (slot === undefined) throw new Error("Removed label slot is unavailable");
+      this.#spatial.remove(slot);
       this.#trustedRuns.delete(id);
     }
     this.#recordMutation(ALL_DIRTY, Number(removed));
@@ -205,7 +280,10 @@ export class TextLayer extends Container {
     let removed = 0;
     for (const id of ids) {
       const currentId = id as TextId;
+      const slot = this.#store.slotOf(currentId);
       if (this.#store.remove(currentId)) {
+        if (slot === undefined) throw new Error("Removed label slot is unavailable");
+        this.#spatial.remove(slot);
         this.#trustedRuns.delete(currentId);
         removed += 1;
       }
@@ -221,6 +299,7 @@ export class TextLayer extends Container {
     const removed = this.#store.size;
     if (removed > 0) {
       this.#store.clear();
+      this.#spatial.clear();
       this.#trustedRuns.clear();
       this.#recordMutation(ALL_DIRTY, removed);
     }
@@ -265,6 +344,7 @@ export class TextLayer extends Container {
     }
 
     this.#trustedRuns.set(id, run);
+    this.#indexLabel(id, snapshot, run.bounds);
     this.#store.markDirty(id, TextDirty.Content);
     this.#recordMutation(TextDirty.Content, 1);
 
@@ -281,10 +361,54 @@ export class TextLayer extends Container {
     return this.#trustedRuns.get(id);
   }
 
+  /** Set the layer-local viewport used by dense culling and schedule one visibility refresh. */
+  setViewportBounds(bounds: BoundsData | undefined): void {
+    this.#assertActive();
+    if (bounds !== undefined) assertBoundsData(bounds);
+    if (equalBounds(this.#viewportBounds, bounds)) return;
+    this.#viewportBounds = bounds === undefined ? undefined : Object.freeze({ ...bounds });
+    this.#viewDirty = true;
+  }
+
+  /** Read accepted label bounds in local or world coordinates. */
+  getBoundsFor(
+    id: TextId,
+    output?: MutableBoundsData,
+    space: "local" | "world" = "local",
+  ): Readonly<BoundsData> | undefined {
+    this.#assertActive();
+    if (space !== "local" && space !== "world") {
+      throw new TypeError('Bounds space must be "local" or "world"');
+    }
+    const slot = this.#store.slotOf(id);
+    if (slot === undefined) return undefined;
+    const target = output ?? { x: 0, y: 0, width: 0, height: 0 };
+    const bounds = this.#spatial.get(slot, target);
+    if (bounds === undefined || space === "local") return bounds;
+
+    return transformBounds(bounds, this.worldTransform, target);
+  }
+
+  /** Return the topmost visible label at a local or world point. */
+  hitTest(point: PointLike, space: "local" | "world" = "local"): TextId | undefined {
+    this.#assertActive();
+    assertPointLike(point);
+    if (space !== "local" && space !== "world") {
+      throw new TypeError('Hit-test space must be "local" or "world"');
+    }
+    const localPoint =
+      space === "world" ? inverseTransformPoint(point, this.worldTransform) : point;
+    const slot = this.#spatial.hitTest(localPoint);
+    if (slot === undefined) return undefined;
+
+    return this.#store.snapshotAt(slot)?.id;
+  }
+
   /** Publish accepted mutations as one monotonic revision. */
   commit(): Promise<TextRevision> {
     this.#assertActive();
-    if (this.#store.pendingDirty.labels === 0) {
+    const hasLabelChanges = this.#store.pendingDirty.labels > 0;
+    if (!hasLabelChanges && !this.#viewDirty) {
       this.#lastCommitDurationMs = 0;
       this.#lastCommitDirtyLabels = 0;
       this.#lastCommitContentLabels = 0;
@@ -292,25 +416,28 @@ export class TextLayer extends Container {
       this.#lastCommitStyleLabels = 0;
       return this.#lastCommitPromise;
     }
-    if (this.#revision === Number.MAX_SAFE_INTEGER) {
+    if (hasLabelChanges && this.#revision === Number.MAX_SAFE_INTEGER) {
       throw new RangeError("TextLayer revision capacity exhausted");
     }
 
     const start = performance.now();
     const coordinator = this.#renderCoordinator;
-    const changes: RenderChange[] = [];
-    const dirty = this.#store.publishDirty((slot, mask) => {
-      if (coordinator === undefined) return;
-      const snapshot = this.#store.snapshotAt(slot);
-      const trustedRun = snapshot === undefined ? undefined : this.#trustedRuns.get(snapshot.id);
-      changes.push({
-        slot,
-        mask,
-        snapshot: snapshot === undefined ? undefined : toRenderSnapshot(snapshot),
-        ...(trustedRun === undefined ? {} : { trustedRun }),
-      });
-    });
-    this.#revision += 1;
+    this.#ensureScratchCapacity();
+    this.#dirtyLength = 0;
+    const dirty = hasLabelChanges
+      ? this.#store.publishDirty((slot, mask) => {
+          this.#dirtyMasks[slot] = mask;
+          this.#dirtySlots[this.#dirtyLength] = slot;
+          this.#dirtyLength += 1;
+        })
+      : {
+          labels: 0,
+          content: 0,
+          transform: 0,
+          style: 0,
+          mask: TextDirty.None,
+        };
+    if (hasLabelChanges) this.#revision += 1;
     const revision = this.#revision as TextRevision;
     this.#pendingMutations = 0;
     this.#commits += 1;
@@ -318,14 +445,36 @@ export class TextLayer extends Container {
     this.#lastCommitContentLabels = dirty.content;
     this.#lastCommitTransformLabels = dirty.transform;
     this.#lastCommitStyleLabels = dirty.style;
-    if (coordinator === undefined) {
+    this.#viewDirty = false;
+    this.#visibleCount = this.#queryVisible();
+    const changes = coordinator === undefined ? [] : this.#buildRenderChanges();
+    this.#clearDirtyMasks();
+
+    if (coordinator === undefined || changes.length === 0) {
       this.#lastCommitDurationMs = performance.now() - start;
-      this.#lastCommitPromise = Promise.resolve(revision);
+      this.#lastCommitPromise = this.#renderTail.then(() => revision);
       return this.#lastCommitPromise;
     }
 
+    if (this.#renderSequence === Number.MAX_SAFE_INTEGER) {
+      throw new RangeError("TextLayer render sequence capacity exhausted");
+    }
+    this.#renderSequence += 1;
+    const renderSequence = this.#renderSequence;
     const renderWork = this.#renderTail.then(async () => {
-      await coordinator.commit(this.#revisionForRender(revision), changes);
+      await coordinator.commit(renderSequence, changes);
+      for (const change of changes) {
+        if (change.snapshot === undefined) continue;
+        const run = coordinator.getRun(change.slot);
+        if (run !== undefined) {
+          this.#spatial.set(
+            change.slot,
+            transformedLabelBounds(change.snapshot, run.bounds, this.#boundsScratch),
+            change.snapshot.zIndex,
+            change.snapshot.visible,
+          );
+        }
+      }
     });
     this.#renderTail = renderWork.then(
       () => undefined,
@@ -338,7 +487,8 @@ export class TextLayer extends Container {
       },
       (error: unknown) => {
         if (!this.destroyed && this.#renderCoordinator === coordinator) {
-          this.#pendingMutations += this.#store.markAllDirty(ALL_DIRTY);
+          this.#resetRenderedSet();
+          this.#viewDirty = true;
         }
         throw error;
       },
@@ -354,9 +504,10 @@ export class TextLayer extends Container {
       return;
     }
     this.#renderCoordinator?.destroy();
+    this.#resetRenderedSet();
     this.#renderer = renderer;
     this.#activateRendering();
-    this.#pendingMutations += this.#store.markAllDirty(ALL_DIRTY);
+    this.#viewDirty = true;
   }
 
   /** Release the current renderer association. */
@@ -365,7 +516,7 @@ export class TextLayer extends Container {
     this.#renderCoordinator?.destroy();
     this.#renderCoordinator = undefined;
     this.#renderer = undefined;
-    this.#trustedRuns.clear();
+    this.#resetRenderedSet();
     this.#renderTail = Promise.resolve();
     this.#lastCommitPromise = Promise.resolve(this.#revision as TextRevision);
   }
@@ -375,6 +526,7 @@ export class TextLayer extends Container {
     const store = this.#store.stats;
     const pendingDirty = this.#store.pendingDirty;
     const render = this.#renderCoordinator?.stats;
+    const spatial = this.#spatial.stats;
 
     return Object.freeze({
       backend: "glyphflow-core",
@@ -400,6 +552,10 @@ export class TextLayer extends Container {
       transformOnlyLabels: render?.transformOnlyLabels ?? 0,
       removedRenderLabels: render?.removedLabels ?? 0,
       staleRenderRevisions: render?.staleRevisions ?? 0,
+      visibleLabelCount: this.#visibleCount,
+      culledLabelCount: Math.max(0, store.size - this.#visibleCount),
+      spatialIndexBytes: spatial.allocatedBytes,
+      cullingQueries: spatial.queries,
     });
   }
 
@@ -413,6 +569,7 @@ export class TextLayer extends Container {
     this.#renderCoordinator?.destroy();
     this.#renderCoordinator = undefined;
     this.fonts.destroy();
+    this.#spatial.destroy();
     this.#store.dispose();
     super.destroy(options);
   }
@@ -436,8 +593,90 @@ export class TextLayer extends Container {
     });
   }
 
-  #revisionForRender(revision: TextRevision): number {
-    return Number(revision);
+  #indexLabel(
+    id: TextId,
+    label: Readonly<TextStoreSnapshot> | Parameters<TextStore["create"]>[0],
+    runBounds?: BoundsData,
+  ): void {
+    const slot = this.#store.slotOf(id);
+    if (slot === undefined) throw new Error("Label slot is unavailable for spatial indexing");
+    this.#spatial.set(
+      slot,
+      transformedLabelBounds(label, runBounds, this.#boundsScratch),
+      label.zIndex,
+      label.visible,
+    );
+  }
+
+  #ensureScratchCapacity(): void {
+    const required = Math.max(this.#store.capacity, this.#spatial.capacity);
+    if (this.#visibleSlots.length >= required) return;
+    this.#dirtyMasks = growTypedArray(this.#dirtyMasks, required);
+    this.#dirtySlots = growTypedArray(this.#dirtySlots, required);
+    this.#visibleSlots = growTypedArray(this.#visibleSlots, required);
+    this.#renderedEpochs = growTypedArray(this.#renderedEpochs, required);
+    this.#renderedSlots = growTypedArray(this.#renderedSlots, required);
+  }
+
+  #queryVisible(): number {
+    if (this.#cullingEnabled && this.#viewportBounds !== undefined) {
+      return this.#spatial.query(this.#viewportBounds, this.#visibleSlots, this.#cullingPadding);
+    }
+
+    return this.#spatial.queryAll(this.#visibleSlots);
+  }
+
+  #buildRenderChanges(): RenderChange[] {
+    let previousEpoch = this.#renderEpoch;
+    if (previousEpoch === 0xffff_ffff) {
+      this.#renderedEpochs.fill(0);
+      previousEpoch = 0;
+    }
+    const nextEpoch = previousEpoch + 1;
+    const changes: RenderChange[] = [];
+    for (let index = 0; index < this.#visibleCount; index += 1) {
+      const slot = this.#visibleSlots[index];
+      if (slot === undefined) throw new Error("Visible slot list is incomplete");
+      const wasRendered = previousEpoch !== 0 && this.#renderedEpochs[slot] === previousEpoch;
+      this.#renderedEpochs[slot] = nextEpoch;
+      const dirtyMask = this.#dirtyMasks[slot] ?? TextDirty.None;
+      if (wasRendered && dirtyMask === TextDirty.None) continue;
+      const snapshot = this.#store.snapshotAt(slot);
+      if (snapshot === undefined) throw new Error("Visible label snapshot is unavailable");
+      const trustedRun = this.#trustedRuns.get(snapshot.id);
+      changes.push({
+        slot,
+        mask: wasRendered ? dirtyMask : ALL_DIRTY,
+        snapshot: toRenderSnapshot(snapshot),
+        ...(trustedRun === undefined ? {} : { trustedRun }),
+      });
+    }
+    for (let index = 0; index < this.#renderedCount; index += 1) {
+      const slot = this.#renderedSlots[index];
+      if (slot === undefined) throw new Error("Rendered slot list is incomplete");
+      if (this.#renderedEpochs[slot] !== nextEpoch) {
+        changes.push({ slot, mask: ALL_DIRTY, snapshot: undefined });
+      }
+    }
+    this.#renderedSlots.set(this.#visibleSlots.subarray(0, this.#visibleCount));
+    this.#renderedCount = this.#visibleCount;
+    this.#renderEpoch = nextEpoch;
+
+    return changes;
+  }
+
+  #clearDirtyMasks(): void {
+    for (let index = 0; index < this.#dirtyLength; index += 1) {
+      const slot = this.#dirtySlots[index];
+      if (slot !== undefined) this.#dirtyMasks[slot] = TextDirty.None;
+    }
+    this.#dirtyLength = 0;
+  }
+
+  #resetRenderedSet(): void {
+    this.#renderedEpochs.fill(0);
+    this.#renderedCount = 0;
+    this.#renderEpoch = 0;
   }
 
   #assertTrustedRunSource(
@@ -463,7 +702,10 @@ export class TextLayer extends Container {
   }
 }
 
-function normalizeLabel(spec: TextLabelSpec): Parameters<TextStore["create"]>[0] {
+function normalizeLabel(
+  spec: TextLabelSpec,
+  output: MutableTextStoreLabel,
+): Parameters<TextStore["create"]>[0] {
   let scaleX = 1;
   let scaleY = 1;
   if (typeof spec.scale === "number") {
@@ -484,19 +726,20 @@ function normalizeLabel(spec: TextLabelSpec): Parameters<TextStore["create"]>[0]
     anchorY = spec.anchor.y;
   }
 
-  return {
-    text: spec.text,
-    x: spec.x ?? 0,
-    y: spec.y ?? 0,
-    scaleX: spec.scaleX ?? scaleX,
-    scaleY: spec.scaleY ?? scaleY,
-    rotation: spec.rotation ?? 0,
-    alpha: spec.alpha ?? 1,
-    visible: spec.visible ?? true,
-    anchorX,
-    anchorY,
-    style: spec.style ?? EMPTY_STYLE,
-  };
+  output.text = spec.text;
+  output.x = spec.x ?? 0;
+  output.y = spec.y ?? 0;
+  output.scaleX = spec.scaleX ?? scaleX;
+  output.scaleY = spec.scaleY ?? scaleY;
+  output.rotation = spec.rotation ?? 0;
+  output.zIndex = spec.zIndex ?? 0;
+  output.alpha = spec.alpha ?? 1;
+  output.visible = spec.visible ?? true;
+  output.anchorX = anchorX;
+  output.anchorY = anchorY;
+  output.style = spec.style ?? EMPTY_STYLE;
+
+  return output;
 }
 
 function toRenderSnapshot(snapshot: Readonly<TextStoreSnapshot>): Readonly<RenderLabelSnapshot> {
@@ -508,6 +751,7 @@ function toRenderSnapshot(snapshot: Readonly<TextStoreSnapshot>): Readonly<Rende
     scaleX: snapshot.scaleX,
     scaleY: snapshot.scaleY,
     rotation: snapshot.rotation,
+    zIndex: snapshot.zIndex,
     alpha: snapshot.alpha,
     visible: snapshot.visible,
     anchorX: snapshot.anchorX,
@@ -532,6 +776,7 @@ function normalizePatch(patch: TextLabelPatch): TextStoreLabelPatch {
   if (patch.scaleX !== undefined) normalized.scaleX = patch.scaleX;
   if (patch.scaleY !== undefined) normalized.scaleY = patch.scaleY;
   if (patch.rotation !== undefined) normalized.rotation = patch.rotation;
+  if (patch.zIndex !== undefined) normalized.zIndex = patch.zIndex;
   if (patch.alpha !== undefined) normalized.alpha = patch.alpha;
   if (patch.visible !== undefined) normalized.visible = patch.visible;
   if (patch.anchor !== undefined) {
@@ -566,6 +811,7 @@ function assertLabelPatch(patch: TextLabelPatch): void {
   assertFiniteField("scaleX", patch.scaleX);
   assertFiniteField("scaleY", patch.scaleY);
   assertFiniteField("rotation", patch.rotation);
+  assertFiniteField("zIndex", patch.zIndex);
   assertFiniteField("alpha", patch.alpha);
   if (patch.visible !== undefined && typeof patch.visible !== "boolean") {
     throw new TypeError("visible must be a boolean");
@@ -601,4 +847,191 @@ function readPoint(
   }
 
   return { x: value.x, y: value.y };
+}
+
+function resolveCullingOptions(
+  options: false | TextLayerCullingOptions | undefined,
+): Readonly<{ enabled: boolean; padding: number; bounds: Readonly<BoundsData> | undefined }> {
+  if (options === false) {
+    return { enabled: false, padding: 0, bounds: undefined };
+  }
+  const padding = options?.padding ?? 0;
+  if (!Number.isFinite(padding) || padding < 0) {
+    throw new TypeError("Culling padding must be a finite non-negative number");
+  }
+  if (options?.bounds !== undefined) assertBoundsData(options.bounds);
+
+  return {
+    enabled: options?.enabled ?? true,
+    padding,
+    bounds: options?.bounds === undefined ? undefined : Object.freeze({ ...options.bounds }),
+  };
+}
+
+function transformedLabelBounds(
+  label: Pick<
+    TextStoreSnapshot,
+    "text" | "x" | "y" | "scaleX" | "scaleY" | "rotation" | "anchorX" | "anchorY" | "style"
+  >,
+  acceptedBounds?: BoundsData,
+  output: MutableBoundsData = { x: 0, y: 0, width: 0, height: 0 },
+): Readonly<BoundsData> {
+  const bounds = acceptedBounds ?? estimateTextBounds(label.text, label.style, output);
+  const left = bounds.x - label.anchorX * bounds.width;
+  const top = bounds.y - label.anchorY * bounds.height;
+  const right = left + bounds.width;
+  const bottom = top + bounds.height;
+  const sine = Math.sin(label.rotation);
+  const cosine = Math.cos(label.rotation);
+  const scaledLeft = left * label.scaleX;
+  const scaledRight = right * label.scaleX;
+  const scaledTop = top * label.scaleY;
+  const scaledBottom = bottom * label.scaleY;
+  const x0 = label.x + scaledLeft * cosine - scaledTop * sine;
+  const y0 = label.y + scaledLeft * sine + scaledTop * cosine;
+  const x1 = label.x + scaledRight * cosine - scaledTop * sine;
+  const y1 = label.y + scaledRight * sine + scaledTop * cosine;
+  const x2 = label.x + scaledRight * cosine - scaledBottom * sine;
+  const y2 = label.y + scaledRight * sine + scaledBottom * cosine;
+  const x3 = label.x + scaledLeft * cosine - scaledBottom * sine;
+  const y3 = label.y + scaledLeft * sine + scaledBottom * cosine;
+  output.x = Math.min(x0, x1, x2, x3);
+  output.y = Math.min(y0, y1, y2, y3);
+  output.width = Math.max(x0, x1, x2, x3) - output.x;
+  output.height = Math.max(y0, y1, y2, y3) - output.y;
+
+  return output;
+}
+
+function estimateTextBounds(
+  text: string,
+  style: Readonly<TextStyleOptions>,
+  output: MutableBoundsData,
+): BoundsData {
+  const fontSize = resolvePositiveStyleNumber(style.fontSize, 26);
+  const lineHeight = resolvePositiveStyleNumber(style.lineHeight, fontSize * 1.2);
+  const letterSpacing = resolveFiniteStyleNumber(style.letterSpacing, 0);
+  let maximumCharacters = 0;
+  let currentCharacters = 0;
+  let lineCount = 1;
+  for (let index = 0; index < text.length; index += 1) {
+    const code = text.charCodeAt(index);
+    if (code === 10) {
+      maximumCharacters = Math.max(maximumCharacters, currentCharacters);
+      currentCharacters = 0;
+      lineCount += 1;
+      continue;
+    }
+    currentCharacters += 1;
+    if (code >= 0xd800 && code <= 0xdbff) {
+      const next = text.charCodeAt(index + 1);
+      if (next >= 0xdc00 && next <= 0xdfff) index += 1;
+    }
+  }
+  maximumCharacters = Math.max(maximumCharacters, currentCharacters);
+  let width = Math.max(
+    0,
+    maximumCharacters * fontSize * 0.6 + letterSpacing * (maximumCharacters - 1),
+  );
+  const wrapWidth = resolvePositiveStyleNumber(style.wordWrapWidth, Number.POSITIVE_INFINITY);
+  if (Number.isFinite(wrapWidth) && wrapWidth > 0 && width > wrapWidth) {
+    lineCount *= Math.ceil(width / wrapWidth);
+    width = wrapWidth;
+  }
+
+  output.x = 0;
+  output.y = 0;
+  output.width = width;
+  output.height = lineCount * lineHeight;
+
+  return output;
+}
+
+function resolvePositiveStyleNumber(value: unknown, fallback: number): number {
+  const parsed = typeof value === "number" ? value : Number.parseFloat(String(value ?? ""));
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback;
+}
+
+function resolveFiniteStyleNumber(value: unknown, fallback: number): number {
+  const parsed = typeof value === "number" ? value : Number.parseFloat(String(value ?? ""));
+  return Number.isFinite(parsed) ? parsed : fallback;
+}
+
+function transformBounds(
+  bounds: BoundsData,
+  matrix: Matrix,
+  output: MutableBoundsData,
+): Readonly<BoundsData> {
+  const minimumX = bounds.x;
+  const minimumY = bounds.y;
+  const maximumX = bounds.x + bounds.width;
+  const maximumY = bounds.y + bounds.height;
+  const x0 = matrix.a * minimumX + matrix.c * minimumY + matrix.tx;
+  const y0 = matrix.b * minimumX + matrix.d * minimumY + matrix.ty;
+  const x1 = matrix.a * maximumX + matrix.c * minimumY + matrix.tx;
+  const y1 = matrix.b * maximumX + matrix.d * minimumY + matrix.ty;
+  const x2 = matrix.a * maximumX + matrix.c * maximumY + matrix.tx;
+  const y2 = matrix.b * maximumX + matrix.d * maximumY + matrix.ty;
+  const x3 = matrix.a * minimumX + matrix.c * maximumY + matrix.tx;
+  const y3 = matrix.b * minimumX + matrix.d * maximumY + matrix.ty;
+  output.x = Math.min(x0, x1, x2, x3);
+  output.y = Math.min(y0, y1, y2, y3);
+  output.width = Math.max(x0, x1, x2, x3) - output.x;
+  output.height = Math.max(y0, y1, y2, y3) - output.y;
+
+  return output;
+}
+
+function inverseTransformPoint(point: PointLike, matrix: Matrix): Readonly<PointLike> {
+  const determinant = matrix.a * matrix.d - matrix.b * matrix.c;
+  if (determinant === 0) {
+    return { x: Number.POSITIVE_INFINITY, y: Number.POSITIVE_INFINITY };
+  }
+  const x = point.x - matrix.tx;
+  const y = point.y - matrix.ty;
+
+  return {
+    x: (matrix.d * x - matrix.c * y) / determinant,
+    y: (-matrix.b * x + matrix.a * y) / determinant,
+  };
+}
+
+function equalBounds(left: BoundsData | undefined, right: BoundsData | undefined): boolean {
+  return (
+    left === right ||
+    (left !== undefined &&
+      right !== undefined &&
+      left.x === right.x &&
+      left.y === right.y &&
+      left.width === right.width &&
+      left.height === right.height)
+  );
+}
+
+function assertBoundsData(bounds: BoundsData): void {
+  if (
+    !Number.isFinite(bounds.x) ||
+    !Number.isFinite(bounds.y) ||
+    !Number.isFinite(bounds.width) ||
+    !Number.isFinite(bounds.height) ||
+    bounds.width < 0 ||
+    bounds.height < 0
+  ) {
+    throw new TypeError("Bounds must contain finite x/y and non-negative width/height values");
+  }
+}
+
+function assertPointLike(point: PointLike): void {
+  if (!Number.isFinite(point.x) || !Number.isFinite(point.y)) {
+    throw new TypeError("Point must contain finite x/y values");
+  }
+}
+
+function growTypedArray<T extends Uint8Array | Uint32Array>(source: T, capacity: number): T {
+  const target = (
+    source instanceof Uint8Array ? new Uint8Array(capacity) : new Uint32Array(capacity)
+  ) as T;
+  target.set(source);
+
+  return target;
 }

@@ -136,6 +136,7 @@ function label(patch: TextStoreLabelPatch = {}): TextStoreLabel {
     scaleX: 1,
     scaleY: 1,
     rotation: 0,
+    zIndex: 0,
     alpha: 1,
     visible: true,
     anchorX: 0,

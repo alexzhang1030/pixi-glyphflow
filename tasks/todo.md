@@ -90,7 +90,7 @@
 
 ## Phase 4
 
-- [ ] Task 4.1: Implement spatial culling, bounds, and hit testing.
+- [x] Task 4.1: Implement spatial culling, bounds, and hit testing.
   - Acceptance: Viewport queries, world bounds, and topmost hits match known fixtures.
   - Verify: bun test tests/culling.test.ts
   - Files: src/culling/SpatialIndex.ts, src/TextLayer.ts, src/types.ts, tests/culling.test.ts

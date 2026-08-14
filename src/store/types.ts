@@ -23,6 +23,7 @@ export interface TextStoreLabel {
   readonly scaleX: number;
   readonly scaleY: number;
   readonly rotation: number;
+  readonly zIndex: number;
   readonly alpha: number;
   readonly visible: boolean;
   readonly anchorX: number;
