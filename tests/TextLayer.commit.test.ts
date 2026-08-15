@@ -127,4 +127,81 @@ describe("TextLayer commit and maintenance", () => {
 
     layer.destroy();
   });
+
+  test("publishes writing mode, font weight, and fill through the render commit seam", async () => {
+    const inputs: Array<{
+      readonly writingMode?: string;
+      readonly style: Readonly<Record<string, unknown>>;
+    }> = [];
+    const rasterWeights: unknown[] = [];
+    const run: PositionedRun = Object.freeze({
+      source: "bitmap",
+      text: "竖排",
+      fontFamily: "sans-serif",
+      fontRevision: 0,
+      direction: "ltr",
+      glyphCount: 1,
+      glyphIds: new Uint32Array([1]),
+      glyphKeys: Object.freeze(["竖"]),
+      clusters: new Uint32Array([0]),
+      x: new Float32Array([0]),
+      y: new Float32Array([0]),
+      xAdvance: new Float32Array([16]),
+      yAdvance: new Float32Array([0]),
+      lineIndices: new Uint32Array([0]),
+      bounds: Object.freeze({ x: 0, y: 0, width: 16, height: 16 }),
+    });
+    const layer = new TextLayer({
+      renderer: {} as Renderer,
+      rendering: {
+        layoutEngine: {
+          async layout(_id, _revision, input) {
+            inputs.push(input);
+            return run;
+          },
+          destroy() {},
+        },
+        glyphProvider: {
+          async rasterize(request) {
+            rasterWeights.push(request.fontWeight);
+            return {
+              mode: "alpha" as const,
+              width: 8,
+              height: 8,
+              pixels: new Uint8Array(64).fill(255),
+            };
+          },
+          destroy() {},
+        },
+        atlasOptions: { pageWidth: 32, pageHeight: 32, maxBytes: 4_096 },
+      },
+    });
+    const id = layer.create({
+      text: "竖排",
+      layout: { writingMode: "vertical-rl" },
+      style: { fontFamily: "sans-serif", fontSize: 16, fontWeight: "700", fill: 0xff3366 },
+    });
+
+    await layer.commit();
+    expect(inputs[0]).toMatchObject({
+      writingMode: "vertical-rl",
+      style: { fontWeight: "700", fill: 0xff3366 },
+    });
+    expect(rasterWeights).toEqual(["700"]);
+
+    expect(
+      layer.update(id, {
+        layout: null,
+        style: { fontFamily: "sans-serif", fontSize: 16, fontWeight: "bold", fill: 0x33ccff },
+      }),
+    ).toBe(true);
+    await layer.commit();
+    expect(inputs).toHaveLength(2);
+    expect(inputs[1]).toMatchObject({ style: { fontWeight: "bold", fill: 0x33ccff } });
+    expect(inputs[1]?.writingMode).toBeUndefined();
+    expect(rasterWeights).toEqual(["700", "bold"]);
+    expect(layer.stats.lastCommitStyleLabels).toBe(1);
+
+    layer.destroy();
+  });
 });

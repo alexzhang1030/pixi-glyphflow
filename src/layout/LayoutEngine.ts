@@ -1,8 +1,7 @@
 import { FontRegistry } from "../FontRegistry";
-import { BitmapLayoutAdapter } from "../pixi/compat/bitmapLayout";
-import { HarfBuzzWorkerShaper } from "../shaping/HarfBuzzWorkerShaper";
 import type { HarfBuzzShapeInput } from "../shaping/types";
 import type {
+  BitmapLayoutInput,
   LayoutEngineOptions,
   LayoutEngineStats,
   PositionedRun,
@@ -24,8 +23,8 @@ export class LayoutEngine {
 
   constructor(registry: FontRegistry, options: LayoutEngineOptions = {}) {
     this.#registry = registry;
-    this.#bitmap = options.bitmapAdapter ?? new BitmapLayoutAdapter();
-    this.#harfbuzz = options.harfbuzzShaper ?? new HarfBuzzWorkerShaper(registry);
+    this.#bitmap = options.bitmapAdapter ?? new LazyBitmapLayoutAdapter();
+    this.#harfbuzz = options.harfbuzzShaper ?? new LazyHarfBuzzWorkerShaper(registry);
     this.#ownsHarfBuzz = options.harfbuzzShaper === undefined;
   }
 
@@ -60,7 +59,7 @@ export class LayoutEngine {
           ...(input.variations === undefined ? {} : { variations: input.variations }),
         };
         const run = await this.#shape(labelId, sourceRevision, shapeInput);
-        if (hasCompleteGlyphCoverage(run)) return run;
+        if (hasCompleteGlyphCoverage(run)) return applyWritingMode(run, input);
         missingRun ??= run;
         continue;
       }
@@ -71,9 +70,12 @@ export class LayoutEngine {
       const primary = bitmapFamilies[0] ?? family;
       const primaryFont = this.#registry.get(primary);
       this.#bitmapLayouts += 1;
-      return this.#bitmap.layout({
+      const run = await this.#bitmap.layout({
         text: input.text,
-        style: { ...input.style, fontFamily: bitmapFamilies },
+        style: {
+          ...input.style,
+          fontFamily: bitmapFamilies.length === 1 ? primary : bitmapFamilies,
+        },
         fontRevision: primaryFont?.revision ?? 0,
         cacheRevision: this.#registry.stats.revision,
         direction,
@@ -81,9 +83,10 @@ export class LayoutEngine {
         ...(input.maxLines === undefined ? {} : { maxLines: input.maxLines }),
         ...(input.ellipsis === undefined ? {} : { ellipsis: input.ellipsis }),
       });
+      return applyWritingMode(run, input);
     }
 
-    if (missingRun !== undefined) return missingRun;
+    if (missingRun !== undefined) return applyWritingMode(missingRun, input);
     throw new Error("Font fallback resolution produced no layout candidate");
   }
 
@@ -165,6 +168,72 @@ export class LayoutEngine {
   }
 }
 
+class LazyBitmapLayoutAdapter {
+  #pending: Promise<{ layout(input: BitmapLayoutInput): Readonly<PositionedRun> }> | undefined;
+
+  async layout(input: BitmapLayoutInput): Promise<Readonly<PositionedRun>> {
+    const adapter = await this.#get();
+    return adapter.layout(input);
+  }
+
+  #get(): Promise<{ layout(input: BitmapLayoutInput): Readonly<PositionedRun> }> {
+    const current = this.#pending;
+    if (current !== undefined) return current;
+    const pending = import("../pixi/compat/bitmapLayout").then(
+      ({ BitmapLayoutAdapter }) => new BitmapLayoutAdapter(),
+    );
+    this.#pending = pending;
+    void pending.catch(() => {
+      if (this.#pending === pending) this.#pending = undefined;
+    });
+
+    return pending;
+  }
+}
+
+class LazyHarfBuzzWorkerShaper implements PositionedRunShaper {
+  readonly #registry: FontRegistry;
+  #pending: Promise<PositionedRunShaper> | undefined;
+
+  constructor(registry: FontRegistry) {
+    this.#registry = registry;
+  }
+
+  async shape(
+    labelId: number,
+    sourceRevision: number,
+    input: HarfBuzzShapeInput,
+  ): Promise<Readonly<PositionedRun>> {
+    const shaper = await this.#get();
+    return shaper.shape(labelId, sourceRevision, input);
+  }
+
+  destroy(): void {
+    const pending = this.#pending;
+    this.#pending = undefined;
+    if (pending !== undefined) {
+      void pending.then(
+        (shaper) => shaper.destroy?.(),
+        () => undefined,
+      );
+    }
+  }
+
+  #get(): Promise<PositionedRunShaper> {
+    const current = this.#pending;
+    if (current !== undefined) return current;
+    const pending = import("../shaping/HarfBuzzWorkerShaper").then(
+      ({ HarfBuzzWorkerShaper }) => new HarfBuzzWorkerShaper(this.#registry),
+    );
+    this.#pending = pending;
+    void pending.catch(() => {
+      if (this.#pending === pending) this.#pending = undefined;
+    });
+
+    return pending;
+  }
+}
+
 function hasCompleteGlyphCoverage(run: Readonly<PositionedRun>): boolean {
   return run.glyphCount === 0 || !run.glyphIds.includes(0);
 }
@@ -209,6 +278,90 @@ function assertInput(input: TextLayoutInput): void {
   if (input.ellipsis !== undefined && typeof input.ellipsis !== "string") {
     throw new TypeError("ellipsis must be a string");
   }
+  if (
+    input.writingMode !== undefined &&
+    input.writingMode !== "horizontal-tb" &&
+    input.writingMode !== "vertical-rl"
+  ) {
+    throw new TypeError("writingMode must be horizontal-tb or vertical-rl");
+  }
+}
+
+function applyWritingMode(
+  run: Readonly<PositionedRun>,
+  input: Readonly<TextLayoutInput>,
+): Readonly<PositionedRun> {
+  if (input.writingMode === undefined || input.writingMode === "horizontal-tb") return run;
+  if (run.glyphCount === 0) {
+    return Object.freeze({
+      ...run,
+      bounds: Object.freeze({ x: 0, y: 0, width: 0, height: 0 }),
+    });
+  }
+
+  let lineCount = 0;
+  for (let index = 0; index < run.glyphCount; index += 1) {
+    lineCount = Math.max(lineCount, (run.lineIndices[index] ?? 0) + 1);
+  }
+  const lineAdvance = resolveLineAdvance(input, run, lineCount);
+  const cursors = new Float32Array(lineCount);
+  const x = new Float32Array(run.glyphCount);
+  const y = new Float32Array(run.glyphCount);
+  const xAdvance = new Float32Array(run.glyphCount);
+  const yAdvance = new Float32Array(run.glyphCount);
+  const cellStarts = new Float32Array(lineCount);
+  const lastClusters = Array.from<number | undefined>({ length: lineCount });
+  const inlineAdvance = resolveInlineAdvance(input);
+  let height = 0;
+
+  for (let index = 0; index < run.glyphCount; index += 1) {
+    const line = run.lineIndices[index] ?? 0;
+    const cluster = run.clusters[index] ?? 0;
+    const continuesCluster = lastClusters[line] === cluster;
+    const cellStart = continuesCluster ? (cellStarts[line] ?? 0) : (cursors[line] ?? 0);
+    x[index] = (lineCount - line - 1) * lineAdvance;
+    y[index] = cellStart;
+    if (!continuesCluster) {
+      cellStarts[line] = cellStart;
+      lastClusters[line] = cluster;
+      yAdvance[index] = inlineAdvance;
+      cursors[line] = cellStart + inlineAdvance;
+    }
+    height = Math.max(height, cursors[line] ?? 0);
+  }
+
+  return Object.freeze({
+    ...run,
+    x,
+    y,
+    xAdvance,
+    yAdvance,
+    bounds: Object.freeze({ x: 0, y: 0, width: lineCount * lineAdvance, height }),
+  });
+}
+
+function resolveLineAdvance(
+  input: Readonly<TextLayoutInput>,
+  run: Readonly<PositionedRun>,
+  lineCount: number,
+): number {
+  const lineHeight = input.style.lineHeight;
+  if (typeof lineHeight === "number" && Number.isFinite(lineHeight) && lineHeight > 0) {
+    return lineHeight;
+  }
+  if (run.bounds.height > 0 && lineCount > 0) return run.bounds.height / lineCount;
+
+  return resolveFontSize(input.style.fontSize);
+}
+
+function resolveInlineAdvance(input: Readonly<TextLayoutInput>): number {
+  const fontSize = resolveFontSize(input.style.fontSize);
+  const letterSpacing = input.style.letterSpacing;
+  const spacing =
+    typeof letterSpacing === "number" && Number.isFinite(letterSpacing) ? letterSpacing : 0;
+  const advance = fontSize + spacing;
+
+  return advance > 0 ? advance : fontSize;
 }
 
 function resolveFontSize(value: number | string | undefined): number {

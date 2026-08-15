@@ -28,7 +28,8 @@ accessibility.select(temperature, {
 
 Each selected label receives one stable element. Synchronization updates rendered text, accessible
 name, description, role, language, focus order, visibility, and local or world bounds. Layer commits
-trigger incremental synchronization.
+trigger incremental synchronization. Visibility includes the label-local flag and its optional group
+mask.
 
 The overlay uses product-selected labels, which keeps DOM size proportional to interactive and
 meaningful content. Large decorative label sets stay on the canvas path.

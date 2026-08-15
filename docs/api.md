@@ -7,30 +7,34 @@
 `TextLayer` extends PixiJS `Container` and owns dense label state, culling, rendering coordination,
 and diagnostics.
 
-| Member                                       | Result                           | Contract                                          |
-| -------------------------------------------- | -------------------------------- | ------------------------------------------------- |
-| `create(spec)`                               | `TextId`                         | Create one label with layer-local identity        |
-| `createMany(specs)`                          | `TextId[]`                       | Validate and create a batch in input order        |
-| `get(id)`                                    | `TextLabelSnapshot \| undefined` | Read an immutable state snapshot                  |
-| `has(id)`                                    | `boolean`                        | Check current identity ownership                  |
-| `update(id, patch)`                          | `boolean`                        | Apply one partial mutation                        |
-| `updateLabel(id, patch)`                     | `boolean`                        | Compatibility alias for `update`                  |
-| `updateMany(entries)`                        | `number`                         | Apply validated partial-object updates            |
-| `updatePositions(ids, positions)`            | `number`                         | Apply packed x/y columns                          |
-| `updateTextPositions(ids, texts, positions)` | `number`                         | Apply text and packed x/y columns together        |
-| `showAll()`                                  | `number`                         | Show every current label in one columnar pass     |
-| `hideAll()`                                  | `number`                         | Hide every current label in one columnar pass     |
-| `remove(id)`                                 | `boolean`                        | Retire one identity and its render state          |
-| `removeMany(ids)`                            | `number`                         | Retire current identities                         |
-| `clear()`                                    | `number`                         | Retire every label                                |
-| `compact()`                                  | `TextCompactionResult`           | Shrink unused CPU capacity while preserving IDs   |
-| `commit()`                                   | `Promise<TextRevision>`          | Publish dirty state and await render work         |
-| `setViewportBounds(bounds)`                  | `void`                           | Set layer-local culling bounds                    |
-| `getBoundsFor(id, output?, space?)`          | `BoundsData \| undefined`        | Read accepted local or world bounds               |
-| `hitTest(point, space?)`                     | `TextId \| undefined`            | Return the topmost visible label                  |
-| `attach(renderer)`                           | `void`                           | Associate a WebGL or WebGPU renderer              |
-| `detach()`                                   | `void`                           | Release renderer resources and retain label state |
-| `stats`                                      | `TextLayerStats`                 | Read an immutable diagnostics snapshot            |
+| Member                                       | Result                           | Contract                                           |
+| -------------------------------------------- | -------------------------------- | -------------------------------------------------- |
+| `create(spec)`                               | `TextId`                         | Create one label with layer-local identity         |
+| `createMany(specs)`                          | `TextId[]`                       | Validate and create a batch in input order         |
+| `get(id)`                                    | `TextLabelSnapshot \| undefined` | Read an immutable state snapshot                   |
+| `has(id)`                                    | `boolean`                        | Check current identity ownership                   |
+| `update(id, patch)`                          | `boolean`                        | Apply one partial mutation                         |
+| `updateLabel(id, patch)`                     | `boolean`                        | Compatibility alias for `update`                   |
+| `updateMany(entries)`                        | `number`                         | Apply validated partial-object updates             |
+| `updatePositions(ids, positions)`            | `number`                         | Apply packed x/y columns                           |
+| `updateTextPositions(ids, texts, positions)` | `number`                         | Apply text and packed x/y columns together         |
+| `createGroup()`                              | `TextGroupId`                    | Create one unique layer-local group identity       |
+| `hasGroup(group)`                            | `boolean`                        | Check current group identity ownership             |
+| `setGroupVisible(group, visible)`            | `number`                         | Apply a group mask and return affected label count |
+| `removeGroup(group)`                         | `boolean`                        | Retire a group and detach its retained labels      |
+| `showAll()`                                  | `number`                         | Show every current label in one columnar pass      |
+| `hideAll()`                                  | `number`                         | Hide every current label in one columnar pass      |
+| `remove(id)`                                 | `boolean`                        | Retire one identity and its render state           |
+| `removeMany(ids)`                            | `number`                         | Retire current identities                          |
+| `clear()`                                    | `number`                         | Retire every label                                 |
+| `compact()`                                  | `TextCompactionResult`           | Shrink unused CPU capacity while preserving IDs    |
+| `commit()`                                   | `Promise<TextRevision>`          | Publish dirty state and await render work          |
+| `setViewportBounds(bounds)`                  | `void`                           | Set layer-local culling bounds                     |
+| `getBoundsFor(id, output?, space?)`          | `BoundsData \| undefined`        | Read accepted local or world bounds                |
+| `hitTest(point, space?)`                     | `TextId \| undefined`            | Return the topmost visible label                   |
+| `attach(renderer)`                           | `void`                           | Associate a WebGL or WebGPU renderer               |
+| `detach()`                                   | `void`                           | Release renderer resources and retain label state  |
+| `stats`                                      | `TextLayerStats`                 | Read an immutable diagnostics snapshot             |
 
 `TextId` includes a layer namespace, slot, and generation. Stale and foreign identities fail bulk
 validation before state publication.
@@ -39,11 +43,26 @@ validation before state publication.
 return `0` and preserve revision state. One following `commit()` publishes the complete visibility
 change through culling, hit testing, accessibility, and the active WebGL or WebGPU renderer.
 
+`TextGroupId` is an opaque identity created by `createGroup()`. Every call produces a distinct
+identity owned by its `TextLayer`. A label references one group through `TextLabelSpec.group` or a
+patch. `group: null` clears membership. Effective visibility is the conjunction of label-local and
+group visibility. `setGroupVisible()` preserves every member's local `visible` value.
+`clear()` retires labels and retains independently created groups with their current masks.
+
 ### Label state
 
 `TextLabelSpec` and `TextLabelPatch` cover text, x/y, scale, rotation, z index, PixiJS blend mode,
-alpha, visibility, anchor, `TextStyleOptions`, and an optional sparse `shaping` object. Style and
-shaping objects are captured by value at the store boundary.
+alpha, visibility, group membership, anchor, `TextStyleOptions`, and optional sparse `layout` and
+`shaping` objects. These objects are captured by value at the store boundary.
+
+`TextLabelSnapshot.visible` reports label-local visibility. `effectiveVisible` includes the current
+group mask.
+
+`TextLayoutOptions.writingMode` accepts `horizontal-tb` and `vertical-rl`. The vertical mode keeps
+glyphs upright, stacks each line from top to bottom, and orders explicit lines from right to left.
+`TextLabelPatch.layout: null` clears a previous override. Font weight and fill color use
+`TextStyleOptions.fontWeight` and `TextStyleOptions.fill`. System fonts apply `fontWeight` during
+canvas glyph rasterization; registered binary fonts carry the weight of their selected font face.
 
 `TextShapingOptions` contains:
 

@@ -1,7 +1,6 @@
 import type { BLEND_MODES, TextStyleOptions } from "pixi.js";
 
 import { GlyphAtlas } from "../atlas/GlyphAtlas";
-import { RasterGlyphProvider } from "../atlas/RasterGlyphProvider";
 import type {
   GlyphAtlasOptions,
   GlyphMode,
@@ -15,7 +14,7 @@ import { LayoutEngine } from "../layout/LayoutEngine";
 import type { PositionedRun, TextLayoutInput } from "../layout/types";
 import type { TrustedGlyphRun } from "../shaping/TrustedGlyphRun";
 import { TextDirty } from "../store/types";
-import type { TextShapingOptions } from "../types";
+import type { TextLayoutOptions, TextShapingOptions } from "../types";
 import { GlyphInstanceStore } from "./GlyphInstanceStore";
 import { TransformPalette } from "./TransformPalette";
 import type {
@@ -40,6 +39,7 @@ export interface RenderLabelSnapshot {
   readonly anchorX: number;
   readonly anchorY: number;
   readonly style: Readonly<TextStyleOptions>;
+  readonly layout?: Readonly<TextLayoutOptions>;
   readonly shaping?: Readonly<TextShapingOptions>;
 }
 
@@ -145,7 +145,8 @@ export class RenderCoordinator {
   constructor(options: RenderCoordinatorOptions) {
     this.#layout = options.layoutEngine ?? new LayoutEngine(options.registry);
     this.#provider =
-      options.glyphProvider ?? new RasterGlyphProvider(options.registry, options.rasterizerOptions);
+      options.glyphProvider ??
+      new LazyRasterGlyphProvider(options.registry, options.rasterizerOptions);
     this.atlas = options.atlas ?? new GlyphAtlas(options.atlasOptions);
     this.instances = options.instances ?? new GlyphInstanceStore(options.instanceOptions);
     this.transforms = options.transforms ?? new TransformPalette(options.transformOptions);
@@ -312,6 +313,7 @@ export class RenderCoordinator {
       (await this.#layout.layout(change.slot, snapshot.sourceRevision, {
         text: snapshot.text,
         style: snapshot.style,
+        ...snapshot.layout,
         ...snapshot.shaping,
       }));
     if (ticket !== this.#ticket) {
@@ -333,7 +335,8 @@ export class RenderCoordinator {
     const glyphText = resolveGlyphText(run, index);
     const glyphId = run.glyphIds[index] ?? 0;
     const fontSize = resolveFontSize(snapshot.style.fontSize);
-    const key = glyphKey(run, glyphId, glyphText, fontSize, mode);
+    const fontWeight = snapshot.style.fontWeight ?? "normal";
+    const key = glyphKey(run, glyphId, glyphText, fontSize, fontWeight, mode);
     if (this.atlas.get(key) !== undefined) {
       return;
     }
@@ -351,6 +354,7 @@ export class RenderCoordinator {
         glyphId,
         glyphText,
         fontSize,
+        fontWeight,
         mode,
       });
       if (!this.atlas.stage(request, raster) && this.atlas.get(key) === undefined) {
@@ -382,7 +386,8 @@ export class RenderCoordinator {
       const glyphText = resolveGlyphText(run, index);
       const glyphId = run.glyphIds[index] ?? 0;
       const fontSize = resolveFontSize(snapshot.style.fontSize);
-      const key = glyphKey(run, glyphId, glyphText, fontSize, mode);
+      const fontWeight = snapshot.style.fontWeight ?? "normal";
+      const key = glyphKey(run, glyphId, glyphText, fontSize, fontWeight, mode);
       const entry = this.atlas.get(key);
       if (entry === undefined) {
         throw new Error(`Atlas entry missing for positioned glyph: ${key}`);
@@ -432,6 +437,46 @@ export class RenderCoordinator {
   }
 }
 
+class LazyRasterGlyphProvider implements GlyphProviderLike {
+  readonly #registry: FontRegistry;
+  readonly #options: RasterGlyphProviderOptions | undefined;
+  #pending: Promise<GlyphProviderLike> | undefined;
+
+  constructor(registry: FontRegistry, options: RasterGlyphProviderOptions | undefined) {
+    this.#registry = registry;
+    this.#options = options;
+  }
+
+  async rasterize(request: RasterGlyphRequest): Promise<Readonly<GlyphRaster>> {
+    const provider = await this.#get();
+    return provider.rasterize(request);
+  }
+
+  async destroy(): Promise<void> {
+    const pending = this.#pending;
+    this.#pending = undefined;
+    if (pending === undefined) return;
+    await pending.then(
+      async (provider) => provider.destroy(),
+      () => undefined,
+    );
+  }
+
+  #get(): Promise<GlyphProviderLike> {
+    const current = this.#pending;
+    if (current !== undefined) return current;
+    const pending = import("../atlas/RasterGlyphProvider").then(
+      ({ RasterGlyphProvider }) => new RasterGlyphProvider(this.#registry, this.#options),
+    );
+    this.#pending = pending;
+    void pending.catch(() => {
+      if (this.#pending === pending) this.#pending = undefined;
+    });
+
+    return pending;
+  }
+}
+
 function validateChanges(changes: readonly RenderChange[]): void {
   for (const change of changes) {
     if (!Number.isSafeInteger(change.slot) || change.slot < 0) {
@@ -462,6 +507,7 @@ function glyphKey(
   glyphId: number,
   glyphText: string,
   fontSize: number,
+  fontWeight: NonNullable<TextStyleOptions["fontWeight"]>,
   mode: GlyphMode,
 ): string {
   return [
@@ -471,6 +517,7 @@ function glyphKey(
     glyphId,
     glyphText,
     fontSize,
+    fontWeight,
     mode,
   ].join("\u0000");
 }

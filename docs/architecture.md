@@ -48,9 +48,18 @@ Fallback aliases expand recursively, and layout selects the first binary font wi
 coverage before reaching the system stack. Both paths return compact `PositionedRun` data with glyph
 IDs, clusters, positions, advances, line metadata, and bounds.
 
+The default bitmap adapter, HarfBuzz worker shaper, and dynamic raster provider load through their
+first-use async seams. A CPU-only layer and an unrendered scene keep these backends outside the core
+startup path.
+
 Language, script, direction, OpenType feature, and variation overrides live in a sparse side table
 keyed by `TextId`. Labels sharing content and shaping inputs share one canonical asynchronous shape
 result across commits.
+
+Group membership and layout overrides use sparse side tables as well. `TextGroupId` values are
+created independently by their owning layer. Group masks compose with label-local visibility before
+spatial queries, rendering, hit testing, and accessibility synchronization. Basic vertical writing
+converts the shared horizontal run into upright top-to-bottom columns before atlas instance creation.
 
 Trusted glyph runs let an upstream layout system supply immutable typed arrays with explicit
 ownership and revision stamps.
