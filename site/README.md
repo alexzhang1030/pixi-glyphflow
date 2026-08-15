@@ -37,9 +37,16 @@ The compact page workload demonstrates the same code path as the million-label p
 keeping documentation navigation responsive through culling, repeated-run shaping caches, and
 shared glyph atlases.
 
+## Examples
+
+The page presents a progressive public-API path: a label with only its required `text`, independent
+group creation plus group and `TextId` visibility, and optional `vertical-rl`, font-weight, and fill
+styling. `components/ExamplesSection.vue` composes the production code-block component inside the
+existing responsive document layout.
+
 ## Browser acceptance
 
 `bun run site:test` builds the root package and Nuxt server, then runs Chrome checks for the live
 WebGL 2 renderer, capability-gated WebGPU renderer, backend teardown and rebuild, position-storm
-revisions, camera controls, theme switching, reduced motion, keyboard access, console errors, and
-horizontal fit at 320, 768, 1024, and 1440 pixels.
+revisions, progressive examples, camera controls, theme switching, reduced motion, keyboard access,
+console errors, and horizontal fit at 320, 768, 1024, and 1440 pixels.

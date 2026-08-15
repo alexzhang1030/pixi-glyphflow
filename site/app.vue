@@ -109,7 +109,11 @@ const entryPoints = [
 ] as const;
 
 const methods = [
+  ["create(spec)", "Create a label; text is the required field."],
   ["createMany(specs)", "Create a validated batch and return stable TextIds."],
+  ["createGroup()", "Create one unique layer-local TextGroupId."],
+  ["update(id, patch)", "Change selected fields for one stable identity."],
+  ["setGroupVisible(group, visible)", "Apply one mask while retaining label-local visibility."],
   ["updatePositions(ids, xy)", "Apply packed position changes in one columnar pass."],
   ["updateTextPositions(ids, text, xy)", "Broadcast dynamic text with packed positions."],
   ["showAll() / hideAll()", "Toggle every resident label through one columnar mutation."],
@@ -161,11 +165,12 @@ const guides = [
         <a class="brand" href="#top" aria-label="pixi-glyphflow home">
           <img src="/glyphflow-mark.svg" alt="" />
           <span>pixi-glyphflow</span>
-          <small>v1.0.0</small>
+          <small>v1.1.0</small>
         </a>
 
         <nav aria-label="Primary navigation">
           <a href="#start">Start</a>
+          <a href="#examples">Examples</a>
           <a href="#viewport">Viewport</a>
           <a href="#fonts">Fonts</a>
           <a href="#performance">Performance</a>
@@ -253,9 +258,11 @@ const guides = [
           </div>
         </section>
 
+        <ExamplesSection />
+
         <section id="viewport" class="doc-section" aria-labelledby="viewport-title">
           <div class="section-intro">
-            <p class="section-number">02 / VIEWPORT</p>
+            <p class="section-number">03 / VIEWPORT</p>
             <h2 id="viewport-title">Camera work stays camera work.</h2>
             <p>
               The binding converts visible viewport corners into layer-local bounds and coalesces
@@ -281,7 +288,7 @@ const guides = [
 
         <section id="fonts" class="doc-section" aria-labelledby="fonts-title">
           <div class="section-intro">
-            <p class="section-number">03 / FONTS</p>
+            <p class="section-number">04 / FONTS</p>
             <h2 id="fonts-title">Shape the language. Keep the font choice explicit.</h2>
             <p>
               Binary fonts travel through HarfBuzz and glyph-ID MSDF generation. This live chain
@@ -306,7 +313,7 @@ const guides = [
 
         <section id="performance" class="doc-section" aria-labelledby="performance-title">
           <div class="section-intro">
-            <p class="section-number">04 / PERFORMANCE</p>
+            <p class="section-number">05 / PERFORMANCE</p>
             <h2 id="performance-title">Measured under pressure.</h2>
             <p>
               Committed Chrome and WebGL 2 artifacts use isolated processes, GPU completion, warmup
@@ -368,7 +375,7 @@ const guides = [
 
         <section id="architecture" class="doc-section" aria-labelledby="architecture-title">
           <div class="section-intro">
-            <p class="section-number">05 / ARCHITECTURE</p>
+            <p class="section-number">06 / ARCHITECTURE</p>
             <h2 id="architecture-title">One revision, four bounded stages.</h2>
             <p>
               Each stage owns a deep implementation boundary. The application learns one label model
@@ -399,7 +406,7 @@ const guides = [
 
         <section id="api" class="doc-section" aria-labelledby="api-title">
           <div class="section-intro">
-            <p class="section-number">06 / API</p>
+            <p class="section-number">07 / API</p>
             <h2 id="api-title">Focused entry points.</h2>
             <p>
               Core usage stays on the root import. Optional integrations remain isolated so
@@ -430,7 +437,7 @@ const guides = [
 
         <section id="guides" class="doc-section guides-section" aria-labelledby="guides-title">
           <div class="section-intro">
-            <p class="section-number">07 / GUIDES</p>
+            <p class="section-number">08 / GUIDES</p>
             <h2 id="guides-title">Follow the operating path.</h2>
             <p>
               The maintained Markdown set carries complete contracts, compatibility boundaries,
