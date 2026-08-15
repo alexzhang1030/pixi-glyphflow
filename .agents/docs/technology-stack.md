@@ -11,6 +11,8 @@ Status: unstamped project record dated 2026-08-15. Package versions are pinned b
 | Library build | tsdown 0.22.14 | The Rolldown and Oxc pipeline emits ESM, declarations, and source maps. PixiJS remains an external peer dependency. |
 | Lint and formatting | Oxlint 1.78.0 and Oxfmt 0.63.0 | Native Oxc tools cover source, JSON, Markdown, and workflow YAML. Warnings fail the gate. |
 | Package shape | publint 0.3.23 and Are the Types Wrong 0.18.5 | Release checks cover metadata, exports, declarations, and ESM consumer resolution. |
+| Documentation site | Nuxt 4.5.2, Vue 3.5.40, Tailwind CSS 4.3.3, and Shiki 4.3.1 | One SSR page presents installation, viewport integration, benchmark evidence, API routes, and a real PixiJS renderer. The site build produces the root package first so clean checkouts resolve every export. |
+| Vue type checking | Golar 0.1.10 and @golar/vue 0.1.10 | Golar uses typescript-go 7.0 for strict Vue SFC and template diagnostics. It preserves the repository-wide TypeScript 7 toolchain. |
 | Rendering host | PixiJS 8.19.0 development pin and ^8.19.0 peer range | The implementation uses public scene, geometry, shader, texture, and bitmap-font interfaces. Advanced compatibility code stays isolated under src/pixi/compat. |
 | Complex shaping | harfbuzzjs, loaded on demand | HarfBuzz supplies glyph IDs, cluster mapping, positioning, and outlines for registered binary fonts. Its version lands as an exact dependency with the shaping slice. |
 | Dynamic distance fields | WebAssembly MSDF generation, loaded on demand | Runtime MSDF work runs outside the core startup path. Prebuilt bitmap fonts remain the fastest startup route. |
@@ -24,12 +26,15 @@ Status: unstamped project record dated 2026-08-15. Package versions are pinned b
 - The TypeScript 7 consumer fixture enables skipLibCheck while PixiJS and the DOM library both provide WebGPU declarations. Project source and generated declarations remain strictly checked.
 - Optional WebAssembly assets load through explicit font and shaping operations. Importing the core package performs no network request and starts no worker.
 - Public interface behavior is tested through TextLayer, FontRegistry, worker protocol, and package exports. Internal stores and adapters remain replaceable.
+- The `site/` workspace stays outside the published npm file set. Its client-only renderer imports the built root package and uses ES module workers with an ES2022 target.
 
 ## Tooling evidence
 
 - TypeScript 7 announcement: https://devblogs.microsoft.com/typescript/announcing-typescript-7-0/
 - tsdown declarations: https://tsdown.dev/options/dts
 - Bun frozen installs: https://bun.sh/docs/pm/cli/install
+- Nuxt production deployment: https://nuxt.com/docs/getting-started/deployment
+- Golar Vue integration: https://golar.dev/languages/vue/
 - PixiJS Mesh: https://pixijs.com/8.x/guides/components/scene-objects/mesh
 - PixiJS BitmapFontManager: https://pixijs.download/dev/docs/text.BitmapFontManager.html
 - HarfBuzz JavaScript bindings: https://github.com/harfbuzz/harfbuzzjs

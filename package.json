@@ -22,6 +22,9 @@
     "type": "git",
     "url": "git+https://github.com/alexzhang1030/pixi-glyphflow.git"
   },
+  "workspaces": [
+    "site"
+  ],
   "files": [
     "dist",
     "docs",
@@ -84,6 +87,11 @@
     "playground:dev": "vite playground",
     "smoke:harfbuzz": "bun scripts/harfbuzz-smoke.ts",
     "smoke:worker": "bun run build && bun scripts/worker-smoke.ts",
+    "site:build": "bun run --cwd site build",
+    "site:dev": "bun run --cwd site dev",
+    "site:generate": "bun run --cwd site generate",
+    "site:test": "bun run site:build && bun run --cwd site test:browser",
+    "site:typecheck": "bun run --cwd site typecheck",
     "package:dry-run": "NPM_CONFIG_CACHE=/tmp/pixi-glyphflow-npm-cache npm pack --dry-run",
     "check": "bun run format:check && bun run lint && bun run typecheck && bun run docs:check && bun test && bun run build && bun run package:lint && bun run package:types",
     "release:check": "bun run check && bun run test:browser && bun run benchmark:check && bun run playground:build && bun run audit && bun run smoke:worker && bun run package:smoke && bun run package:dry-run",

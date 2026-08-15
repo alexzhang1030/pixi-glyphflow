@@ -1,6 +1,8 @@
 node_modules/
 dist/
 playground/dist/
+site/.nuxt/
+site/.output/
 coverage/
 playwright-report/
 test-results/

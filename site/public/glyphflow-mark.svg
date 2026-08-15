@@ -1,0 +1,7 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" role="img" aria-labelledby="title">
+  <title id="title">pixi-glyphflow mark</title>
+  <rect width="64" height="64" rx="14" fill="#0a0e13"/>
+  <path fill="#b8ff5a" d="M13 14h17v8H21v20h9v8H13z"/>
+  <path fill="#f2f6ee" d="M34 14h18v8H42v7h9v8h-9v13h-8z"/>
+  <circle cx="26" cy="33" r="3" fill="#76d8ff"/>
+</svg>

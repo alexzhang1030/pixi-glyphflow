@@ -155,3 +155,10 @@
   - Acceptance: CI, signed tag, npm provenance, GitHub Release, and public-registry consumer checks all succeed.
   - Verify: npm view plus independent runtime, browser, and TypeScript consumer probes.
   - Files: .github/workflows/release.yml, scripts/package-smoke.ts
+
+## Phase 8
+
+- [x] Task 8.1: Build the interactive documentation site.
+  - Acceptance: One responsive Nuxt SSR page presents the package surface and runs a real TextLayer plus pixi-viewport movement stress scene.
+  - Verify: bun run site:typecheck && bun run site:build && bun run site:test
+  - Files: site, package.json, bun.lock, .github/workflows/ci.yml, README.md, CONTRIBUTING.md

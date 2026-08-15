@@ -135,6 +135,20 @@ Replace the 0.0.1 object-per-label reference backend with a dense, batch-oriente
 - Create the GitHub Release from the verified changelog.
 - Install pixi-glyphflow@1.0.0 from the public registry in an independent consumer and rerun runtime, browser, and TypeScript smoke checks.
 
+## Phase 8: Interactive documentation site
+
+- Build one Nuxt SSR page with installation, viewport integration, performance evidence, architecture, API entry points, and guide routing.
+- Run a client-only TextLayer demo with 20,000 resident labels, 2,000 packed position updates every 100 milliseconds, and a pixi-viewport camera.
+- Preserve drag, deceleration, wheel, pinch, rotation, keyboard, reduced-motion, and complete renderer teardown behavior.
+- Build the root package before every site development, type-check, generation, and production command.
+- Verify Chrome behavior and horizontal fit at 320, 768, 1024, and 1440 pixels.
+
+### Checkpoint
+
+- `bun run site:typecheck`, `bun run site:build`, and `bun run site:test` pass from the workspace root.
+- The live demo reports 20,000 resident labels and reaches the ready state without browser console errors.
+- The site workspace stays outside the npm publication files and inside the frozen Bun install graph.
+
 ## Risks and mitigations
 
 | Risk                                     | Impact | Mitigation                                                                                       |

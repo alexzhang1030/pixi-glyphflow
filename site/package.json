@@ -1,0 +1,31 @@
+{
+  "name": "pixi-glyphflow-site",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "bun run --cwd .. build && nuxt dev",
+    "build": "bun run --cwd .. build && nuxt build",
+    "generate": "bun run --cwd .. build && nuxt generate",
+    "preview": "nuxt preview",
+    "postinstall": "nuxt prepare",
+    "test:browser": "playwright test --config playwright.config.ts",
+    "typecheck": "bun run --cwd .. build && nuxt typecheck"
+  },
+  "dependencies": {
+    "nuxt": "4.5.2",
+    "pixi-viewport": "6.0.3",
+    "pixi.js": "8.19.0",
+    "shiki": "4.3.1",
+    "vue": "3.5.40",
+    "vue-router": "4.6.4"
+  },
+  "devDependencies": {
+    "@golar/vue": "0.1.10",
+    "@nuxtjs/color-mode": "3.5.2",
+    "@playwright/test": "1.62.1",
+    "@tailwindcss/vite": "4.3.3",
+    "golar": "0.1.10",
+    "tailwindcss": "4.3.3",
+    "typescript": "7.0.2"
+  }
+}

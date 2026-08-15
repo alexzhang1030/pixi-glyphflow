@@ -155,6 +155,7 @@ bun run check
 bun run test:browser
 bun run benchmark:check
 bun run playground:build
+bun run site:build
 ```
 
 | Command                                         | Purpose                                                        |
@@ -164,10 +165,14 @@ bun run playground:build
 | `bun run benchmark:check`                       | Enforce committed performance and capacity budgets             |
 | `bun run docs:check`                            | Validate English documentation, links, and public API coverage |
 | `bun run playground:dev`                        | Start the interactive million-label pixi-viewport POC          |
+| `bun run site:dev`                              | Start the Nuxt documentation site                              |
+| `bun run site:typecheck`                        | Check Nuxt and Vue through TypeScript 7-native Golar           |
+| `bun run site:test`                             | Build and run responsive browser acceptance                    |
 | `bun run release:check`                         | Run source, dependency, package, and tarball release gates     |
 
 ## Documentation
 
+- [Interactive Nuxt site](site/README.md)
 - [Getting started](docs/getting-started.md)
 - [API reference](docs/api.md)
 - [Fonts and shaping](docs/fonts.md)

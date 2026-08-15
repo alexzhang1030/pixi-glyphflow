@@ -25,17 +25,20 @@ bun run check
 
 ## Commands
 
-| Command                 | Gate                                            |
-| ----------------------- | ----------------------------------------------- |
-| `bun run format:check`  | Project formatting                              |
-| `bun run lint`          | Correctness and warning-free lint               |
-| `bun run typecheck`     | TypeScript 7 diagnostics                        |
-| `bun test`              | Runtime behavior                                |
-| `bun run build`         | ESM and declaration output                      |
-| `bun run package:lint`  | npm metadata and exports                        |
-| `bun run package:types` | Consumer module/type resolution                 |
-| `bun run package:smoke` | Packed runtime and TypeScript consumer behavior |
-| `bun run audit`         | High and critical advisories                    |
+| Command                  | Gate                                            |
+| ------------------------ | ----------------------------------------------- |
+| `bun run format:check`   | Project formatting                              |
+| `bun run lint`           | Correctness and warning-free lint               |
+| `bun run typecheck`      | TypeScript 7 diagnostics                        |
+| `bun run site:typecheck` | Nuxt and Vue diagnostics through Golar          |
+| `bun test`               | Runtime behavior                                |
+| `bun run build`          | ESM and declaration output                      |
+| `bun run site:build`     | Clean-checkout Nuxt production build            |
+| `bun run site:test`      | Responsive site and live-render browser checks  |
+| `bun run package:lint`   | npm metadata and exports                        |
+| `bun run package:types`  | Consumer module/type resolution                 |
+| `bun run package:smoke`  | Packed runtime and TypeScript consumer behavior |
+| `bun run audit`          | High and critical advisories                    |
 
 ## Release
 
