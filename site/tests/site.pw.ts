@@ -19,6 +19,8 @@ test("serves the docs, runs the viewport, and fits every target width", async ({
   await expect(page.getByTestId("renderer-adapter")).toHaveText("WebGL 2");
   await expect(page.getByTestId("resident-count")).toHaveText("1,000,000");
   await expect(page.getByTestId("custom-font-status")).toHaveText("5 custom fonts ready");
+  await expect(page.getByTestId("draw-call-count")).toHaveText("1");
+  await expect(page.getByTestId("atlas-texture-count")).toHaveText(/^[2-8]$/);
   await expect(demo.locator("canvas")).toBeVisible();
 
   const movementButton = page.getByRole("button", { name: "Pause movement" });
@@ -131,6 +133,46 @@ test("honors reduced motion and exposes keyboard controls", async ({ page }) => 
   await page.keyboard.press("+");
   await page.keyboard.press("0");
   await expect(page.getByRole("button", { name: "Reset camera" })).toBeEnabled();
+});
+
+test("keeps the fully zoomed-out WebGPU pressure test within its uniform budget", async ({
+  page,
+}) => {
+  const errors: string[] = [];
+  page.on("console", (message) => {
+    if (message.type() === "error") errors.push(message.text());
+  });
+  page.on("pageerror", (error) => errors.push(error.message));
+
+  await page.emulateMedia({ reducedMotion: "reduce", colorScheme: "dark" });
+  await page.goto("/?renderer=webgpu", { waitUntil: "domcontentloaded" });
+  const demo = page.getByTestId("glyphflow-demo");
+  const capability = page.getByTestId("webgpu-capability");
+  await expect(capability).toHaveText(/WebGPU (available|unavailable)/);
+  if ((await capability.textContent())?.includes("unavailable") === true) return;
+
+  await expect(demo).toHaveAttribute("data-renderer-backend", "webgpu");
+  await expect(demo).toHaveAttribute("data-demo-state", "ready");
+  const canvas = demo.locator(".demo-canvas");
+  await canvas.focus();
+  for (let step = 0; step < 8; step += 1) {
+    await page.keyboard.press("-");
+    await page.waitForTimeout(300);
+    const drawCalls = await demo.getAttribute("data-draw-calls");
+    const atlasTextures = await demo.getAttribute("data-atlas-textures");
+    expect(
+      errors,
+      `WebGPU errors after zoom-out step ${String(step + 1)} with ${drawCalls ?? "?"} draw calls across ${atlasTextures ?? "?"} atlas textures`,
+    ).toEqual([]);
+  }
+  await page.waitForTimeout(1_000);
+
+  const finalDrawCalls = Number(await demo.getAttribute("data-draw-calls"));
+  const atlasTextures = Number(await demo.getAttribute("data-atlas-textures"));
+  expect(atlasTextures).toBeGreaterThan(1);
+  expect(finalDrawCalls).toBeLessThanOrEqual(8);
+  await expect(demo).toHaveAttribute("data-demo-state", "ready");
+  expect(errors).toEqual([]);
 });
 
 async function readMetric(page: Page, testId: string): Promise<number> {

@@ -11,10 +11,23 @@ import {
 } from "pixi.js";
 
 import { GLYPH_FRAGMENT_GLSL, GLYPH_SHADER_WGSL, GLYPH_VERTEX_GLSL } from "./shaders";
-import { GLYPH_INSTANCE_STRIDE } from "./types";
+import { GLYPH_INSTANCE_STRIDE, GLYPH_TEXTURE_BANK_SIZE } from "./types";
+
+type TextureBank = readonly [
+  Texture,
+  Texture,
+  Texture,
+  Texture,
+  Texture,
+  Texture,
+  Texture,
+  Texture,
+];
 
 export interface GlyphMeshOptions {
   readonly texture: Texture;
+  /** Consecutive atlas pages available to this draw, starting with `texture`. */
+  readonly textures?: readonly Texture[];
   readonly paletteTexture: Texture;
   readonly paletteWidth: number;
   readonly instanceData: ArrayBuffer;
@@ -32,6 +45,7 @@ export class GlyphMesh extends Mesh<Geometry, Shader> {
     if (!Number.isSafeInteger(options.paletteWidth) || options.paletteWidth <= 0) {
       throw new TypeError("paletteWidth must be a positive safe integer");
     }
+    const textures = normalizeTextureBank(options.texture, options.textures);
     const vertexBuffer = new Buffer({
       data: new Float32Array([0, 0, 1, 0, 1, 1, 0, 1]),
       usage: BufferUsage.VERTEX,
@@ -116,10 +130,45 @@ export class GlyphMesh extends Mesh<Geometry, Shader> {
               {
                 binding: 1,
                 visibility: ShaderStage.FRAGMENT,
-                sampler: { type: "filtering" },
+                texture: { sampleType: "float", viewDimension: "2d", multisampled: false },
               },
               {
                 binding: 2,
+                visibility: ShaderStage.FRAGMENT,
+                texture: { sampleType: "float", viewDimension: "2d", multisampled: false },
+              },
+              {
+                binding: 3,
+                visibility: ShaderStage.FRAGMENT,
+                texture: { sampleType: "float", viewDimension: "2d", multisampled: false },
+              },
+              {
+                binding: 4,
+                visibility: ShaderStage.FRAGMENT,
+                texture: { sampleType: "float", viewDimension: "2d", multisampled: false },
+              },
+              {
+                binding: 5,
+                visibility: ShaderStage.FRAGMENT,
+                texture: { sampleType: "float", viewDimension: "2d", multisampled: false },
+              },
+              {
+                binding: 6,
+                visibility: ShaderStage.FRAGMENT,
+                texture: { sampleType: "float", viewDimension: "2d", multisampled: false },
+              },
+              {
+                binding: 7,
+                visibility: ShaderStage.FRAGMENT,
+                texture: { sampleType: "float", viewDimension: "2d", multisampled: false },
+              },
+              {
+                binding: 8,
+                visibility: ShaderStage.FRAGMENT,
+                sampler: { type: "filtering" },
+              },
+              {
+                binding: 9,
                 visibility: ShaderStage.VERTEX,
                 texture: {
                   sampleType: "unfilterable-float",
@@ -128,7 +177,7 @@ export class GlyphMesh extends Mesh<Geometry, Shader> {
                 },
               },
               {
-                binding: 3,
+                binding: 10,
                 visibility: ShaderStage.VERTEX,
                 buffer: { type: "uniform" },
               },
@@ -136,8 +185,15 @@ export class GlyphMesh extends Mesh<Geometry, Shader> {
           ],
         }),
         resources: {
-          uTexture: options.texture.source,
-          uSampler: options.texture.source.style,
+          uTexture0: textures[0].source,
+          uTexture1: textures[1].source,
+          uTexture2: textures[2].source,
+          uTexture3: textures[3].source,
+          uTexture4: textures[4].source,
+          uTexture5: textures[5].source,
+          uTexture6: textures[6].source,
+          uTexture7: textures[7].source,
+          uSampler: textures[0].source.style,
           uTransformTexture: options.paletteTexture.source,
           glyphUniforms: {
             uPaletteWidth: { value: options.paletteWidth, type: "f32" },
@@ -166,9 +222,21 @@ export class GlyphMesh extends Mesh<Geometry, Shader> {
   }
 
   setTexture(texture: Texture): void {
-    this.texture = texture;
-    this.#ownedShader.resources.uTexture = texture.source;
-    this.#ownedShader.resources.uSampler = texture.source.style;
+    this.setTextures([texture]);
+  }
+
+  setTextures(textures: readonly Texture[]): void {
+    const bank = normalizeTextureBank(textures[0], textures);
+    this.texture = bank[0];
+    this.#ownedShader.resources.uTexture0 = bank[0].source;
+    this.#ownedShader.resources.uTexture1 = bank[1].source;
+    this.#ownedShader.resources.uTexture2 = bank[2].source;
+    this.#ownedShader.resources.uTexture3 = bank[3].source;
+    this.#ownedShader.resources.uTexture4 = bank[4].source;
+    this.#ownedShader.resources.uTexture5 = bank[5].source;
+    this.#ownedShader.resources.uTexture6 = bank[6].source;
+    this.#ownedShader.resources.uTexture7 = bank[7].source;
+    this.#ownedShader.resources.uSampler = bank[0].source.style;
   }
 
   setPaletteTexture(texture: Texture, width: number): void {
@@ -197,4 +265,30 @@ function validateInstanceData(data: ArrayBuffer, instanceCount: number): void {
   if (instanceCount * GLYPH_INSTANCE_STRIDE > data.byteLength) {
     throw new RangeError("instanceCount exceeds the supplied instanceData capacity");
   }
+}
+
+function normalizeTextureBank(
+  primary: Texture | undefined,
+  textures: readonly Texture[] | undefined,
+): TextureBank {
+  if (primary === undefined) throw new TypeError("texture bank must contain at least one texture");
+  const supplied = textures ?? [primary];
+  if (supplied.length === 0 || supplied.length > GLYPH_TEXTURE_BANK_SIZE) {
+    throw new RangeError(
+      `texture bank must contain between 1 and ${String(GLYPH_TEXTURE_BANK_SIZE)} textures`,
+    );
+  }
+  if (supplied[0] !== primary) {
+    throw new TypeError("texture must be the first texture-bank entry");
+  }
+  return [
+    supplied[0] ?? primary,
+    supplied[1] ?? primary,
+    supplied[2] ?? primary,
+    supplied[3] ?? primary,
+    supplied[4] ?? primary,
+    supplied[5] ?? primary,
+    supplied[6] ?? primary,
+    supplied[7] ?? primary,
+  ];
 }

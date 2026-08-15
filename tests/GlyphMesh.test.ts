@@ -2,10 +2,36 @@ import { describe, expect, test } from "bun:test";
 
 import { GpuProgram, Shader, Texture } from "pixi.js";
 
-import { GlyphInstanceStore, GlyphMesh } from "../src/advanced";
+import { GLYPH_TEXTURE_BANK_SIZE, GlyphInstanceStore, GlyphMesh } from "../src/advanced";
 import { GLYPH_FRAGMENT_GLSL, GLYPH_SHADER_WGSL, GLYPH_VERTEX_GLSL } from "../src/render/shaders";
 
 describe("GlyphMesh", () => {
+  test("bounds the public atlas texture bank", () => {
+    expect(
+      () =>
+        new GlyphMesh({
+          texture: Texture.WHITE,
+          textures: [],
+          paletteTexture: Texture.WHITE,
+          paletteWidth: 1,
+          instanceData: new ArrayBuffer(32),
+          instanceCount: 0,
+        }),
+    ).toThrow("texture bank must contain between 1 and 8 textures");
+
+    expect(
+      () =>
+        new GlyphMesh({
+          texture: Texture.WHITE,
+          textures: Array.from({ length: GLYPH_TEXTURE_BANK_SIZE + 1 }, () => Texture.WHITE),
+          paletteTexture: Texture.WHITE,
+          paletteWidth: 1,
+          instanceData: new ArrayBuffer(32),
+          instanceCount: 0,
+        }),
+    ).toThrow("texture bank must contain between 1 and 8 textures");
+  });
+
   test("builds one instanced quad geometry for WebGL and WebGPU", () => {
     const instances = new GlyphInstanceStore({ initialCapacity: 2 });
     instances.set(1, {
@@ -27,8 +53,19 @@ describe("GlyphMesh", () => {
           fragment: { source: GLYPH_SHADER_WGSL, entryPoint: "mainFragment" },
         }),
         resources: {
-          uTexture: Texture.WHITE.source,
+          uTexture0: Texture.WHITE.source,
+          uTexture1: Texture.WHITE.source,
+          uTexture2: Texture.WHITE.source,
+          uTexture3: Texture.WHITE.source,
+          uTexture4: Texture.WHITE.source,
+          uTexture5: Texture.WHITE.source,
+          uTexture6: Texture.WHITE.source,
+          uTexture7: Texture.WHITE.source,
           uSampler: Texture.WHITE.source.style,
+          uTransformTexture: Texture.WHITE.source,
+          glyphUniforms: {
+            uPaletteWidth: { value: 1, type: "f32" },
+          },
         },
       }),
     });
@@ -63,10 +100,15 @@ describe("GlyphMesh", () => {
     expect(GLYPH_VERTEX_GLSL).toContain("vRasterScale");
     expect(GLYPH_FRAGMENT_GLSL).toContain("median3");
     expect(GLYPH_FRAGMENT_GLSL).toContain("vRasterScale / vec2(textureSize");
+    expect(GLYPH_FRAGMENT_GLSL).toContain("uniform sampler2D uTexture7");
+    expect(GLYPH_FRAGMENT_GLSL).toContain("vTextureSlot == 6u");
     expect(GLYPH_FRAGMENT_GLSL).toContain("vMode == 3u");
     expect(GLYPH_SHADER_WGSL).toContain("fn median3");
     expect(GLYPH_SHADER_WGSL).toContain("textureLoad(uTransformTexture");
     expect(GLYPH_SHADER_WGSL).toContain("input.rasterScale / vec2<f32>(textureDimensions");
+    expect(GLYPH_SHADER_WGSL).toContain("@group(2) @binding(7) var uTexture7");
+    expect(GLYPH_SHADER_WGSL).toContain("input.textureSlot == 6u");
     expect(GLYPH_SHADER_WGSL).toContain("input.mode == 3u");
+    expect(GLYPH_TEXTURE_BANK_SIZE).toBe(8);
   });
 });

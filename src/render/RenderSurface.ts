@@ -11,7 +11,7 @@ import {
 import type { AtlasCommit, AtlasPageInfo, GlyphMode } from "../atlas/types";
 import { GlyphMesh } from "./GlyphMesh";
 import type { RenderCommitResult, RenderCoordinator } from "./RenderCoordinator";
-import { GLYPH_INSTANCE_STRIDE, type DirtyByteRange } from "./types";
+import { GLYPH_INSTANCE_STRIDE, GLYPH_TEXTURE_BANK_SIZE, type DirtyByteRange } from "./types";
 
 const ACTIVE_BIT = 0x8000_0000;
 const PAGE_MASK = 0x0000_ffff;
@@ -25,7 +25,8 @@ interface AtlasTexturePage {
 }
 
 interface SurfaceMesh {
-  page: number;
+  bank: number;
+  textureCount: number;
   blendMode: BLEND_MODES;
   readonly mesh: GlyphMesh;
   data: ArrayBuffer;
@@ -39,7 +40,7 @@ interface DrawSpan {
 }
 
 interface DrawSegment {
-  readonly page: number;
+  readonly bank: number;
   readonly zIndex: number;
   readonly blendMode: BLEND_MODES;
   readonly spans: DrawSpan[];
@@ -224,7 +225,7 @@ export class RenderSurface {
     ) {
       const segment = segments[0];
       if (segment === undefined) throw new Error("Active glyph segment is unavailable");
-      this.#syncDirectMesh(segment.page, segment.blendMode, data, storeStats.highWater, ranges);
+      this.#syncDirectMesh(segment.bank, segment.blendMode, data, storeStats.highWater, ranges);
       this.#submittedGlyphs = storeStats.activeInstances;
       return;
     }
@@ -252,15 +253,16 @@ export class RenderSurface {
         if (sourceIndex <= lastSourceIndex) naturalOrder = false;
         lastSourceIndex = sourceIndex;
         const page = metadata & PAGE_MASK;
+        const bank = Math.floor(page / GLYPH_TEXTURE_BANK_SIZE);
         let segment = segments[segments.length - 1];
         if (
           segment === undefined ||
-          segment.page !== page ||
+          segment.bank !== bank ||
           segment.zIndex !== state.zIndex ||
           segment.blendMode !== state.blendMode
         ) {
           segment = {
-            page,
+            bank,
             zIndex: state.zIndex,
             blendMode: state.blendMode,
             spans: [],
@@ -287,7 +289,7 @@ export class RenderSurface {
   }
 
   #syncDirectMesh(
-    page: number,
+    bank: number,
     blendMode: BLEND_MODES,
     data: ArrayBuffer,
     instanceCount: number,
@@ -298,14 +300,14 @@ export class RenderSurface {
     }
     let surface = this.#meshes.get(0);
     if (surface === undefined) {
-      surface = this.#createMesh(0, page, blendMode, data, instanceCount, false);
+      surface = this.#createMesh(0, bank, blendMode, data, instanceCount, false);
       initializeBuffer(this.#renderer, surface.mesh);
       surface.initialized = true;
       this.#instanceUploadBytes += data.byteLength;
       this.#instanceWrites += 1;
       return;
     }
-    this.#configureMesh(surface, page, blendMode, 0);
+    this.#configureMesh(surface, bank, blendMode, 0);
     surface.compact = false;
     if (surface.data !== data) {
       surface.data = data;
@@ -357,14 +359,14 @@ export class RenderSurface {
       if (surface === undefined) {
         surface = this.#createMesh(
           key,
-          segment.page,
+          segment.bank,
           segment.blendMode,
           buffer,
           segment.count,
           true,
         );
       } else {
-        this.#configureMesh(surface, segment.page, segment.blendMode, key);
+        this.#configureMesh(surface, segment.bank, segment.blendMode, key);
         surface.data = buffer;
         surface.compact = true;
         surface.mesh.updateInstances(buffer, segment.count);
@@ -387,26 +389,32 @@ export class RenderSurface {
 
   #createMesh(
     key: number,
-    page: number,
+    bank: number,
     blendMode: BLEND_MODES,
     data: ArrayBuffer,
     count: number,
     compact: boolean,
   ): SurfaceMesh {
-    const atlasPage = this.#ensureAtlasPage(page);
+    const textures = this.#getTextureBank(bank);
+    const primaryTexture = textures[0];
+    if (primaryTexture === undefined) {
+      throw new Error(`Atlas texture bank ${String(bank)} is unavailable`);
+    }
     const paletteWidth = this.#coordinator.transforms.stats.textureWidth;
     const mesh = new GlyphMesh({
-      texture: atlasPage.texture,
+      texture: primaryTexture,
+      textures,
       paletteTexture: this.#paletteTexture,
       paletteWidth,
       instanceData: data,
       instanceCount: count,
     });
-    mesh.label = `pixi-glyphflow-segment-${String(key)}-page-${String(page)}`;
+    mesh.label = `pixi-glyphflow-segment-${String(key)}-bank-${String(bank)}`;
     mesh.blendMode = blendMode;
     this.#owner.addChild(mesh);
     const surface: SurfaceMesh = {
-      page,
+      bank,
+      textureCount: textures.length,
       blendMode,
       mesh,
       data,
@@ -418,17 +426,30 @@ export class RenderSurface {
     return surface;
   }
 
-  #configureMesh(surface: SurfaceMesh, page: number, blendMode: BLEND_MODES, key: number): void {
-    if (surface.page !== page) {
-      surface.page = page;
-      surface.mesh.setTexture(this.#ensureAtlasPage(page).texture);
+  #configureMesh(surface: SurfaceMesh, bank: number, blendMode: BLEND_MODES, key: number): void {
+    const textures = this.#getTextureBank(bank);
+    if (surface.bank !== bank || surface.textureCount !== textures.length) {
+      surface.bank = bank;
+      surface.textureCount = textures.length;
+      surface.mesh.setTextures(textures);
     }
     if (surface.blendMode !== blendMode) {
       surface.blendMode = blendMode;
       surface.mesh.blendMode = blendMode;
     }
-    surface.mesh.label = `pixi-glyphflow-segment-${String(key)}-page-${String(page)}`;
+    surface.mesh.label = `pixi-glyphflow-segment-${String(key)}-bank-${String(bank)}`;
     this.#owner.addChild(surface.mesh);
+  }
+
+  #getTextureBank(bank: number): readonly Texture[] {
+    const textures: Texture[] = [];
+    const firstPage = bank * GLYPH_TEXTURE_BANK_SIZE;
+    for (let slot = 0; slot < GLYPH_TEXTURE_BANK_SIZE; slot += 1) {
+      const page = this.#pages.get(firstPage + slot);
+      if (page === undefined) break;
+      textures.push(page.texture);
+    }
+    return textures;
   }
 
   #destroyMesh(key: number, surface: SurfaceMesh): void {

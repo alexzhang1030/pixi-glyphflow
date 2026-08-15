@@ -35,6 +35,9 @@
 - Small CJK glyphs use oversampled distance fields with logical-size normalization, preserving
   continuous strokes across viewport zoom. The documentation CJK font uses a static Medium instance
   for deterministic MSDF outlines.
+- Atlas pages bind in eight-texture banks, collapsing the documentation site's fully zoomed-out
+  WebGPU workload from 2,111 page-alternating draws to one and keeping PixiJS uniform batches within
+  capacity.
 
 ## 0.0.1 - 2026-08-15
 

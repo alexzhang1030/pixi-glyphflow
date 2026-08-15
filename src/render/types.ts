@@ -1,4 +1,6 @@
 export const GLYPH_INSTANCE_STRIDE = 32;
+/** Atlas textures bound per glyph draw. Fits WebGL 2's minimum texture-unit budget. */
+export const GLYPH_TEXTURE_BANK_SIZE = 8;
 
 export interface DirtyByteRange {
   readonly offset: number;

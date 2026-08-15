@@ -31,6 +31,7 @@ Raw artifacts live in [`benchmarks/results`](../benchmarks/results). The generat
 | Transform palette record                | 64 bytes per label |
 | Core transitive ESM graph               |        40 KiB gzip |
 | Atlas pressure allocation               |              4 MiB |
+| Atlas textures per ordered draw bank    |                  8 |
 | Full-visibility draw submission         | One instanced draw |
 
 `bun run benchmark:check` validates artifact presence, formal scale, browser completion, boolean
@@ -64,6 +65,10 @@ commit distributions separate synchronous intake from publication work.
 The full-visibility fixture records actual `drawElementsInstanced` calls, maximum submitted instance
 count, and non-transparent framebuffer output. This evidence connects logical counters to a real GPU
 submission path.
+
+Atlas pages share an eight-texture draw bank. Page-alternating multilingual runs retain instance
+order while consuming one PixiJS local-uniform slot per bank, keeping WebGPU submission below its
+uniform-batch capacity.
 
 ## Application tuning
 

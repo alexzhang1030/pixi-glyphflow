@@ -23,6 +23,7 @@ flat out vec4 vEffects;
 flat out vec4 vUvBounds;
 flat out vec4 vFill;
 flat out float vRasterScale;
+flat out uint vTextureSlot;
 
 vec4 paletteTexel(uint index) {
     uint width = uint(uPaletteWidth);
@@ -52,6 +53,7 @@ void main(void) {
     vUvBounds = aInstanceUv;
     vFill = paletteColor;
     vRasterScale = max(float((aMetadata >> 18u) & 8191u) / 64.0, 1.0);
+    vTextureSlot = aMetadata & 7u;
 }
 `;
 
@@ -61,7 +63,14 @@ export const GLYPH_FRAGMENT_GLSL = /* glsl */ `
 precision highp float;
 precision highp int;
 
-uniform sampler2D uTexture;
+uniform sampler2D uTexture0;
+uniform sampler2D uTexture1;
+uniform sampler2D uTexture2;
+uniform sampler2D uTexture3;
+uniform sampler2D uTexture4;
+uniform sampler2D uTexture5;
+uniform sampler2D uTexture6;
+uniform sampler2D uTexture7;
 
 in vec2 vUv;
 in vec4 vWorldColor;
@@ -70,6 +79,7 @@ flat in vec4 vEffects;
 flat in vec4 vUvBounds;
 flat in vec4 vFill;
 flat in float vRasterScale;
+flat in uint vTextureSlot;
 
 out vec4 finalColor;
 
@@ -86,10 +96,32 @@ vec3 unpackRgb(float packed) {
     ) / 255.0;
 }
 
+vec4 atlasSample(vec2 uv, vec2 uvDx, vec2 uvDy) {
+    if (vTextureSlot == 0u) return textureGrad(uTexture0, uv, uvDx, uvDy);
+    if (vTextureSlot == 1u) return textureGrad(uTexture1, uv, uvDx, uvDy);
+    if (vTextureSlot == 2u) return textureGrad(uTexture2, uv, uvDx, uvDy);
+    if (vTextureSlot == 3u) return textureGrad(uTexture3, uv, uvDx, uvDy);
+    if (vTextureSlot == 4u) return textureGrad(uTexture4, uv, uvDx, uvDy);
+    if (vTextureSlot == 5u) return textureGrad(uTexture5, uv, uvDx, uvDy);
+    if (vTextureSlot == 6u) return textureGrad(uTexture6, uv, uvDx, uvDy);
+    return textureGrad(uTexture7, uv, uvDx, uvDy);
+}
+
+vec4 atlasSampleLod(vec2 uv) {
+    if (vTextureSlot == 0u) return textureLod(uTexture0, uv, 0.0);
+    if (vTextureSlot == 1u) return textureLod(uTexture1, uv, 0.0);
+    if (vTextureSlot == 2u) return textureLod(uTexture2, uv, 0.0);
+    if (vTextureSlot == 3u) return textureLod(uTexture3, uv, 0.0);
+    if (vTextureSlot == 4u) return textureLod(uTexture4, uv, 0.0);
+    if (vTextureSlot == 5u) return textureLod(uTexture5, uv, 0.0);
+    if (vTextureSlot == 6u) return textureLod(uTexture6, uv, 0.0);
+    return textureLod(uTexture7, uv, 0.0);
+}
+
 vec4 boundedSample(vec2 uv) {
     bool inside = all(greaterThanEqual(uv, vUvBounds.xy))
         && all(lessThanEqual(uv, vUvBounds.zw));
-    vec4 sampled = textureLod(uTexture, clamp(uv, vUvBounds.xy, vUvBounds.zw), 0.0);
+    vec4 sampled = atlasSampleLod(clamp(uv, vUvBounds.xy, vUvBounds.zw));
     return inside ? sampled : vec4(0.0);
 }
 
@@ -110,7 +142,7 @@ vec4 over(vec4 top, vec4 bottom) {
 }
 
 void main(void) {
-    vec4 sampleColor = texture(uTexture, vUv);
+    vec4 sampleColor = atlasSample(vUv, dFdx(vUv), dFdy(vUv));
     float distanceValue = vMode == 0u ? median3(sampleColor.rgb) : sampleColor.r;
     float smoothing = max(fwidth(distanceValue), 1.0 / 255.0);
     float fillCoverage = vMode == 3u
@@ -123,7 +155,7 @@ void main(void) {
     vec4 fill = vMode == 3u
         ? sampleColor * fillTint
         : vec4(fillTint.rgb * fillCoverage, fillTint.a * fillCoverage);
-    vec2 texel = vRasterScale / vec2(textureSize(uTexture, 0));
+    vec2 texel = vRasterScale / vec2(textureSize(uTexture0, 0));
 
     uint shadowPacked = uint(round(vEffects.w));
     uint strokePacked = uint(round(vEffects.y));
@@ -190,15 +222,22 @@ struct LocalUniforms {
 
 @group(0) @binding(0) var<uniform> globalUniforms: GlobalUniforms;
 @group(1) @binding(0) var<uniform> localUniforms: LocalUniforms;
-@group(2) @binding(0) var uTexture: texture_2d<f32>;
-@group(2) @binding(1) var uSampler: sampler;
-@group(2) @binding(2) var uTransformTexture: texture_2d<f32>;
+@group(2) @binding(0) var uTexture0: texture_2d<f32>;
+@group(2) @binding(1) var uTexture1: texture_2d<f32>;
+@group(2) @binding(2) var uTexture2: texture_2d<f32>;
+@group(2) @binding(3) var uTexture3: texture_2d<f32>;
+@group(2) @binding(4) var uTexture4: texture_2d<f32>;
+@group(2) @binding(5) var uTexture5: texture_2d<f32>;
+@group(2) @binding(6) var uTexture6: texture_2d<f32>;
+@group(2) @binding(7) var uTexture7: texture_2d<f32>;
+@group(2) @binding(8) var uSampler: sampler;
+@group(2) @binding(9) var uTransformTexture: texture_2d<f32>;
 
 struct GlyphUniforms {
     uPaletteWidth: f32,
 };
 
-@group(2) @binding(3) var<uniform> glyphUniforms: GlyphUniforms;
+@group(2) @binding(10) var<uniform> glyphUniforms: GlyphUniforms;
 
 struct VertexOutput {
     @builtin(position) position: vec4<f32>,
@@ -209,6 +248,7 @@ struct VertexOutput {
     @location(4) @interpolate(flat) uvBounds: vec4<f32>,
     @location(5) @interpolate(flat) fill: vec4<f32>,
     @location(6) @interpolate(flat) rasterScale: f32,
+    @location(7) @interpolate(flat) textureSlot: u32,
 };
 
 fn paletteIndex(linear: u32, width: u32) -> vec2<i32> {
@@ -253,6 +293,7 @@ fn mainVertex(
         aInstanceUv,
         paletteColor,
         max(f32((aMetadata >> 18u) & 8191u) / 64.0, 1.0),
+        aMetadata & 7u,
     );
 }
 
@@ -269,14 +310,36 @@ fn unpackRgb(packed: f32) -> vec3<f32> {
     ) / 255.0;
 }
 
+fn atlasSample(
+    input: VertexOutput,
+    uv: vec2<f32>,
+    uvDx: vec2<f32>,
+    uvDy: vec2<f32>,
+) -> vec4<f32> {
+    if (input.textureSlot == 0u) { return textureSampleGrad(uTexture0, uSampler, uv, uvDx, uvDy); }
+    if (input.textureSlot == 1u) { return textureSampleGrad(uTexture1, uSampler, uv, uvDx, uvDy); }
+    if (input.textureSlot == 2u) { return textureSampleGrad(uTexture2, uSampler, uv, uvDx, uvDy); }
+    if (input.textureSlot == 3u) { return textureSampleGrad(uTexture3, uSampler, uv, uvDx, uvDy); }
+    if (input.textureSlot == 4u) { return textureSampleGrad(uTexture4, uSampler, uv, uvDx, uvDy); }
+    if (input.textureSlot == 5u) { return textureSampleGrad(uTexture5, uSampler, uv, uvDx, uvDy); }
+    if (input.textureSlot == 6u) { return textureSampleGrad(uTexture6, uSampler, uv, uvDx, uvDy); }
+    return textureSampleGrad(uTexture7, uSampler, uv, uvDx, uvDy);
+}
+
+fn atlasSampleLevel(input: VertexOutput, uv: vec2<f32>) -> vec4<f32> {
+    if (input.textureSlot == 0u) { return textureSampleLevel(uTexture0, uSampler, uv, 0.0); }
+    if (input.textureSlot == 1u) { return textureSampleLevel(uTexture1, uSampler, uv, 0.0); }
+    if (input.textureSlot == 2u) { return textureSampleLevel(uTexture2, uSampler, uv, 0.0); }
+    if (input.textureSlot == 3u) { return textureSampleLevel(uTexture3, uSampler, uv, 0.0); }
+    if (input.textureSlot == 4u) { return textureSampleLevel(uTexture4, uSampler, uv, 0.0); }
+    if (input.textureSlot == 5u) { return textureSampleLevel(uTexture5, uSampler, uv, 0.0); }
+    if (input.textureSlot == 6u) { return textureSampleLevel(uTexture6, uSampler, uv, 0.0); }
+    return textureSampleLevel(uTexture7, uSampler, uv, 0.0);
+}
+
 fn boundedSample(input: VertexOutput, uv: vec2<f32>) -> vec4<f32> {
     let inside = all(uv >= input.uvBounds.xy) && all(uv <= input.uvBounds.zw);
-    let sampled = textureSampleLevel(
-        uTexture,
-        uSampler,
-        clamp(uv, input.uvBounds.xy, input.uvBounds.zw),
-        0.0,
-    );
+    let sampled = atlasSampleLevel(input, clamp(uv, input.uvBounds.xy, input.uvBounds.zw));
     return select(vec4<f32>(0.0), sampled, inside);
 }
 
@@ -298,7 +361,7 @@ fn over(top: vec4<f32>, bottom: vec4<f32>) -> vec4<f32> {
 
 @fragment
 fn mainFragment(input: VertexOutput) -> @location(0) vec4<f32> {
-    let sampleColor = textureSample(uTexture, uSampler, input.uv);
+    let sampleColor = atlasSample(input, input.uv, dpdx(input.uv), dpdy(input.uv));
     let distanceValue = select(sampleColor.r, median3(sampleColor.rgb), input.mode == 0u);
     let smoothing = max(fwidth(distanceValue), 1.0 / 255.0);
     let distanceCoverage = smoothstep(0.5 - smoothing, 0.5 + smoothing, distanceValue);
@@ -312,7 +375,7 @@ fn mainFragment(input: VertexOutput) -> @location(0) vec4<f32> {
         fillTint.a * fillCoverage,
     );
     let fill = select(distanceColor, sampleColor * fillTint, input.mode == 3u);
-    let texel = input.rasterScale / vec2<f32>(textureDimensions(uTexture));
+    let texel = input.rasterScale / vec2<f32>(textureDimensions(uTexture0));
 
     let shadowPacked = u32(round(input.effects.w));
     let strokePacked = u32(round(input.effects.y));

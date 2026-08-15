@@ -23,6 +23,7 @@ Status: unstamped project record dated 2026-08-15. Package versions are pinned b
 - The package is ESM-only and side-effect free at its root export.
 - PixiJS stays external so every application owns one renderer and extension registry.
 - Renderer-specific code consumes one logical glyph-instance contract for WebGL and WebGPU.
+- Renderer shaders bind eight atlas pages per draw, leaving capacity for the transform palette within WebGL 2 and WebGPU minimum texture limits.
 - The TypeScript 7 consumer fixture enables skipLibCheck while PixiJS and the DOM library both provide WebGPU declarations. Project source and generated declarations remain strictly checked.
 - Optional WebAssembly assets load through explicit font and shaping operations. Importing the core package performs no network request and starts no worker.
 - Production sites with dynamic binary fonts bundle the MSDF worker and WebAssembly module as hashed assets and pass their URLs through `TextLayerOptions.rendering.rasterizerOptions`.

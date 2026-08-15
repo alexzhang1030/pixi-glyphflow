@@ -88,6 +88,8 @@ const visible = ref("0");
 const pendingGlyphs = ref(0);
 const revision = ref("0");
 const glyphs = ref("0");
+const drawCalls = ref(0);
+const atlasTextures = ref(0);
 const updateDuration = ref("0.00 ms");
 const viewportDuration = ref("0.00 ms");
 const fps = ref("0");
@@ -205,6 +207,8 @@ function resetHud(): void {
   pendingGlyphs.value = 0;
   revision.value = "0";
   glyphs.value = "0";
+  drawCalls.value = 0;
+  atlasTextures.value = 0;
   updateDuration.value = "0.00 ms";
   viewportDuration.value = "0.00 ms";
   fps.value = "0";
@@ -492,6 +496,8 @@ function updateHud(overrideViewportDuration?: number): void {
   visible.value = numberFormat.format(stats.visibleLabelCount);
   revision.value = numberFormat.format(Number(stats.revision));
   glyphs.value = numberFormat.format(stats.submittedGlyphs);
+  drawCalls.value = stats.drawCalls;
+  atlasTextures.value = stats.atlasTextureCount;
   viewportDuration.value = `${(
     overrideViewportDuration ?? nextBinding.stats.lastDurationMs
   ).toFixed(2)} ms`;
@@ -663,6 +669,8 @@ async function loadCustomFonts(): Promise<readonly Readonly<LoadedFontAsset>[]> 
     :data-demo-state="state"
     :data-renderer-backend="activeBackend"
     :data-pending-glyphs="pendingGlyphs"
+    :data-draw-calls="drawCalls"
+    :data-atlas-textures="atlasTextures"
     aria-labelledby="demo-title"
   >
     <header class="demo-header">
@@ -750,6 +758,14 @@ async function loadCustomFonts(): Promise<readonly Readonly<LoadedFontAsset>[]> 
         <div>
           <dt>Submitted glyphs</dt>
           <dd>{{ glyphs }}</dd>
+        </div>
+        <div>
+          <dt>Draw calls / atlas</dt>
+          <dd>
+            <span data-testid="draw-call-count">{{ numberFormat.format(drawCalls) }}</span>
+            /
+            <span data-testid="atlas-texture-count">{{ numberFormat.format(atlasTextures) }}</span>
+          </dd>
         </div>
         <div>
           <dt>Renderer / FPS</dt>

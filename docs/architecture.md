@@ -71,9 +71,12 @@ adapters issue partial WebGL buffer updates or budgeted WebGPU queue writes.
 
 ## Rendering
 
-`RenderSurface` groups visible instances by atlas page, z order, and blend mode. Equal-z labels retain
-insertion order. `GlyphMesh` uses paired GLSL and WGSL shaders for MSDF, SDF, alpha, color, fill,
-stroke, shadow, anchor, rotation, scale, and alpha behavior.
+`RenderSurface` binds consecutive atlas pages in banks of eight. Visible instances split by texture
+bank, z order, and blend mode, so page changes within a bank stay in one ordered instanced draw.
+Equal-z labels retain insertion order. `GlyphMesh` selects the correct page per instance through
+paired GLSL and WGSL shaders for MSDF, SDF, alpha, color, fill, stroke, shadow, anchor, rotation,
+scale, and alpha behavior. Eight fragment textures plus the vertex transform palette fit the WebGL 2
+minimum texture-unit budget and the WebGPU minimum sampled-texture limit.
 
 ## Culling and camera integration
 

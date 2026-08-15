@@ -7,6 +7,7 @@ worker shaping, bounded glyph atlases, dense culling, and first-class pixi-viewp
 
 - One `TextLayer` retains 1,000,000 labels in 72 MiB of fixed-width CPU storage.
 - One instanced draw submits 8,000,000 visible glyphs through a 32-byte glyph record.
+- Eight-page texture banks preserve glyph order while merging mixed atlas pages into one draw.
 - `updatePositions` applies 100,000 packed x/y changes in 3.40 ms p95 on the reference M1 Pro.
 - `updateTextPositions` applies 100,000 text and x/y changes in 14.20 ms p95.
 - `bindViewport` coalesces drag, deceleration, wheel, pinch, zoom, and rotation camera work.
