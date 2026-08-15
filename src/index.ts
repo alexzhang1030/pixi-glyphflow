@@ -11,6 +11,7 @@ export type {
   TextLayerRenderingOptions,
   TextLayerStats,
   TextRevision,
+  TextShapingOptions,
   TextUpdate,
 } from "./types";
 export type {

@@ -16,6 +16,7 @@ export class LayoutEngine {
   readonly #bitmap: NonNullable<LayoutEngineOptions["bitmapAdapter"]>;
   readonly #harfbuzz: PositionedRunShaper;
   readonly #ownsHarfBuzz: boolean;
+  readonly #shapeCache = new Map<string, Promise<Readonly<PositionedRun>>>();
   #layouts = 0;
   #bitmapLayouts = 0;
   #harfbuzzLayouts = 0;
@@ -38,36 +39,52 @@ export class LayoutEngine {
     assertIdentity("sourceRevision", sourceRevision);
     assertInput(input);
     const direction = input.direction ?? detectDirection(input.text);
-    const family = this.#resolveFamily(input.style.fontFamily);
-    const registered = this.#registry.get(family);
+    const families = this.#resolveFamilies(input.style.fontFamily);
     this.#layouts += 1;
+    let missingRun: Readonly<PositionedRun> | undefined;
 
-    if (registered?.kind === "binary") {
-      this.#harfbuzzLayouts += 1;
-      const shapeInput: HarfBuzzShapeInput = {
-        family,
+    for (let index = 0; index < families.length; index += 1) {
+      const family = families[index];
+      if (family === undefined) continue;
+      const registered = this.#registry.get(family);
+      if (registered?.kind === "binary") {
+        const shapeInput: HarfBuzzShapeInput = {
+          family,
+          text: input.text,
+          fontSize: resolveFontSize(input.style.fontSize),
+          fontRevision: registered.revision,
+          direction,
+          ...(input.language === undefined ? {} : { language: input.language }),
+          ...(input.script === undefined ? {} : { script: input.script }),
+          ...(input.features === undefined ? {} : { features: input.features }),
+          ...(input.variations === undefined ? {} : { variations: input.variations }),
+        };
+        const run = await this.#shape(labelId, sourceRevision, shapeInput);
+        if (hasCompleteGlyphCoverage(run)) return run;
+        missingRun ??= run;
+        continue;
+      }
+
+      const bitmapFamilies = families
+        .slice(index)
+        .filter((candidate) => this.#registry.get(candidate)?.kind !== "binary");
+      const primary = bitmapFamilies[0] ?? family;
+      const primaryFont = this.#registry.get(primary);
+      this.#bitmapLayouts += 1;
+      return this.#bitmap.layout({
         text: input.text,
-        fontSize: resolveFontSize(input.style.fontSize),
+        style: { ...input.style, fontFamily: bitmapFamilies },
+        fontRevision: primaryFont?.revision ?? 0,
+        cacheRevision: this.#registry.stats.revision,
         direction,
-        ...(input.language === undefined ? {} : { language: input.language }),
-        ...(input.script === undefined ? {} : { script: input.script }),
-        ...(input.features === undefined ? {} : { features: input.features }),
-        ...(input.variations === undefined ? {} : { variations: input.variations }),
-      };
-
-      return this.#harfbuzz.shape(labelId, sourceRevision, shapeInput);
+        trimEnd: input.trimEnd ?? true,
+        ...(input.maxLines === undefined ? {} : { maxLines: input.maxLines }),
+        ...(input.ellipsis === undefined ? {} : { ellipsis: input.ellipsis }),
+      });
     }
 
-    this.#bitmapLayouts += 1;
-    return this.#bitmap.layout({
-      text: input.text,
-      style: input.style,
-      fontRevision: registered?.revision ?? 0,
-      direction,
-      trimEnd: input.trimEnd ?? true,
-      ...(input.maxLines === undefined ? {} : { maxLines: input.maxLines }),
-      ...(input.ellipsis === undefined ? {} : { ellipsis: input.ellipsis }),
-    });
+    if (missingRun !== undefined) return missingRun;
+    throw new Error("Font fallback resolution produced no layout candidate");
   }
 
   get stats(): Readonly<LayoutEngineStats> {
@@ -85,27 +102,60 @@ export class LayoutEngine {
     if (this.#ownsHarfBuzz) {
       this.#harfbuzz.destroy?.();
     }
+    this.#shapeCache.clear();
     this.#destroyed = true;
   }
 
-  #resolveFamily(value: string | string[] | undefined): string {
-    const requested = Array.isArray(value) ? value : [value ?? "Arial"];
-    for (const name of requested) {
-      const fallback = this.#registry.getFallback(name);
-      if (fallback !== undefined) {
-        for (const family of fallback) {
-          if (this.#registry.get(family) !== undefined) {
-            return family;
-          }
-        }
-        return fallback[0] ?? name;
-      }
-      if (this.#registry.get(name) !== undefined) {
-        return name;
-      }
+  #shape(
+    labelId: number,
+    sourceRevision: number,
+    input: HarfBuzzShapeInput,
+  ): Promise<Readonly<PositionedRun>> {
+    const key = shapeCacheKey(input);
+    const cached = this.#shapeCache.get(key);
+    if (cached !== undefined) {
+      this.#shapeCache.delete(key);
+      this.#shapeCache.set(key, cached);
+      return cached;
     }
 
-    return requested[0] ?? "Arial";
+    this.#harfbuzzLayouts += 1;
+    const pending = this.#harfbuzz.shape(labelId, sourceRevision, input);
+    this.#shapeCache.set(key, pending);
+    void pending.catch(() => {
+      if (this.#shapeCache.get(key) === pending) this.#shapeCache.delete(key);
+    });
+    while (this.#shapeCache.size > 1_000) {
+      const oldest = this.#shapeCache.keys().next().value as string | undefined;
+      if (oldest === undefined) break;
+      this.#shapeCache.delete(oldest);
+    }
+    return pending;
+  }
+
+  #resolveFamilies(value: string | string[] | undefined): readonly string[] {
+    const requested = Array.isArray(value) ? value : [value ?? "Arial"];
+    const resolved: string[] = [];
+    const seen = new Set<string>();
+    const active = new Set<string>();
+    const append = (name: string): void => {
+      if (active.has(name)) return;
+      const fallback = this.#registry.getFallback(name);
+      if (fallback !== undefined) {
+        active.add(name);
+        for (const family of fallback) append(family);
+        active.delete(name);
+        return;
+      }
+      if (seen.has(name)) return;
+      seen.add(name);
+      resolved.push(name);
+    };
+    for (const name of requested) {
+      append(name);
+    }
+
+    return Object.freeze(resolved.length > 0 ? resolved : [requested[0] ?? "Arial"]);
   }
 
   #assertActive(): void {
@@ -113,6 +163,28 @@ export class LayoutEngine {
       throw new Error("LayoutEngine has been destroyed");
     }
   }
+}
+
+function hasCompleteGlyphCoverage(run: Readonly<PositionedRun>): boolean {
+  return run.glyphCount === 0 || !run.glyphIds.includes(0);
+}
+
+function shapeCacheKey(input: HarfBuzzShapeInput): string {
+  const variations = Object.entries(input.variations ?? {})
+    .sort(([left], [right]) => left.localeCompare(right))
+    .map(([axis, value]) => `${axis}=${String(value)}`)
+    .join(",");
+  return [
+    input.family,
+    input.fontRevision ?? 0,
+    input.fontSize,
+    input.direction ?? "",
+    input.language ?? "",
+    input.script ?? "",
+    input.features?.join(",") ?? "",
+    variations,
+    input.text,
+  ].join("\u0000");
 }
 
 function assertIdentity(name: string, value: number): void {

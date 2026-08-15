@@ -32,12 +32,13 @@ export class BitmapLayoutAdapter {
     assertInput(input);
     const textStyle = new TextStyle(input.style);
     const fontRevision = input.fontRevision ?? 0;
+    const cacheRevision = input.cacheRevision ?? fontRevision;
     const direction = input.direction ?? "ltr";
     const trimEnd = input.trimEnd ?? true;
     const maxLines = input.maxLines;
     const ellipsis = input.ellipsis ?? "…";
     const styleKey = this.#styleKey(input.style, textStyle.styleKey);
-    const key = `${input.text}\u0000${styleKey}\u0000${String(fontRevision)}\u0000${direction}\u0000${String(trimEnd)}\u0000${String(maxLines)}\u0000${ellipsis}`;
+    const key = `${input.text}\u0000${styleKey}\u0000${String(fontRevision)}\u0000${String(cacheRevision)}\u0000${direction}\u0000${String(trimEnd)}\u0000${String(maxLines)}\u0000${ellipsis}`;
     const cached = this.#cache.get(key);
     if (cached !== undefined) {
       this.#hits += 1;
@@ -104,10 +105,12 @@ export class BitmapLayoutAdapter {
       }
     }
 
+    const fontFamilies = resolveFontFamilies(input.style.fontFamily);
     const run = Object.freeze({
       source: "bitmap" as const,
       text: input.text,
-      fontFamily: resolveFontFamily(input.style.fontFamily),
+      fontFamily: fontFamilies[0] ?? "sans-serif",
+      ...(fontFamilies.length > 1 ? { fontFamilies: Object.freeze(fontFamilies) } : {}),
       fontRevision,
       glyphCount,
       direction,
@@ -177,6 +180,10 @@ function assertInput(input: BitmapLayoutInput): void {
   const revision = input.fontRevision ?? 0;
   if (!Number.isSafeInteger(revision) || revision < 0) {
     throw new TypeError("fontRevision must be a non-negative safe integer");
+  }
+  const cacheRevision = input.cacheRevision ?? revision;
+  if (!Number.isSafeInteger(cacheRevision) || cacheRevision < 0) {
+    throw new TypeError("cacheRevision must be a non-negative safe integer");
   }
   if (input.direction !== undefined && input.direction !== "ltr" && input.direction !== "rtl") {
     throw new TypeError("direction must be ltr or rtl");
@@ -250,12 +257,8 @@ function constrainLines(
   return constrained;
 }
 
-function resolveFontFamily(fontFamily: string | string[] | undefined): string {
-  if (Array.isArray(fontFamily)) {
-    return fontFamily[0] ?? "sans-serif";
-  }
-
-  return fontFamily ?? "sans-serif";
+function resolveFontFamilies(fontFamily: string | string[] | undefined): string[] {
+  return Array.isArray(fontFamily) ? [...fontFamily] : [fontFamily ?? "sans-serif"];
 }
 
 function stableStringify(value: object): string {

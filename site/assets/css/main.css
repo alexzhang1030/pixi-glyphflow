@@ -569,7 +569,7 @@ a {
 
 .demo-metrics {
   display: grid;
-  grid-template-columns: repeat(4, minmax(0, 1fr));
+  grid-template-columns: repeat(5, minmax(0, 1fr));
   margin: 0;
 }
 
@@ -580,7 +580,7 @@ a {
   border-bottom: 1px solid var(--canvas-line);
 }
 
-.demo-metrics > div:nth-child(4n) {
+.demo-metrics > div:nth-child(5n) {
   border-right: 0;
 }
 
@@ -1114,7 +1114,7 @@ a {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 
-  .demo-metrics > div:nth-child(4n) {
+  .demo-metrics > div:nth-child(5n) {
     border-right: 1px solid var(--canvas-line);
   }
 

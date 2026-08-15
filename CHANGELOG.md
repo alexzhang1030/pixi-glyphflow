@@ -8,12 +8,18 @@
   diagnostics.
 - Ergonomic CRUD, object-batch, packed-position, and columnar text-plus-position mutation APIs.
 - PixiJS bitmap layout plus direct and worker-backed HarfBuzz shaping for multilingual text.
+- CJKV regional glyph selection, broad complex-script fallback, custom binary fonts, and sparse
+  per-label language, script, direction, feature, and variation controls.
+- Exact glyph-ID MSDF rasterization for contextual forms, ligatures, and localized alternates, plus
+  an explicitly configurable worker and WebAssembly asset boundary.
 - Bounded MSDF, SDF, alpha, and color glyph atlases with generation-safe eviction.
 - Compact glyph instances, transform palettes, dirty-range uploads, and paired WebGL/WebGPU shaders.
 - Spatial culling, hit testing, bounds, z order, blend modes, effects, lifecycle isolation, and
   accessibility mirroring.
 - pixi-viewport 6 binding for drag, deceleration, wheel, pinch, zoom, and rotated cameras.
 - Interactive million-label playground with a 100,000-label position storm.
+- Interactive documentation with one million resident multilingual labels, five custom Noto font
+  subsets, 100,000 position updates, and live WebGL 2 / WebGPU switching.
 - Isolated browser benchmark laboratory, committed raw artifacts, generated reports, and CI budgets.
 - Focused root, viewport, accessibility, shaping, advanced, and worker package entry points.
 

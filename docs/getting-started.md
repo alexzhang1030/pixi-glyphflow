@@ -30,6 +30,11 @@ export default defineConfig({
 Equivalent bundler configurations use an ES module worker and an ES2022-or-newer target. The
 package exports the worker at `pixi-glyphflow/text-worker.js`.
 
+Custom binary fonts also activate the MSDF generator. Vite production builds can emit stable worker
+and WebAssembly URLs through `?worker&url` and `?url`, then pass a configured generator through
+`TextLayerOptions.rendering.rasterizerOptions`. The complete configuration lives in
+[Explicit Vite MSDF assets](fonts.md#explicit-vite-msdf-assets).
+
 ## Renderer lifecycle
 
 Create the PixiJS application, associate its renderer with `TextLayer`, add the layer to the scene,
@@ -49,6 +54,23 @@ await app.init({
 const layer = new TextLayer({ renderer: app.renderer });
 app.stage.addChild(layer);
 layer.create({ text: "Ready", x: 20, y: 20 });
+await layer.commit();
+```
+
+Register product fonts before creating multilingual labels:
+
+```ts
+await layer.fonts.register({
+  family: "Product CJKV",
+  source: new URL("/fonts/ProductCJKV-VF.ttf", location.href),
+});
+layer.fonts.registerFallback("Product multilingual", ["Product CJKV", "system-ui"]);
+
+layer.create({
+  text: "日本語 · 東京",
+  style: { fontFamily: "Product multilingual", fontSize: 18 },
+  shaping: { language: "ja", script: "Jpan" },
+});
 await layer.commit();
 ```
 

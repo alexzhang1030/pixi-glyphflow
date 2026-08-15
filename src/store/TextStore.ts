@@ -487,6 +487,24 @@ export class TextStore {
     this.#journal.record(slot, mask);
   }
 
+  /** Advance source identity and publish a source-affecting dirty domain. @internal */
+  markSourceDirty(id: TextId, mask: TextDirtyMask): void {
+    const slot = this.#requireSlot(id);
+    if (
+      !Number.isSafeInteger(mask) ||
+      mask <= TextDirty.None ||
+      (mask & ~(TextDirty.Content | TextDirty.Style)) !== 0
+    ) {
+      throw new TypeError("Source dirty mask must contain content or style domains");
+    }
+    const revision = this.#sourceRevisions[slot] ?? 0;
+    if (revision === 0xffff_ffff) {
+      throw new RangeError("Text label source revision exhausted");
+    }
+    this.#sourceRevisions[slot] = revision + 1;
+    this.#journal.record(slot, mask);
+  }
+
   publishDirty(visitor?: DirtySlotVisitor): Readonly<PublishedDirty> {
     return this.#journal.publish(visitor);
   }

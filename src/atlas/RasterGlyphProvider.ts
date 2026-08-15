@@ -1,4 +1,5 @@
 import type { FontRegistry } from "../FontRegistry";
+import { prepareGlyphFont } from "../fonts/cmap";
 import type {
   GlyphMetrics,
   GlyphMode,
@@ -15,11 +16,14 @@ const DEFAULT_CACHE_SIZE = 2_048;
 export class RasterGlyphProvider {
   readonly #registry: FontRegistry;
   readonly #cacheSize: number;
+  readonly #generatorConcurrency: number;
   readonly #canvasRasterizer: (request: RasterGlyphRequest) => Promise<GlyphRaster>;
   readonly #createMsdfGenerator: () => Promise<MsdfGeneratorLike>;
   readonly #cache = new Map<string, Readonly<GlyphRaster>>();
   readonly #pending = new Map<string, Promise<Readonly<GlyphRaster>>>();
-  #generatorPromise: Promise<MsdfGeneratorLike> | undefined;
+  readonly #generatorPromises: Array<Promise<MsdfGeneratorLike> | undefined>;
+  readonly #generatorTails: Array<Promise<void> | undefined>;
+  #nextGenerator = 0;
   #hits = 0;
   #misses = 0;
   #canvasRasters = 0;
@@ -33,6 +37,13 @@ export class RasterGlyphProvider {
     if (!Number.isSafeInteger(this.#cacheSize) || this.#cacheSize <= 0) {
       throw new TypeError("cacheSize must be a positive safe integer");
     }
+    this.#generatorConcurrency =
+      options.generatorConcurrency ?? Math.min(4, globalThis.navigator?.hardwareConcurrency ?? 1);
+    if (!Number.isSafeInteger(this.#generatorConcurrency) || this.#generatorConcurrency <= 0) {
+      throw new TypeError("generatorConcurrency must be a positive safe integer");
+    }
+    this.#generatorPromises = Array.from({ length: this.#generatorConcurrency });
+    this.#generatorTails = Array.from({ length: this.#generatorConcurrency });
     this.#canvasRasterizer = options.canvasRasterizer ?? defaultCanvasRasterizer;
     this.#createMsdfGenerator = options.createMsdfGenerator ?? defaultMsdfGenerator;
   }
@@ -112,8 +123,11 @@ export class RasterGlyphProvider {
     this.#destroyed = true;
     this.#cache.clear();
     this.#pending.clear();
-    const generator = await this.#generatorPromise;
-    await generator?.dispose();
+    await Promise.all(this.#generatorTails.flatMap((tail) => (tail === undefined ? [] : [tail])));
+    const generators = await Promise.all(
+      this.#generatorPromises.flatMap((generator) => (generator === undefined ? [] : [generator])),
+    );
+    await Promise.all(generators.map((generator) => generator.dispose()));
   }
 
   async #createRaster(request: RasterGlyphRequest): Promise<Readonly<GlyphRaster>> {
@@ -127,11 +141,11 @@ export class RasterGlyphProvider {
     if (bytes === undefined) {
       throw new RangeError(`Binary font data is unavailable: ${request.family}`);
     }
-    const generator = await this.#generator();
+    const prepared = prepareGlyphFont(bytes, request.glyphId, request.glyphText);
     const textureSize = nextPowerOfTwo(Math.max(32, Math.ceil(request.fontSize * 2)));
-    const atlas = await generator.generateAtlas({
-      font: bytes,
-      charset: request.glyphText,
+    const atlas = await this.#generateAtlas({
+      font: prepared.bytes,
+      charset: prepared.glyphText,
       fontSize: request.fontSize,
       textureSize: [textureSize, textureSize],
       fieldRange: 4,
@@ -139,19 +153,36 @@ export class RasterGlyphProvider {
       fixOverlaps: true,
     });
 
-    return extractDistanceField(request, atlas);
+    return extractDistanceField(request, atlas, prepared.glyphText);
   }
 
-  async #generator(): Promise<MsdfGeneratorLike> {
-    if (this.#generatorPromise === undefined) {
+  #generateAtlas(options: Readonly<Record<string, unknown>>): Promise<MsdfAtlasLike> {
+    const index = this.#nextGenerator % this.#generatorConcurrency;
+    this.#nextGenerator += 1;
+    const previous = this.#generatorTails[index] ?? Promise.resolve();
+    const work = previous.then(async () => {
+      const generator = await this.#generator(index);
+      return generator.generateAtlas(options);
+    });
+    this.#generatorTails[index] = work.then(
+      () => undefined,
+      () => undefined,
+    );
+    return work;
+  }
+
+  async #generator(index: number): Promise<MsdfGeneratorLike> {
+    let generatorPromise = this.#generatorPromises[index];
+    if (generatorPromise === undefined) {
       this.#generatorStarts += 1;
-      this.#generatorPromise = this.#createMsdfGenerator().then(async (generator) => {
+      generatorPromise = this.#createMsdfGenerator().then(async (generator) => {
         await generator.initialize?.();
         return generator;
       });
+      this.#generatorPromises[index] = generatorPromise;
     }
 
-    return this.#generatorPromise;
+    return generatorPromise;
   }
 
   #assertActive(): void {
@@ -164,9 +195,10 @@ export class RasterGlyphProvider {
 function extractDistanceField(
   request: RasterGlyphRequest,
   atlas: MsdfAtlasLike,
+  generatedGlyphText: string,
 ): Readonly<GlyphRaster> {
   const glyph =
-    atlas.glyphs.find((candidate) => candidate.char === request.glyphText) ?? atlas.glyphs[0];
+    atlas.glyphs.find((candidate) => candidate.char === generatedGlyphText) ?? atlas.glyphs[0];
   if (glyph === undefined) {
     throw new RangeError(`MSDF generator returned no glyph for: ${request.glyphText}`);
   }
@@ -221,7 +253,7 @@ async function defaultCanvasRasterizer(request: RasterGlyphRequest): Promise<Gly
   if (context === null) {
     throw new Error("Canvas 2D context is unavailable");
   }
-  context.font = `${String(request.fontSize)}px ${quoteFamily(request.family)}`;
+  context.font = canvasFont(request);
   const measurement = context.measureText(request.glyphText);
   const padding = Math.max(8, Math.ceil(request.fontSize * 0.25));
   const left = measurement.actualBoundingBoxLeft || 0;
@@ -237,7 +269,7 @@ async function defaultCanvasRasterizer(request: RasterGlyphRequest): Promise<Gly
     throw new Error("Canvas 2D context is unavailable after resize");
   }
   context.clearRect(0, 0, width, height);
-  context.font = `${String(request.fontSize)}px ${quoteFamily(request.family)}`;
+  context.font = canvasFont(request);
   context.textBaseline = "alphabetic";
   context.fillStyle = "white";
   context.fillText(request.glyphText, padding + left, padding + ascent);
@@ -280,6 +312,16 @@ function validateRequest(request: RasterGlyphRequest): void {
   if (typeof request.family !== "string" || request.family.length === 0) {
     throw new TypeError("family must be a non-empty string");
   }
+  if (request.fontFamilies !== undefined) {
+    if (
+      !Array.isArray(request.fontFamilies) ||
+      request.fontFamilies.length === 0 ||
+      request.fontFamilies.some((family) => typeof family !== "string" || family.length === 0) ||
+      request.fontFamilies[0] !== request.family
+    ) {
+      throw new TypeError("fontFamilies must be an ordered stack beginning with family");
+    }
+  }
   if (!Number.isSafeInteger(request.fontRevision) || request.fontRevision < 0) {
     throw new TypeError("fontRevision must be a non-negative safe integer");
   }
@@ -317,12 +359,38 @@ function validateRaster(raster: GlyphRaster, expectedMode: GlyphMode): void {
 function requestCacheKey(request: RasterGlyphRequest): string {
   return [
     request.family,
+    request.fontFamilies?.join("\u0001") ?? "",
     request.fontRevision,
     request.glyphId,
     request.glyphText,
     request.fontSize,
     request.mode,
   ].join("\u0000");
+}
+
+function canvasFont(request: RasterGlyphRequest): string {
+  const families = request.fontFamilies ?? [request.family];
+  return `${String(request.fontSize)}px ${families.map(formatFamily).join(", ")}`;
+}
+
+const CSS_GENERIC_FAMILIES = new Set([
+  "serif",
+  "sans-serif",
+  "monospace",
+  "cursive",
+  "fantasy",
+  "system-ui",
+  "ui-serif",
+  "ui-sans-serif",
+  "ui-monospace",
+  "ui-rounded",
+  "math",
+  "emoji",
+  "fangsong",
+]);
+
+function formatFamily(family: string): string {
+  return CSS_GENERIC_FAMILIES.has(family.toLowerCase()) ? family : quoteFamily(family);
 }
 
 function quoteFamily(family: string): string {

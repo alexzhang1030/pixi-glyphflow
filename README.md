@@ -10,7 +10,8 @@ worker shaping, bounded glyph atlases, dense culling, and first-class pixi-viewp
 - `updatePositions` applies 100,000 packed x/y changes in 3.40 ms p95 on the reference M1 Pro.
 - `updateTextPositions` applies 100,000 text and x/y changes in 14.20 ms p95.
 - `bindViewport` coalesces drag, deceleration, wheel, pinch, zoom, and rotation camera work.
-- HarfBuzz worker shaping covers Arabic, Devanagari, bidi text, feature selection, and clusters.
+- HarfBuzz worker shaping covers CJKV, Arabic, Devanagari, Hebrew, Thai, bidi text, and OpenType features.
+- Binary font registration, recursive fallback aliases, and sparse per-label shaping controls support product-owned typography.
 - Optional accessibility, viewport, shaping, and advanced-rendering subpaths keep entry points focused.
 
 ## Install
@@ -57,24 +58,63 @@ document.body.append(app.canvas);
 
 const labels = new TextLayer({
   renderer: app.renderer,
-  initialCapacity: 100_000,
+  initialCapacity: 1_000_000,
   culling: { bounds: { x: 0, y: 0, width: 1280, height: 720 } },
 });
 app.stage.addChild(labels);
 
 const temperature = labels.create({
-  text: "Shanghai 24 C",
+  text: "上海 24 C",
   x: 24,
   y: 32,
   style: { fontFamily: "Inter", fontSize: 18, fill: 0xffffff },
 });
 
-labels.update(temperature, { text: "Shanghai 25 C" });
+labels.update(temperature, { text: "上海 25 C" });
 await labels.commit();
 ```
 
 Mutations are synchronous. `commit()` publishes the accepted dirty set through one monotonic
 revision and completes associated shaping, atlas, upload, and visibility work.
+
+## Register multilingual fonts
+
+Binary `Uint8Array` and `URL` sources activate HarfBuzz shaping and glyph-ID rasterization. A
+fallback alias expands to an ordered product font stack:
+
+```ts
+await labels.fonts.register({
+  family: "Product CJKV",
+  source: new URL("/fonts/ProductCJKV-VF.ttf", location.href),
+});
+await labels.fonts.register({
+  family: "Product Arabic",
+  source: new Uint8Array(arabicFontBytes),
+});
+labels.fonts.registerFallback("Product multilingual", [
+  "Product CJKV",
+  "Product Arabic",
+  "system-ui",
+  "sans-serif",
+]);
+
+labels.create({
+  text: "繁體中文 · 臺北",
+  style: { fontFamily: "Product multilingual", fontSize: 20 },
+  shaping: {
+    language: "zh-TW",
+    script: "Hant",
+    features: ["kern", "liga"],
+    variations: { wght: 560 },
+  },
+});
+await labels.commit();
+```
+
+`shaping` also accepts `direction`, so one sparse label override can select RTL layout or a
+language-specific CJK glyph form while the million-label fixed store remains compact. See
+[Fonts and shaping](docs/fonts.md) for CJKV routing, fallback behavior, and explicit Vite MSDF
+assets.
 
 ## Bind pixi-viewport
 

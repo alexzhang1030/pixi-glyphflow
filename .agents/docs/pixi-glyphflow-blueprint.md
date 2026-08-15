@@ -21,7 +21,7 @@ Version 1.0 succeeds when applications can:
 - retain and render 1,000,000 labels through one TextLayer, including a full-visibility stress fixture with 8,000,000 representative glyphs;
 - update dynamic strings and transforms through stable label identities and one commit boundary;
 - sustain viewport drag, deceleration, wheel zoom, pinch zoom, camera rotation, and 100,000 real position mutations per commit;
-- use Latin, CJK, Arabic, Devanagari, emoji, bidirectional text, OpenType features, and font fallback;
+- use Latin, CJKV regional forms, Arabic, Devanagari, Hebrew, Thai, emoji, bidirectional text, OpenType features, and font fallback;
 - choose prebuilt bitmap fonts, dynamic browser rasterization, or registered binary fonts;
 - observe renderer, shaping, cache, atlas, culling, draw, upload, and fallback behavior;
 - install the public package with PixiJS as its only required peer dependency.
@@ -109,6 +109,8 @@ Each label source revision advances for text or style changes. Transform-only up
 
 Binary font registration loads HarfBuzz on demand. A system-font path uses PixiJS bitmap-font layout and browser rasterization. A prebuilt font path reuses supplied SDF, MSDF, alpha, or color pages.
 
+Fallback aliases expand recursively and preserve their declared order. Binary candidates must cover every glyph in a shaped label. Language, script, direction, feature, and variation overrides live in a sparse TextId side table so the million-label fixed store keeps its reference-slot budget.
+
 ### Trusted run operation
 
 High-frequency producers may submit an immutable TrustedGlyphRun containing glyph IDs, positioned advances, cluster boundaries, exact bounds, font revision, and atlas identity. The caller owns validation before submission. The layer adopts the typed arrays in constant time until their label changes or disappears.
@@ -174,7 +176,7 @@ The layout cache key additionally contains:
     wrap width + line height + alignment + letter spacing
     + word break + maximum lines + ellipsis policy
 
-HarfBuzz runs in a worker for registered binary fonts and returns transferable typed arrays. The browser bitmap path serves system fonts and color grapheme clusters. Prebuilt bitmap fonts serve the lowest-startup-cost path.
+HarfBuzz runs in a worker for registered binary fonts and returns transferable typed arrays. The browser bitmap path serves system fonts and color grapheme clusters. Prebuilt bitmap fonts serve the lowest-startup-cost path. Dynamic MSDF rasterization uses exact HarfBuzz glyph IDs, remaps contextual or localized alternates in temporary font clones, and serializes mutable font state inside each worker.
 
 Every async request carries label generation, label revision, font revision, shaping key, layout key, atlas generation, and destination identity. A complete previous generation remains visible until the replacement commits at a frame boundary.
 

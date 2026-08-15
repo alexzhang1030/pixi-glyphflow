@@ -1,6 +1,7 @@
 import type { BLEND_MODES, PointData, Renderer, TextStyleOptions } from "pixi.js";
 
 import type { BoundsData, MutableBoundsData, PointLike } from "./culling/types";
+import type { TextDirection } from "./layout/types";
 import type { RenderCoordinatorOptions } from "./render/RenderCoordinator";
 
 declare const textIdBrand: unique symbol;
@@ -33,6 +34,20 @@ export interface TextLayerCullingOptions {
   readonly bounds?: BoundsData;
 }
 
+/** Optional shaping controls for multilingual and variable-font labels. */
+export interface TextShapingOptions {
+  /** Explicit inline direction. HarfBuzz detects direction when omitted. */
+  readonly direction?: TextDirection;
+  /** BCP 47 language tag used for language-specific glyph selection. */
+  readonly language?: string;
+  /** ISO 15924 script tag such as Latn, Hans, Hant, Jpan, or Kore. */
+  readonly script?: string;
+  /** HarfBuzz/OpenType feature strings such as kern=0 or liga. */
+  readonly features?: readonly string[];
+  /** OpenType variable-font axis coordinates keyed by axis tag. */
+  readonly variations?: Readonly<Record<string, number>>;
+}
+
 /** Label state accepted by {@link TextLayer.create}. */
 export interface TextLabelSpec {
   /** Text content. Empty strings remain valid labels. */
@@ -61,10 +76,15 @@ export interface TextLabelSpec {
   readonly anchor?: PointData | number;
   /** PixiJS text style options captured by value. */
   readonly style?: Readonly<TextStyleOptions>;
+  /** Language, script, direction, OpenType feature, and variation controls. */
+  readonly shaping?: Readonly<TextShapingOptions>;
 }
 
 /** Mutable fields accepted by {@link TextLayer.update}. */
-export type TextLabelPatch = Partial<TextLabelSpec>;
+export type TextLabelPatch = Partial<Omit<TextLabelSpec, "shaping">> & {
+  /** Replacement shaping controls. Null clears a previous override. */
+  readonly shaping?: Readonly<TextShapingOptions> | null;
+};
 
 /** Immutable label state returned by {@link TextLayer.get}. */
 export interface TextLabelSnapshot {
@@ -82,6 +102,7 @@ export interface TextLabelSnapshot {
   readonly visible: boolean;
   readonly anchor: Readonly<PointData>;
   readonly style: Readonly<TextStyleOptions>;
+  readonly shaping?: Readonly<TextShapingOptions>;
 }
 
 /** One entry accepted by {@link TextLayer.updateMany}. */
@@ -120,6 +141,7 @@ export interface TextLayerStats {
   readonly lastCommitTransformLabels: number;
   readonly lastCommitStyleLabels: number;
   readonly glyphCount: number;
+  readonly pendingGlyphCount: number;
   readonly shapedLabels: number;
   readonly transformOnlyLabels: number;
   readonly removedRenderLabels: number;

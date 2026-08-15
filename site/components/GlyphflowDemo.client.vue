@@ -1,18 +1,73 @@
 <script setup lang="ts">
-import { TextLayer, type TextId, type TextLabelSpec } from "pixi-glyphflow";
+import { MSDF } from "@zappar/msdf-generator";
+import msdfWasmUrl from "@zappar/msdf-generator/msdfgen_wasm.wasm?url";
+import msdfWorkerUrl from "@zappar/msdf-generator/worker.js?worker&url";
+import {
+  TextLayer,
+  type TextId,
+  type TextLabelSpec,
+  type TextShapingOptions,
+} from "pixi-glyphflow";
 import { bindViewport, type ViewportBinding } from "pixi-glyphflow/viewport";
 import { Viewport } from "pixi-viewport";
 import { Application, type TextStyleOptions } from "pixi.js";
 import { computed, onBeforeUnmount, onMounted, ref } from "vue";
 
-const LABEL_COUNT = 20_000;
-const MOVING_COUNT = 2_000;
-const COLUMNS = 200;
-const COLUMN_SPACING = 44;
-const ROW_SPACING = 26;
-const CHUNK_SIZE = 2_000;
+const LABEL_COUNT = 1_000_000;
+const MOVING_COUNT = 100_000;
+const COLUMNS = 1_000;
+const COLUMN_SPACING = 152;
+const ROW_SPACING = 30;
+const CHUNK_SIZE = 25_000;
 const STORM_INTERVAL_MS = 100;
 const INITIAL_ZOOM = 0.24;
+const MULTILINGUAL_STACK = "Glyphflow multilingual";
+const SHOWCASE_ROW_INTERVAL = 64;
+const CUSTOM_FONTS = Object.freeze([
+  { family: "Glyphflow CJKV Demo", url: "/fonts/noto-sans-cjkv-demo.ttf" },
+  { family: "Glyphflow Arabic Demo", url: "/fonts/noto-sans-arabic-demo.ttf" },
+  { family: "Glyphflow Devanagari Demo", url: "/fonts/noto-sans-devanagari-demo.ttf" },
+  { family: "Glyphflow Hebrew Demo", url: "/fonts/noto-sans-hebrew-demo.ttf" },
+  { family: "Glyphflow Thai Demo", url: "/fonts/noto-sans-thai-demo.ttf" },
+]);
+const SYSTEM_FONT_FAMILIES = Object.freeze([
+  "system-ui",
+  "PingFang SC",
+  "Hiragino Sans",
+  "Apple SD Gothic Neo",
+  "Geeza Pro",
+  "Kohinoor Devanagari",
+  "Arial Hebrew",
+  "Thonburi",
+  "Arial Unicode MS",
+  "sans-serif",
+]);
+
+interface LanguageSample {
+  readonly text: string;
+  readonly custom: boolean;
+  readonly shaping?: Readonly<TextShapingOptions>;
+}
+
+interface LoadedFontAsset {
+  readonly family: string;
+  readonly bytes: Uint8Array;
+}
+
+const LANGUAGE_SAMPLES: readonly Readonly<LanguageSample>[] = Object.freeze([
+  sample("简体中文 · 上海字流", true, "zh-CN", "Hans"),
+  sample("繁體中文 · 臺北字型", true, "zh-TW", "Hant"),
+  sample("日本語 · 東京テキスト", true, "ja", "Jpan"),
+  sample("한국어 · 서울글리프", true, "ko", "Kore"),
+  sample("Tiếng Việt · Hà Nội", true, "vi", "Latn"),
+  sample("العربية · مرحبا", true, "ar", "Arab", "rtl"),
+  sample("हिन्दी · नमस्ते", true, "hi", "Deva"),
+  sample("עברית · שלום", true, "he", "Hebr", "rtl"),
+  sample("ไทย · สวัสดี", true, "th", "Thai"),
+  sample("Русский · Привет", true, "ru", "Cyrl"),
+  sample("Ελληνικά · Γεια", true, "el", "Grek"),
+  Object.freeze({ text: "Emoji · 🌏 ✦", custom: false }),
+]);
 const numberFormat = new Intl.NumberFormat("en-US");
 
 type RendererBackend = "webgl" | "webgpu";
@@ -22,6 +77,7 @@ const canvasHost = ref<HTMLElement>();
 const state = ref<"booting" | "ready" | "error">("booting");
 const errorMessage = ref("");
 const loadedPercent = ref(0);
+const bootStage = ref("Allocating labels");
 const requestedBackend = ref<RendererBackend>("webgl");
 const activeBackend = ref<RendererBackend>();
 const webGpuCapability = ref<WebGpuCapability>("checking");
@@ -29,11 +85,14 @@ const stormEnabled = ref(true);
 const rotationDegrees = ref(0);
 const resident = ref("0");
 const visible = ref("0");
+const pendingGlyphs = ref(0);
 const revision = ref("0");
 const glyphs = ref("0");
 const updateDuration = ref("0.00 ms");
 const viewportDuration = ref("0.00 ms");
 const fps = ref("0");
+const fontStatus = ref("Loading custom fonts");
+const fontFootprint = ref("0 KiB");
 const rendererName = computed(() => formatRenderer(activeBackend.value ?? requestedBackend.value));
 
 const webGpuCapabilityLabel = computed(() => {
@@ -45,7 +104,7 @@ const webGpuCapabilityLabel = computed(() => {
 const stateLabel = computed(() => {
   if (state.value === "ready") return `${rendererName.value} live`;
   if (state.value === "error") return "Error";
-  return `Loading ${loadedPercent.value}%`;
+  return `${bootStage.value} · ${loadedPercent.value}%`;
 });
 
 let app: Application | undefined;
@@ -63,6 +122,7 @@ let stormPending = false;
 let demoVisible = true;
 let destroyed = false;
 let rendererRun = 0;
+let customFontsPromise: Promise<readonly Readonly<LoadedFontAsset>[]> | undefined;
 
 onMounted(() => {
   stormEnabled.value = !window.matchMedia("(prefers-reduced-motion: reduce)").matches;
@@ -139,13 +199,17 @@ function updateRendererQuery(backend: RendererBackend): void {
 
 function resetHud(): void {
   loadedPercent.value = 0;
+  bootStage.value = "Allocating labels";
   resident.value = "0";
   visible.value = "0";
+  pendingGlyphs.value = 0;
   revision.value = "0";
   glyphs.value = "0";
   updateDuration.value = "0.00 ms";
   viewportDuration.value = "0.00 ms";
   fps.value = "0";
+  fontStatus.value = "Loading custom fonts";
+  fontFootprint.value = "0 KiB";
   rotationDegrees.value = 0;
 }
 
@@ -177,7 +241,10 @@ async function initialize(backend: RendererBackend, runId: number): Promise<void
   nextApp.stop();
   nextApp.canvas.className = "demo-canvas-element";
   nextApp.canvas.setAttribute("role", "img");
-  nextApp.canvas.setAttribute("aria-label", "Twenty thousand interactive glyph labels");
+  nextApp.canvas.setAttribute(
+    "aria-label",
+    "One million interactive multilingual glyph labels rendered with custom CJKV and system fallback fonts",
+  );
   host.appendChild(nextApp.canvas);
 
   const worldWidth = COLUMNS * COLUMN_SPACING;
@@ -208,12 +275,32 @@ async function initialize(backend: RendererBackend, runId: number): Promise<void
   const nextLayer = new TextLayer({
     renderer: nextApp.renderer,
     initialCapacity: LABEL_COUNT,
+    rendering: {
+      rasterizerOptions: {
+        createMsdfGenerator: () =>
+          Promise.resolve(new MSDF({ workerUrl: msdfWorkerUrl, wasmUrl: msdfWasmUrl })),
+      },
+    },
     culling: {
       bounds: { x: 0, y: 0, width: nextApp.screen.width, height: nextApp.screen.height },
       padding: 48,
     },
   });
   layer = nextLayer;
+  const customFontAssets = await loadCustomFonts();
+  const customFonts = await Promise.all(
+    customFontAssets.map((asset) =>
+      nextLayer.fonts.register({ family: asset.family, source: asset.bytes }),
+    ),
+  );
+  nextLayer.fonts.registerFallback(MULTILINGUAL_STACK, [
+    ...CUSTOM_FONTS.map((font) => font.family),
+    ...SYSTEM_FONT_FAMILIES,
+  ]);
+  fontStatus.value = "5 custom fonts ready";
+  fontFootprint.value = `${Math.round(
+    customFonts.reduce((total, font) => total + font.bytes, 0) / 1_024,
+  ).toString()} KiB`;
   const nextBinding = bindViewport(nextLayer, nextViewport, {
     addChild: true,
     immediate: true,
@@ -225,12 +312,17 @@ async function initialize(backend: RendererBackend, runId: number): Promise<void
   movingIds = new Float64Array(MOVING_COUNT);
   firstPositions = new Float32Array(MOVING_COUNT * 2);
   secondPositions = new Float32Array(MOVING_COUNT * 2);
-  const words = ["FLOW", "NODE", "GLYPH", "24ms"] as const;
-  const style: Readonly<TextStyleOptions> = Object.freeze({
-    fontFamily: "Arial",
-    fontSize: 12,
+  const customStyle: Readonly<TextStyleOptions> = Object.freeze({
+    fontFamily: MULTILINGUAL_STACK,
+    fontSize: 14,
     fontWeight: "500",
-    fill: 0xdde8f0,
+    fill: 0xe8f6ff,
+  });
+  const fallbackStyle: Readonly<TextStyleOptions> = Object.freeze({
+    fontFamily: MULTILINGUAL_STACK,
+    fontSize: 13,
+    fontWeight: "500",
+    fill: 0x9fb3c0,
   });
   let movingIndex = 0;
 
@@ -239,11 +331,14 @@ async function initialize(backend: RendererBackend, runId: number): Promise<void
     const count = Math.min(CHUNK_SIZE, LABEL_COUNT - start);
     const specs = Array.from({ length: count }, (_, localIndex): TextLabelSpec => {
       const index = start + localIndex;
+      const { sample, showcase } = resolveLanguageSample(index);
+      if (sample === undefined) throw new Error("Language sample list is empty");
       return {
-        text: words[index % words.length] ?? "FLOW",
+        text: sample.text,
         x: (index % COLUMNS) * COLUMN_SPACING,
         y: Math.floor(index / COLUMNS) * ROW_SPACING,
-        style,
+        style: sample.custom ? customStyle : fallbackStyle,
+        ...(showcase && sample.shaping !== undefined ? { shaping: sample.shaping } : {}),
       };
     });
     const ids = nextLayer.createMany(specs);
@@ -259,7 +354,22 @@ async function initialize(backend: RendererBackend, runId: number): Promise<void
     await nextFrame();
   }
 
-  await nextLayer.commit();
+  bootStage.value = "Shaping visible labels";
+  const initialCommit = nextLayer.commit();
+  resident.value = numberFormat.format(nextLayer.stats.labelCount);
+  visible.value = numberFormat.format(nextLayer.stats.visibleLabelCount);
+  bootStage.value = `Rasterizing ${visible.value} visible labels`;
+  const glyphProgress = window.setInterval(() => {
+    const pending = nextLayer.stats.pendingGlyphCount;
+    pendingGlyphs.value = pending;
+    if (pending > 0) bootStage.value = `Rasterizing ${numberFormat.format(pending)} unique glyphs`;
+  }, 250);
+  try {
+    await initialCommit;
+  } finally {
+    window.clearInterval(glyphProgress);
+  }
+  pendingGlyphs.value = nextLayer.stats.pendingGlyphCount;
   nextViewport.emit("frame-end", nextViewport);
   await nextBinding.whenIdle();
   if (isStale(runId)) return;
@@ -486,6 +596,63 @@ function formatRenderer(value: string): string {
 function nextFrame(): Promise<void> {
   return new Promise((resolve) => window.requestAnimationFrame(() => resolve()));
 }
+
+function sample(
+  text: string,
+  custom: boolean,
+  language: string,
+  script: string,
+  direction: "ltr" | "rtl" = "ltr",
+): Readonly<LanguageSample> {
+  return Object.freeze({
+    text,
+    custom,
+    shaping: Object.freeze({
+      direction,
+      language,
+      script,
+      features: Object.freeze(["kern", "liga"]),
+      ...(custom ? { variations: Object.freeze({ wght: 560 }) } : {}),
+    }),
+  });
+}
+
+function resolveLanguageSample(
+  index: number,
+): Readonly<{ sample: Readonly<LanguageSample> | undefined; showcase: boolean }> {
+  const row = Math.floor(index / COLUMNS);
+  const column = index % COLUMNS;
+  const showcaseStart = Math.floor((COLUMNS - LANGUAGE_SAMPLES.length) / 2);
+  const showcaseIndex = column - showcaseStart;
+  const showcase =
+    row % SHOWCASE_ROW_INTERVAL === 0 &&
+    showcaseIndex >= 0 &&
+    showcaseIndex < LANGUAGE_SAMPLES.length;
+  return Object.freeze({
+    sample: showcase
+      ? LANGUAGE_SAMPLES[showcaseIndex]
+      : LANGUAGE_SAMPLES[index % LANGUAGE_SAMPLES.length],
+    showcase,
+  });
+}
+
+async function loadCustomFonts(): Promise<readonly Readonly<LoadedFontAsset>[]> {
+  customFontsPromise ??= Promise.all(
+    CUSTOM_FONTS.map(async (font) => {
+      const response = await fetch(font.url);
+      if (!response.ok) {
+        throw new Error(
+          `Custom font request failed with ${String(response.status)} ${response.statusText}: ${font.family}`,
+        );
+      }
+      return Object.freeze({
+        family: font.family,
+        bytes: new Uint8Array(await response.arrayBuffer()),
+      });
+    }),
+  ).then((fonts) => Object.freeze(fonts));
+  return customFontsPromise;
+}
 </script>
 
 <template>
@@ -494,12 +661,13 @@ function nextFrame(): Promise<void> {
     data-testid="glyphflow-demo"
     :data-demo-state="state"
     :data-renderer-backend="activeBackend"
+    :data-pending-glyphs="pendingGlyphs"
     aria-labelledby="demo-title"
   >
     <header class="demo-header">
       <div>
-        <p class="demo-kicker">LIVE RENDER PATH</p>
-        <h2 id="demo-title">Viewport pressure test</h2>
+        <p class="demo-kicker">LIVE WEBGL / WEBGPU · CUSTOM CJKV FONT</p>
+        <h2 id="demo-title">Multilingual viewport pressure test</h2>
       </div>
       <div class="demo-header-actions">
         <fieldset class="renderer-picker">
@@ -544,7 +712,7 @@ function nextFrame(): Promise<void> {
       @keydown="handleKeyboard"
     >
       <div v-if="state !== 'ready'" class="demo-loading">
-        <p>{{ state === "error" ? "Renderer setup failed" : "Building the scene" }}</p>
+        <p>{{ state === "error" ? "Renderer setup failed" : bootStage }}</p>
         <span>{{
           state === "error" ? errorMessage : `${loadedPercent}% of labels allocated`
         }}</span>
@@ -587,6 +755,14 @@ function nextFrame(): Promise<void> {
           <dd>
             <span data-testid="renderer-adapter">{{ rendererName }}</span> · {{ fps }} FPS
           </dd>
+        </div>
+        <div>
+          <dt>Font pipeline</dt>
+          <dd data-testid="custom-font-status">{{ fontStatus }}</dd>
+        </div>
+        <div>
+          <dt>Font / samples</dt>
+          <dd>{{ fontFootprint }} · {{ LANGUAGE_SAMPLES.length }} samples</dd>
         </div>
       </dl>
 

@@ -41,6 +41,7 @@ import type {
   TextLayerRenderingOptions,
   TextLayerStats,
   TextRevision,
+  TextShapingOptions,
   TextUpdate,
 } from "./types";
 
@@ -59,6 +60,7 @@ export class TextLayer extends Container {
   readonly #store: TextStore;
   readonly #spatial: SpatialIndex;
   readonly #trustedRuns = new Map<TextId, TrustedGlyphRun>();
+  readonly #shaping = new Map<TextId, Readonly<TextShapingOptions>>();
   #revision = 0;
   #pendingMutations = 0;
   #acceptedMutations = 0;
@@ -136,8 +138,10 @@ export class TextLayer extends Container {
   create(spec: TextLabelSpec): TextId {
     this.#assertActive();
     assertLabelSpec(spec);
+    const shaping = normalizeShapingOptions(spec.shaping);
     const label = normalizeLabel(spec, this.#labelScratch);
     const id = this.#store.create(label);
+    if (shaping !== undefined) this.#shaping.set(id, shaping);
     this.#indexLabel(id, label);
     this.#visibilityDirty = true;
     this.#recordMutation(ALL_DIRTY, 1);
@@ -151,14 +155,19 @@ export class TextLayer extends Container {
     for (const spec of specs) {
       assertLabelSpec(spec);
     }
+    const shapings = specs.map((spec) => normalizeShapingOptions(spec.shaping));
     this.#store.reserve(specs.length);
     this.#spatial.reserve(this.#store.capacity);
 
     const ids: TextId[] = [];
-    for (const spec of specs) {
+    for (let index = 0; index < specs.length; index += 1) {
+      const spec = specs[index];
+      if (spec === undefined) throw new TypeError(`Missing label at index ${String(index)}`);
       const label = normalizeLabel(spec, this.#labelScratch);
       const id = this.#store.create(label);
       ids.push(id);
+      const shaping = shapings[index];
+      if (shaping !== undefined) this.#shaping.set(id, shaping);
       this.#indexLabel(id, label);
     }
     if (ids.length > 0) this.#visibilityDirty = true;
@@ -175,6 +184,7 @@ export class TextLayer extends Container {
       return undefined;
     }
 
+    const shaping = this.#shaping.get(id);
     return Object.freeze({
       id: snapshot.id,
       sourceRevision: snapshot.sourceRevision,
@@ -190,6 +200,7 @@ export class TextLayer extends Container {
       visible: snapshot.visible,
       anchor: Object.freeze({ x: snapshot.anchorX, y: snapshot.anchorY }),
       style: snapshot.style,
+      ...(shaping === undefined ? {} : { shaping }),
     });
   }
 
@@ -203,7 +214,21 @@ export class TextLayer extends Container {
   update(id: TextId, patch: TextLabelPatch): boolean {
     this.#assertActive();
     assertLabelPatch(patch);
-    const dirty = this.#store.update(id, normalizePatch(patch));
+    const shapingPatch = normalizeShapingPatch(patch);
+    const nextShaping = shapingPatch === null ? undefined : shapingPatch;
+    const shapingChanged =
+      shapingPatch !== undefined && !equalShaping(this.#shaping.get(id), nextShaping);
+    let dirty = this.#store.update(id, normalizePatch(patch));
+    if (shapingChanged) {
+      if ((dirty & (TextDirty.Content | TextDirty.Style)) !== 0) {
+        this.#store.markDirty(id, TextDirty.Style);
+      } else {
+        this.#store.markSourceDirty(id, TextDirty.Style);
+      }
+      if (nextShaping === undefined) this.#shaping.delete(id);
+      else this.#shaping.set(id, nextShaping);
+      dirty |= TextDirty.Style;
+    }
     if (dirty !== TextDirty.None) {
       const snapshot = this.#store.get(id);
       if (snapshot === undefined) throw new Error("Updated label disappeared from its store");
@@ -229,6 +254,7 @@ export class TextLayer extends Container {
     if (this.#bulkSlots.length < entries.length) {
       this.#bulkSlots = growTypedArray(this.#bulkSlots, nextPowerOfTwo(entries.length));
     }
+    const shapingPatches: NormalizedShapingPatch[] = [];
     for (let index = 0; index < entries.length; index += 1) {
       const entry = entries[index];
       if (entry === undefined) throw new TypeError(`Missing update at index ${String(index)}`);
@@ -237,6 +263,7 @@ export class TextLayer extends Container {
         throw new RangeError(`Unknown or stale TextId: ${String(entry.id)}`);
       }
       assertLabelPatch(entry.patch);
+      shapingPatches[index] = normalizeShapingPatch(entry.patch);
       this.#bulkSlots[index] = slot;
     }
 
@@ -249,7 +276,21 @@ export class TextLayer extends Container {
       if (entry === undefined || slot === undefined) {
         throw new Error(`Validated update is unavailable at index ${String(index)}`);
       }
-      const entryDirty = this.#store.updateAt(slot, normalizePatch(entry.patch));
+      let entryDirty = this.#store.updateAt(slot, normalizePatch(entry.patch));
+      const shapingPatch = shapingPatches[index];
+      const nextShaping = shapingPatch === null ? undefined : shapingPatch;
+      const shapingChanged =
+        shapingPatch !== undefined && !equalShaping(this.#shaping.get(entry.id), nextShaping);
+      if (shapingChanged) {
+        if ((entryDirty & (TextDirty.Content | TextDirty.Style)) !== 0) {
+          this.#store.markDirty(entry.id, TextDirty.Style);
+        } else {
+          this.#store.markSourceDirty(entry.id, TextDirty.Style);
+        }
+        if (nextShaping === undefined) this.#shaping.delete(entry.id);
+        else this.#shaping.set(entry.id, nextShaping);
+        entryDirty |= TextDirty.Style;
+      }
       if (entryDirty !== TextDirty.None) {
         changed += 1;
         dirty |= entryDirty;
@@ -323,6 +364,7 @@ export class TextLayer extends Container {
       if (slot === undefined) throw new Error("Removed label slot is unavailable");
       this.#spatial.remove(slot);
       this.#trustedRuns.delete(id);
+      this.#shaping.delete(id);
       this.#visibilityDirty = true;
     }
     this.#recordMutation(ALL_DIRTY, Number(removed));
@@ -341,6 +383,7 @@ export class TextLayer extends Container {
         if (slot === undefined) throw new Error("Removed label slot is unavailable");
         this.#spatial.remove(slot);
         this.#trustedRuns.delete(currentId);
+        this.#shaping.delete(currentId);
         removed += 1;
       }
     }
@@ -358,6 +401,7 @@ export class TextLayer extends Container {
       this.#store.clear();
       this.#spatial.clear();
       this.#trustedRuns.clear();
+      this.#shaping.clear();
       this.#visibilityDirty = true;
       this.#recordMutation(ALL_DIRTY, removed);
     }
@@ -622,6 +666,7 @@ export class TextLayer extends Container {
       lastCommitTransformLabels: this.#lastCommitTransformLabels,
       lastCommitStyleLabels: this.#lastCommitStyleLabels,
       glyphCount: render?.glyphs ?? 0,
+      pendingGlyphCount: render?.pendingGlyphs ?? 0,
       shapedLabels: render?.shapedLabels ?? 0,
       transformOnlyLabels: render?.transformOnlyLabels ?? 0,
       removedRenderLabels: render?.removedLabels ?? 0,
@@ -652,6 +697,7 @@ export class TextLayer extends Container {
     this.#renderCoordinator?.destroy();
     this.#renderCoordinator = undefined;
     this.fonts.destroy();
+    this.#shaping.clear();
     this.#spatial.destroy();
     this.#store.dispose();
     super.destroy(options);
@@ -756,7 +802,7 @@ export class TextLayer extends Container {
       changes.push({
         slot,
         mask: wasRendered ? dirtyMask : ALL_DIRTY,
-        snapshot: toRenderSnapshot(snapshot, order),
+        snapshot: toRenderSnapshot(snapshot, order, this.#shaping.get(snapshot.id)),
         ...(trustedRun === undefined ? {} : { trustedRun }),
       });
     }
@@ -855,6 +901,7 @@ function normalizeLabel(
 function toRenderSnapshot(
   snapshot: Readonly<TextStoreSnapshot>,
   order: number,
+  shaping: Readonly<TextShapingOptions> | undefined,
 ): Readonly<RenderLabelSnapshot> {
   return Object.freeze({
     sourceRevision: snapshot.sourceRevision,
@@ -872,7 +919,66 @@ function toRenderSnapshot(
     anchorX: snapshot.anchorX,
     anchorY: snapshot.anchorY,
     style: snapshot.style,
+    ...(shaping === undefined ? {} : { shaping }),
   });
+}
+
+type NormalizedShapingPatch = Readonly<TextShapingOptions> | null | undefined;
+
+function normalizeShapingPatch(patch: TextLabelPatch): NormalizedShapingPatch {
+  if (patch.shaping === undefined) return undefined;
+  if (patch.shaping === null) return null;
+  return normalizeShapingOptions(patch.shaping) ?? null;
+}
+
+function normalizeShapingOptions(
+  shaping: Readonly<TextShapingOptions> | undefined,
+): Readonly<TextShapingOptions> | undefined {
+  if (shaping === undefined) return undefined;
+  const normalized: {
+    direction?: NonNullable<TextShapingOptions["direction"]>;
+    language?: string;
+    script?: string;
+    features?: readonly string[];
+    variations?: Readonly<Record<string, number>>;
+  } = {};
+  if (shaping.direction !== undefined) normalized.direction = shaping.direction;
+  if (shaping.language !== undefined) normalized.language = shaping.language.trim();
+  if (shaping.script !== undefined) normalized.script = shaping.script;
+  if (shaping.features !== undefined) normalized.features = Object.freeze([...shaping.features]);
+  if (shaping.variations !== undefined) {
+    normalized.variations = Object.freeze({ ...shaping.variations });
+  }
+  return Object.keys(normalized).length === 0 ? undefined : Object.freeze(normalized);
+}
+
+function equalShaping(
+  left: Readonly<TextShapingOptions> | undefined,
+  right: Readonly<TextShapingOptions> | undefined,
+): boolean {
+  if (left === right) return true;
+  if (left === undefined || right === undefined) return false;
+  if (
+    left.direction !== right.direction ||
+    left.language !== right.language ||
+    left.script !== right.script
+  ) {
+    return false;
+  }
+  const leftFeatures = left.features ?? [];
+  const rightFeatures = right.features ?? [];
+  if (
+    leftFeatures.length !== rightFeatures.length ||
+    leftFeatures.some((value, index) => value !== rightFeatures[index])
+  ) {
+    return false;
+  }
+  const leftVariations = Object.entries(left.variations ?? {});
+  const rightVariations = right.variations ?? {};
+  return (
+    leftVariations.length === Object.keys(rightVariations).length &&
+    leftVariations.every(([axis, value]) => rightVariations[axis] === value)
+  );
 }
 
 function normalizePatch(patch: TextLabelPatch): TextStoreLabelPatch {
@@ -921,6 +1027,9 @@ function assertLabelSpec(spec: TextLabelSpec): void {
   if (typeof spec.text !== "string") {
     throw new TypeError("Label text must be a string");
   }
+  if (spec.shaping === null) {
+    throw new TypeError("Label shaping must be an object");
+  }
   assertLabelPatch(spec);
 }
 
@@ -946,6 +1055,56 @@ function assertLabelPatch(patch: TextLabelPatch): void {
   if (patch.anchor !== undefined) readPoint(patch.anchor, 0);
   if (patch.style !== undefined && (typeof patch.style !== "object" || patch.style === null)) {
     throw new TypeError("style must be an object");
+  }
+  if (patch.shaping !== undefined && patch.shaping !== null) {
+    assertShapingOptions(patch.shaping);
+  }
+}
+
+function assertShapingOptions(shaping: Readonly<TextShapingOptions>): void {
+  if (typeof shaping !== "object" || shaping === null || Array.isArray(shaping)) {
+    throw new TypeError("shaping must be an object");
+  }
+  if (
+    shaping.direction !== undefined &&
+    shaping.direction !== "ltr" &&
+    shaping.direction !== "rtl"
+  ) {
+    throw new TypeError("shaping.direction must be ltr or rtl");
+  }
+  if (
+    shaping.language !== undefined &&
+    (typeof shaping.language !== "string" || shaping.language.trim().length === 0)
+  ) {
+    throw new TypeError("shaping.language must be a non-empty language tag");
+  }
+  if (
+    shaping.script !== undefined &&
+    (typeof shaping.script !== "string" || !/^[A-Za-z]{4}$/.test(shaping.script))
+  ) {
+    throw new TypeError("shaping.script must be a four-letter ISO 15924 tag");
+  }
+  if (
+    shaping.features !== undefined &&
+    (!Array.isArray(shaping.features) ||
+      shaping.features.some(
+        (feature) => typeof feature !== "string" || feature.trim().length === 0,
+      ))
+  ) {
+    throw new TypeError("shaping.features must contain non-empty OpenType feature strings");
+  }
+  if (
+    shaping.variations !== undefined &&
+    (typeof shaping.variations !== "object" ||
+      shaping.variations === null ||
+      Array.isArray(shaping.variations))
+  ) {
+    throw new TypeError("shaping.variations must be an axis record");
+  }
+  for (const [axis, value] of Object.entries(shaping.variations ?? {})) {
+    if (!/^[\x20-\x7e]{4}$/.test(axis) || !Number.isFinite(value)) {
+      throw new TypeError("shaping.variations must map valid axis tags to finite values");
+    }
   }
 }
 

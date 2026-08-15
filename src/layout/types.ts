@@ -13,6 +13,8 @@ export interface PositionedRun {
   readonly source: "bitmap" | "harfbuzz" | "trusted";
   readonly text: string;
   readonly fontFamily: string;
+  /** Ordered CSS family stack retained for bitmap/canvas glyph fallback. */
+  readonly fontFamilies?: readonly string[];
   readonly fontRevision: number;
   readonly glyphCount: number;
   readonly direction: TextDirection;
@@ -31,6 +33,8 @@ export interface BitmapLayoutInput {
   readonly text: string;
   readonly style: Readonly<TextStyleOptions>;
   readonly fontRevision?: number;
+  /** Registry-wide revision used to invalidate expanded fallback layouts. */
+  readonly cacheRevision?: number;
   readonly direction?: TextDirection;
   readonly trimEnd?: boolean;
   readonly maxLines?: number;

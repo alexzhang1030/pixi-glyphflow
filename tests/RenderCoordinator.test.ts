@@ -6,6 +6,7 @@ import {
   type GlyphRaster,
   type RasterGlyphRequest,
   type RenderChange,
+  type TextLayoutInput,
 } from "../src/advanced";
 
 const CONTENT = 1;
@@ -18,11 +19,14 @@ describe("RenderCoordinator", () => {
     await registry.register({ family: "Fixture" });
     let layoutCalls = 0;
     let rasterCalls = 0;
+    let rasterFamilies: readonly string[] | undefined;
+    let layoutInput: TextLayoutInput | undefined;
     const coordinator = new RenderCoordinator({
       registry,
       layoutEngine: {
         async layout(_slot, _revision, input) {
           layoutCalls += 1;
+          layoutInput = input;
           return run(input.text);
         },
         destroy() {},
@@ -30,6 +34,7 @@ describe("RenderCoordinator", () => {
       glyphProvider: {
         async rasterize(_request: RasterGlyphRequest): Promise<GlyphRaster> {
           rasterCalls += 1;
+          rasterFamilies = _request.fontFamilies;
           return {
             mode: "alpha",
             width: 4,
@@ -44,7 +49,16 @@ describe("RenderCoordinator", () => {
       instanceOptions: { initialCapacity: 4 },
       transformOptions: { initialCapacity: 4, textureWidth: 4 },
     });
-    const first = label(1, 10, 20);
+    const first = {
+      ...label(1, 10, 20),
+      shaping: {
+        direction: "rtl" as const,
+        language: "ar",
+        script: "Arab",
+        features: Object.freeze(["kern"]),
+        variations: Object.freeze({ wght: 520 }),
+      },
+    };
 
     const initial = await coordinator.commit(1, [
       { slot: 0, mask: CONTENT | TRANSFORM | STYLE, snapshot: first },
@@ -53,6 +67,14 @@ describe("RenderCoordinator", () => {
     expect(coordinator.instances.getRange(0)).toEqual({ offset: 0, count: 2, capacity: 2 });
     expect(coordinator.transforms.stats.activeLabels).toBe(1);
     expect({ layoutCalls, rasterCalls }).toEqual({ layoutCalls: 1, rasterCalls: 2 });
+    expect(rasterFamilies).toEqual(["Fixture", "sans-serif"]);
+    expect(layoutInput).toMatchObject({
+      direction: "rtl",
+      language: "ar",
+      script: "Arab",
+      features: ["kern"],
+      variations: { wght: 520 },
+    });
     coordinator.instances.consumeDirty();
     coordinator.transforms.consumeDirty();
     const instanceBytes = new Uint8Array(coordinator.instances.buffer).slice();
@@ -151,6 +173,7 @@ function run(text: string): Readonly<PositionedRun> {
     source: "bitmap",
     text,
     fontFamily: "Fixture",
+    fontFamilies: Object.freeze(["Fixture", "sans-serif"]),
     fontRevision: 1,
     glyphCount: 2,
     direction: "ltr",

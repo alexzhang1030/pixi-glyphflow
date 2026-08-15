@@ -55,6 +55,7 @@ describe("glyph providers", () => {
     let generatorStarts = 0;
     let generatorCalls = 0;
     const provider = new RasterGlyphProvider(registry, {
+      generatorConcurrency: 1,
       canvasRasterizer(request): Promise<GlyphRaster> {
         canvasCalls += 1;
         const channels = request.mode === "color" ? 4 : 1;
@@ -143,6 +144,104 @@ describe("glyph providers", () => {
     } satisfies RasterGlyphRequest;
 
     expect(provider.rasterize(invalid)).rejects.toThrow(RangeError);
+    await provider.destroy();
+    registry.destroy();
+  });
+
+  test("serializes atlas generation within each MSDF worker", async () => {
+    const registry = new FontRegistry();
+    const font = await registry.register({ family: "Fixture", source: new Uint8Array([1, 2]) });
+    let active = 0;
+    let maximumActive = 0;
+    const charsets: string[] = [];
+    const provider = new RasterGlyphProvider(registry, {
+      generatorConcurrency: 1,
+      async createMsdfGenerator() {
+        return {
+          async generateAtlas(options) {
+            active += 1;
+            maximumActive = Math.max(maximumActive, active);
+            const charset = String(options.charset);
+            charsets.push(charset);
+            await Bun.sleep(5);
+            active -= 1;
+            return {
+              texture: {
+                width: 1,
+                height: 1,
+                data: new Uint8ClampedArray([255, 255, 255, 255]),
+              },
+              glyphs: [
+                {
+                  char: charset,
+                  atlasPosition: [0, 0],
+                  atlasSize: [1, 1],
+                  bounds: { left: 0, bottom: 0, right: 1, top: 1 },
+                  advance: 1,
+                },
+              ],
+              fieldRange: 4,
+            };
+          },
+          async dispose() {},
+        };
+      },
+    });
+    const base = {
+      family: "Fixture",
+      fontRevision: font.revision,
+      fontSize: 16,
+      mode: "msdf",
+    } as const;
+
+    await Promise.all([
+      provider.rasterize({ ...base, glyphId: 65, glyphText: "A" }),
+      provider.rasterize({ ...base, glyphId: 66, glyphText: "B" }),
+    ]);
+
+    expect(maximumActive).toBe(1);
+    expect(charsets).toEqual(["A", "B"]);
+    await provider.destroy();
+    registry.destroy();
+  });
+
+  test("keys canvas glyphs by the complete multilingual font stack", async () => {
+    const registry = new FontRegistry();
+    const font = await registry.register({ family: "System UI" });
+    const requests: RasterGlyphRequest[] = [];
+    const provider = new RasterGlyphProvider(registry, {
+      canvasRasterizer(request): Promise<GlyphRaster> {
+        requests.push(request);
+        return Promise.resolve({
+          mode: request.mode,
+          width: 1,
+          height: 1,
+          pixels: new Uint8Array([255]),
+        });
+      },
+    });
+    const base = {
+      family: "System UI",
+      fontRevision: font.revision,
+      glyphId: 28_050,
+      glyphText: "漢",
+      fontSize: 24,
+      mode: "alpha",
+    } as const;
+    const cjkvStack = ["System UI", "Noto Sans CJK SC", "sans-serif"] as const;
+
+    const first = await provider.rasterize({ ...base, fontFamilies: cjkvStack });
+    expect(await provider.rasterize({ ...base, fontFamilies: cjkvStack })).toBe(first);
+    await provider.rasterize({ ...base, fontFamilies: ["System UI", "sans-serif"] });
+
+    expect(requests.map((request) => request.fontFamilies)).toEqual([
+      cjkvStack,
+      ["System UI", "sans-serif"],
+    ]);
+    expect(
+      provider.rasterize({ ...base, fontFamilies: ["sans-serif", "System UI"] }),
+    ).rejects.toThrow(TypeError);
+
     await provider.destroy();
     registry.destroy();
   });

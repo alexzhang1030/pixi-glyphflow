@@ -44,8 +44,13 @@ monotonic label revision. Camera-only commits preserve that revision.
 ## Layout and shaping
 
 System and PixiJS bitmap fonts use `BitmapLayoutAdapter`. Binary fonts use HarfBuzz through a worker.
-Both paths return compact `PositionedRun` data with glyph IDs, clusters, positions, advances, line
-metadata, and bounds.
+Fallback aliases expand recursively, and layout selects the first binary font with complete glyph
+coverage before reaching the system stack. Both paths return compact `PositionedRun` data with glyph
+IDs, clusters, positions, advances, line metadata, and bounds.
+
+Language, script, direction, OpenType feature, and variation overrides live in a sparse side table
+keyed by `TextId`. Labels sharing content and shaping inputs share one canonical asynchronous shape
+result across commits.
 
 Trusted glyph runs let an upstream layout system supply immutable typed arrays with explicit
 ownership and revision stamps.
@@ -54,6 +59,11 @@ ownership and revision stamps.
 
 `GlyphAtlas` stages raster results and publishes a complete generation at a frame boundary. Visible
 glyphs pin entries. LRU eviction reclaims unpinned entries under a fixed allocation ceiling.
+
+Binary-font rasterization consumes the exact HarfBuzz glyph ID. Direct cmap hits reuse the original
+font bytes; contextual, ligature, and language-localized glyphs receive a temporary cmap mapping for
+the character-based MSDF generator. A bounded worker pool runs in parallel and serializes operations
+inside each worker so mutable font state remains isolated.
 
 Each glyph instance uses 32 bytes. Each label transform palette record uses 64 bytes. Dirty-range
 adapters issue partial WebGL buffer updates or budgeted WebGPU queue writes.
@@ -74,4 +84,4 @@ transform, coalesces the current input burst, updates culling bounds, and publis
 
 `TextLayer.stats` allocates one immutable snapshot at read time. It reports CPU capacity, dirty
 domains, revisions, shaping, visible labels, spatial queries, renderer backend, draw calls, glyphs,
-and upload bytes.
+pending glyphs, and upload bytes.

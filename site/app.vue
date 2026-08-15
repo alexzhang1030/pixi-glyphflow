@@ -14,7 +14,7 @@ document.body.appendChild(app.canvas);
 
 const labels = new TextLayer({
   renderer: app.renderer,
-  initialCapacity: 100_000,
+  initialCapacity: 1_000_000,
   culling: {
     bounds: { x: 0, y: 0, width: 1280, height: 720 },
     padding: 32,
@@ -60,6 +60,45 @@ console.table({
   visible: labels.stats.visibleLabelCount,
   glyphs: labels.stats.submittedGlyphs,
 });`;
+
+const fontCode = `const productFonts = [
+  ["Product CJKV", "/fonts/product-cjkv.ttf"],
+  ["Product Arabic", "/fonts/product-arabic.ttf"],
+  ["Product Devanagari", "/fonts/product-devanagari.ttf"],
+  ["Product Hebrew", "/fonts/product-hebrew.ttf"],
+  ["Product Thai", "/fonts/product-thai.ttf"],
+] as const;
+
+await Promise.all(
+  productFonts.map(async ([family, url]) => {
+    const source = new Uint8Array(
+      await fetch(url).then((response) => response.arrayBuffer()),
+    );
+    await labels.fonts.register({ family, source });
+  }),
+);
+
+labels.fonts.registerFallback("global-ui", [
+  ...productFonts.map(([family]) => family),
+  "system-ui",
+  "PingFang SC",
+  "Hiragino Sans",
+  "Apple SD Gothic Neo",
+  "sans-serif",
+]);
+
+labels.create({
+  text: "日本語 · 東京テキスト",
+  style: { fontFamily: "global-ui", fontSize: 24 },
+  shaping: {
+    language: "ja",
+    script: "Jpan",
+    features: ["kern", "liga"],
+    variations: { wght: 560 },
+  },
+});
+
+await labels.commit();`;
 
 const entryPoints = [
   ["pixi-glyphflow", "TextLayer, FontRegistry, and primary types"],
@@ -127,6 +166,7 @@ const guides = [
         <nav aria-label="Primary navigation">
           <a href="#start">Start</a>
           <a href="#viewport">Viewport</a>
+          <a href="#fonts">Fonts</a>
           <a href="#performance">Performance</a>
           <a href="#api">API</a>
           <a
@@ -150,7 +190,7 @@ const guides = [
             <h1 id="hero-title">Render text at<br />scene scale.</h1>
             <p class="hero-copy">
               One retained layer for a million labels, compact glyph batches, incremental updates,
-              and camera-aware culling across WebGL and WebGPU.
+              CJKV and complex-script shaping, and camera-aware culling across WebGL and WebGPU.
             </p>
             <div class="hero-actions">
               <a class="button primary" href="#start">Build a layer</a>
@@ -164,8 +204,8 @@ const guides = [
               <dd>1,000,000</dd>
             </div>
             <div>
-              <dt>Packed moves</dt>
-              <dd>100k / commit</dd>
+              <dt>Language path</dt>
+              <dd>CJKV + 7 scripts</dd>
             </div>
             <div>
               <dt>Fixed CPU store</dt>
@@ -238,9 +278,34 @@ const guides = [
           </div>
         </section>
 
+        <section id="fonts" class="doc-section" aria-labelledby="fonts-title">
+          <div class="section-intro">
+            <p class="section-number">03 / FONTS</p>
+            <h2 id="fonts-title">Shape the language. Keep the font choice explicit.</h2>
+            <p>
+              Binary fonts travel through HarfBuzz and glyph-ID MSDF generation. This live chain
+              covers CJKV, Arabic, Devanagari, Hebrew, Thai, Greek, Cyrillic, Vietnamese, and emoji.
+            </p>
+          </div>
+          <div class="section-body">
+            <h3>Register a custom CJKV font</h3>
+            <CodeBlock :code="fontCode" />
+            <div class="invariant-list" aria-label="Multilingual font invariants">
+              <p><span>01</span> Language and script tags select localized OpenType glyphs.</p>
+              <p>
+                <span>02</span> Glyph ID coverage advances through custom binary families in order.
+              </p>
+              <p>
+                <span>03</span> CSS family stacks reach PixiJS layout and Canvas rasterization
+                intact.
+              </p>
+            </div>
+          </div>
+        </section>
+
         <section id="performance" class="doc-section" aria-labelledby="performance-title">
           <div class="section-intro">
-            <p class="section-number">03 / PERFORMANCE</p>
+            <p class="section-number">04 / PERFORMANCE</p>
             <h2 id="performance-title">Measured under pressure.</h2>
             <p>
               Committed Chrome and WebGL 2 artifacts use isolated processes, GPU completion, warmup
@@ -302,7 +367,7 @@ const guides = [
 
         <section id="architecture" class="doc-section" aria-labelledby="architecture-title">
           <div class="section-intro">
-            <p class="section-number">04 / ARCHITECTURE</p>
+            <p class="section-number">05 / ARCHITECTURE</p>
             <h2 id="architecture-title">One revision, four bounded stages.</h2>
             <p>
               Each stage owns a deep implementation boundary. The application learns one label model
@@ -333,7 +398,7 @@ const guides = [
 
         <section id="api" class="doc-section" aria-labelledby="api-title">
           <div class="section-intro">
-            <p class="section-number">05 / API</p>
+            <p class="section-number">06 / API</p>
             <h2 id="api-title">Focused entry points.</h2>
             <p>
               Core usage stays on the root import. Optional integrations remain isolated so
@@ -364,7 +429,7 @@ const guides = [
 
         <section id="guides" class="doc-section guides-section" aria-labelledby="guides-title">
           <div class="section-intro">
-            <p class="section-number">06 / GUIDES</p>
+            <p class="section-number">07 / GUIDES</p>
             <h2 id="guides-title">Follow the operating path.</h2>
             <p>
               The maintained Markdown set carries complete contracts, compatibility boundaries,

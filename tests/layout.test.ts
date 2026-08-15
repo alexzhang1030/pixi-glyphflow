@@ -7,7 +7,11 @@ describe("BitmapLayoutAdapter", () => {
     const adapter = new BitmapLayoutAdapter(fakeManager());
     const run = adapter.layout({
       text: "AB\n中",
-      style: { fontFamily: "Fixture", fontSize: 20, lineHeight: 24 },
+      style: {
+        fontFamily: ["Fixture", "Noto Sans CJK SC", "sans-serif"],
+        fontSize: 20,
+        lineHeight: 24,
+      },
       fontRevision: 7,
     });
 
@@ -15,6 +19,7 @@ describe("BitmapLayoutAdapter", () => {
       source: "bitmap",
       text: "AB\n中",
       fontFamily: "Fixture",
+      fontFamilies: ["Fixture", "Noto Sans CJK SC", "sans-serif"],
       fontRevision: 7,
       glyphCount: 3,
       direction: "ltr",

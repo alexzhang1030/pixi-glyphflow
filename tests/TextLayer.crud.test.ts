@@ -87,6 +87,95 @@ describe("TextLayer 1.0 CRUD", () => {
     layer.destroy();
   });
 
+  test("stores multilingual shaping controls sparsely and revisions source changes", async () => {
+    const layer = new TextLayer();
+    const id = layer.create({
+      text: "東京文字流",
+      shaping: {
+        direction: "ltr",
+        language: "ja-JP",
+        script: "Jpan",
+        features: ["kern", "liga=1"],
+        variations: { wght: 540 },
+      },
+    });
+    const created = layer.get(id);
+
+    expect(created).toMatchObject({
+      sourceRevision: 1,
+      shaping: {
+        direction: "ltr",
+        language: "ja-JP",
+        script: "Jpan",
+        features: ["kern", "liga=1"],
+        variations: { wght: 540 },
+      },
+    });
+    expect(Object.isFrozen(created?.shaping)).toBe(true);
+    expect(Object.isFrozen(created?.shaping?.features)).toBe(true);
+    expect(Object.isFrozen(created?.shaping?.variations)).toBe(true);
+    await layer.commit();
+
+    expect(
+      layer.update(id, {
+        shaping: { language: "zh-Hant", script: "Hant", variations: { wght: 620 } },
+      }),
+    ).toBe(true);
+    expect(layer.get(id)).toMatchObject({
+      sourceRevision: 2,
+      shaping: { language: "zh-Hant", script: "Hant", variations: { wght: 620 } },
+    });
+    expect(
+      layer.update(id, {
+        shaping: { language: "zh-Hant", script: "Hant", variations: { wght: 620 } },
+      }),
+    ).toBe(false);
+    await layer.commit();
+    expect(layer.stats.lastCommitStyleLabels).toBe(1);
+
+    expect(layer.update(id, { shaping: null })).toBe(true);
+    expect(layer.get(id)).toMatchObject({ sourceRevision: 3 });
+    expect(layer.get(id)?.shaping).toBeUndefined();
+    layer.destroy();
+  });
+
+  test("validates shaping batches before publishing label changes", () => {
+    const layer = new TextLayer();
+    const ids = layer.createMany([{ text: "汉字" }, { text: "한글" }]);
+
+    expect(() =>
+      layer.updateMany([
+        { id: ids[0] as TextId, patch: { x: 20 } },
+        {
+          id: ids[1] as TextId,
+          patch: { shaping: { script: "invalid" } },
+        },
+      ]),
+    ).toThrow(TypeError);
+    expect(layer.get(ids[0] as TextId)?.x).toBe(0);
+    expect(() => layer.update(ids[0] as TextId, { shaping: { language: " " } })).toThrow(TypeError);
+    expect(() =>
+      layer.update(ids[0] as TextId, {
+        shaping: { language: 1234 as unknown as string },
+      }),
+    ).toThrow(TypeError);
+    expect(() =>
+      layer.update(ids[0] as TextId, {
+        shaping: { script: 1234 as unknown as string },
+      }),
+    ).toThrow(TypeError);
+    expect(() =>
+      layer.update(ids[0] as TextId, {
+        shaping: { variations: { wt: 500 } },
+      }),
+    ).toThrow(TypeError);
+    expect(() =>
+      layer.update(ids[0] as TextId, { shaping: { variations: { wght: Number.NaN } } }),
+    ).toThrow(TypeError);
+
+    layer.destroy();
+  });
+
   test("validates a bulk update before publishing any change", () => {
     const layer = new TextLayer();
     const sibling = new TextLayer();

@@ -51,8 +51,9 @@ describe("LayoutEngine", () => {
     expect(bitmapInputs).toEqual([
       {
         text: "hello",
-        style: { fontFamily: "System", fontSize: 16 },
+        style: { fontFamily: ["System"], fontSize: 16 },
         fontRevision: system.revision,
+        cacheRevision: registry.stats.revision,
         direction: "ltr",
         trimEnd: true,
       },
@@ -61,6 +62,7 @@ describe("LayoutEngine", () => {
       family: "Complex",
       text: "سلام",
       fontSize: 24,
+      fontRevision: binary.revision,
       direction: "rtl",
       language: "ar",
       script: "Arab",
@@ -96,6 +98,112 @@ describe("LayoutEngine", () => {
     engine.destroy();
     registry.destroy();
   });
+
+  test("selects the first custom font with complete glyph coverage", async () => {
+    const registry = new FontRegistry();
+    const latin = await registry.register({
+      family: "Latin custom",
+      source: new Uint8Array([1]),
+    });
+    const cjkv = await registry.register({
+      family: "CJKV custom",
+      source: new Uint8Array([2]),
+    });
+    registry.registerFallback("Global UI", ["Latin custom", "CJKV custom", "sans-serif"]);
+    const shapeInputs: HarfBuzzShapeInput[] = [];
+    const engine = new LayoutEngine(registry, {
+      bitmapAdapter: { layout: () => positionedRun("bitmap", "漢字", "sans-serif", 0) },
+      harfbuzzShaper: {
+        async shape(_labelId, _sourceRevision, input) {
+          shapeInputs.push(input);
+          const revision = input.family === "Latin custom" ? latin.revision : cjkv.revision;
+          const glyphId = input.family === "Latin custom" ? 0 : 30_000;
+          return positionedRun("harfbuzz", input.text, input.family, revision, glyphId);
+        },
+      },
+    });
+
+    const run = await engine.layout(12, 4, {
+      text: "漢字",
+      style: { fontFamily: "Global UI", fontSize: 28 },
+      language: "zh-Hant",
+      script: "Hant",
+      features: ["kern"],
+      variations: { wght: 560 },
+    });
+
+    expect(run.fontFamily).toBe("CJKV custom");
+    expect(shapeInputs.map((input) => input.family)).toEqual(["Latin custom", "CJKV custom"]);
+    expect(shapeInputs[1]).toMatchObject({
+      language: "zh-Hant",
+      script: "Hant",
+      features: ["kern"],
+      variations: { wght: 560 },
+      fontRevision: cjkv.revision,
+    });
+    expect(engine.stats).toEqual({ layouts: 1, bitmapLayouts: 0, harfbuzzLayouts: 2 });
+
+    expect(
+      await engine.layout(14, 8, {
+        text: "漢字",
+        style: { fontFamily: "Global UI", fontSize: 28 },
+        language: "zh-Hant",
+        script: "Hant",
+        features: ["kern"],
+        variations: { wght: 560 },
+      }),
+    ).toBe(run);
+    expect(shapeInputs).toHaveLength(2);
+    expect(engine.stats).toEqual({ layouts: 2, bitmapLayouts: 0, harfbuzzLayouts: 2 });
+
+    engine.destroy();
+    registry.destroy();
+  });
+
+  test("expands fallback aliases into the bitmap font stack after binary coverage misses", async () => {
+    const registry = new FontRegistry();
+    const latin = await registry.register({
+      family: "Latin custom",
+      source: new Uint8Array([1]),
+    });
+    const system = await registry.register({ family: "CJKV system" });
+    registry.registerFallback("Global UI", ["Latin custom", "CJKV system", "sans-serif"]);
+    let bitmapInput: BitmapLayoutInput | undefined;
+    const bitmapRun = positionedRun("bitmap", "서울", "CJKV system", system.revision);
+    const engine = new LayoutEngine(registry, {
+      bitmapAdapter: {
+        layout(input) {
+          bitmapInput = input;
+          return bitmapRun;
+        },
+      },
+      harfbuzzShaper: {
+        async shape(_labelId, _sourceRevision, input) {
+          return positionedRun("harfbuzz", input.text, input.family, latin.revision, 0);
+        },
+      },
+    });
+
+    expect(
+      await engine.layout(13, 5, {
+        text: "서울",
+        style: { fontFamily: "Global UI", fontSize: 22 },
+        language: "ko",
+        script: "Kore",
+      }),
+    ).toBe(bitmapRun);
+    expect(bitmapInput).toEqual({
+      text: "서울",
+      style: { fontFamily: ["CJKV system", "sans-serif"], fontSize: 22 },
+      fontRevision: system.revision,
+      cacheRevision: registry.stats.revision,
+      direction: "ltr",
+      trimEnd: true,
+    });
+
+    engine.destroy();
+    registry.destroy();
+  });
 });
 
 function positionedRun(
@@ -103,6 +211,7 @@ function positionedRun(
   text: string,
   family: string,
   fontRevision: number,
+  glyphId = 1,
 ): Readonly<PositionedRun> {
   return Object.freeze({
     source,
@@ -111,7 +220,7 @@ function positionedRun(
     fontRevision,
     glyphCount: 1,
     direction: "ltr",
-    glyphIds: new Uint32Array([1]),
+    glyphIds: new Uint32Array([glyphId]),
     clusters: new Uint32Array([0]),
     x: new Float32Array([0]),
     y: new Float32Array([0]),

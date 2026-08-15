@@ -12,7 +12,10 @@ real pixi-viewport camera.
 5. Rotate the viewport camera.
 6. Apply 100,000 packed position updates per storm tick.
 7. Read layer and viewport diagnostics in the HTML overlay.
-8. Release the binding, layer, viewport, and application.
+8. Shape and render CJKV, Arabic, Devanagari, Hebrew, Thai, Vietnamese, Greek, Cyrillic, and emoji.
+9. Register five custom binary fonts and resolve the remaining glyphs through a system fallback stack.
+10. Switch between WebGL 2 and WebGPU with a complete renderer rebuild.
+11. Release the binding, layer, viewport, and application.
 
 ## Run
 
@@ -33,6 +36,14 @@ The production bundle gate is:
 bun run playground:build
 ```
 
+The interactive documentation runs the same million-label and 100,000-position scale with the
+multilingual custom-font pipeline:
+
+```bash
+bun run site:dev
+bun run site:test
+```
+
 ## Acceptance evidence
 
 - Browser integration tests exercise drag, deceleration, wheel, pinch, rotation, event coalescing,
@@ -42,3 +53,5 @@ bun run playground:build
 - `bun run benchmark:check` enforces every published capacity and frame budget.
 - `bun run release:check` validates source, dependencies, declarations, exports, and the packed
   consumer path.
+- `bun run site:test` verifies one million resident labels, five custom fonts, drag, rotation,
+  responsive layouts, WebGL 2, and capability-gated WebGPU behavior in Chrome.

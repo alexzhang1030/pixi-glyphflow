@@ -17,7 +17,8 @@ test("serves the docs, runs the viewport, and fits every target width", async ({
   await expect(demo).toHaveAttribute("data-demo-state", "ready");
   await expect(demo).toHaveAttribute("data-renderer-backend", "webgl");
   await expect(page.getByTestId("renderer-adapter")).toHaveText("WebGL 2");
-  await expect(page.getByTestId("resident-count")).toHaveText("20,000");
+  await expect(page.getByTestId("resident-count")).toHaveText("1,000,000");
+  await expect(page.getByTestId("custom-font-status")).toHaveText("5 custom fonts ready");
   await expect(demo.locator("canvas")).toBeVisible();
 
   const movementButton = page.getByRole("button", { name: "Pause movement" });
@@ -94,7 +95,7 @@ test("rebuilds the pressure test across WebGL 2 and an available WebGPU adapter"
   await expect(demo).toHaveAttribute("data-renderer-backend", "webgpu");
   await expect(demo).toHaveAttribute("data-demo-state", "ready");
   await expect(page.getByTestId("renderer-adapter")).toHaveText("WebGPU");
-  await expect(page.getByTestId("resident-count")).toHaveText("20,000");
+  await expect(page.getByTestId("resident-count")).toHaveText("1,000,000");
 
   const initialRevision = await readMetric(page, "revision-count");
   await expect.poll(() => readMetric(page, "revision-count")).toBeGreaterThan(initialRevision);
@@ -109,7 +110,7 @@ test("rebuilds the pressure test across WebGL 2 and an available WebGPU adapter"
   await expect(demo).toHaveAttribute("data-renderer-backend", "webgl");
   await expect(demo).toHaveAttribute("data-demo-state", "ready");
   await expect(page.getByTestId("renderer-adapter")).toHaveText("WebGL 2");
-  await expect(page.getByTestId("resident-count")).toHaveText("20,000");
+  await expect(page.getByTestId("resident-count")).toHaveText("1,000,000");
   expect(consoleErrors).toEqual([]);
 });
 

@@ -45,7 +45,8 @@ for (const relativePath of documentationFiles) {
   }
   const content = await file.text();
   contents.set(relativePath, content);
-  if (/[\u3400-\u4dbf\u4e00-\u9fff\uf900-\ufaff]/u.test(content)) {
+  const prose = content.replaceAll(/```[\s\S]*?```/gu, "");
+  if (/[\u3400-\u4dbf\u4e00-\u9fff\uf900-\ufaff]/u.test(prose)) {
     failures.push(`${relativePath}: project documentation must use English prose`);
   }
   for (const pattern of forbiddenSourceTraces) {

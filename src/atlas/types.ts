@@ -108,6 +108,8 @@ export interface PrebuiltGlyphProviderStats {
 
 export interface RasterGlyphRequest {
   readonly family: string;
+  /** Ordered CSS family stack used by alpha/color canvas rasterization. */
+  readonly fontFamilies?: readonly string[];
   readonly fontRevision: number;
   readonly glyphId: number;
   readonly glyphText: string;
@@ -146,6 +148,8 @@ export interface MsdfGeneratorLike {
 
 export interface RasterGlyphProviderOptions {
   readonly cacheSize?: number;
+  /** Parallel lazy MSDF workers. Browser defaults use up to four hardware threads. */
+  readonly generatorConcurrency?: number;
   readonly canvasRasterizer?: (request: RasterGlyphRequest) => Promise<GlyphRaster>;
   readonly createMsdfGenerator?: () => Promise<MsdfGeneratorLike>;
 }

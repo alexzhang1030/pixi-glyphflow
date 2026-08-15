@@ -1,20 +1,41 @@
 # Fonts and shaping
 
+## Coverage model
+
+Registered binary fonts shape through HarfBuzz and rasterize the exact resulting glyph IDs. The
+pipeline covers Latin, CJKV, Arabic, Devanagari, Hebrew, Thai, Greek, Cyrillic, Vietnamese, emoji
+fallback, bidirectional runs, OpenType features, and variable-font coordinates.
+
+CJKV typography uses language-specific glyph selection. Pass both a BCP 47 language and an ISO
+15924 script when a shared Pan-CJK font contains `locl` forms:
+
+| Locale              | Language | Script |
+| ------------------- | -------- | ------ |
+| Simplified Chinese  | `zh-CN`  | `Hans` |
+| Traditional Chinese | `zh-TW`  | `Hant` |
+| Japanese            | `ja`     | `Jpan` |
+| Korean              | `ko`     | `Kore` |
+
+The live documentation registers a Noto Sans CJK variable-font subset and exercises all four
+routes. The [Noto CJK distribution guide](https://github.com/notofonts/noto-cjk/blob/main/Sans/README.md)
+documents full regional coverage and language-tagged localized forms; the demo assets retain those
+layout tables under the [SIL Open Font License 1.1](https://github.com/notofonts/noto-cjk/blob/main/Sans/LICENSE).
+
 ## Font sources
 
 `FontRegistry.register` accepts system, binary, URL, and PixiJS bitmap sources:
 
 ```ts
-await layer.fonts.register({ family: "Inter" });
+await layer.fonts.register({ family: "Product UI" });
 
 await layer.fonts.register({
-  family: "Noto Sans Arabic",
-  source: new Uint8Array(fontBytes),
+  family: "Product CJKV",
+  source: new Uint8Array(cjkvFontBytes),
 });
 
 await layer.fonts.register({
-  family: "Noto Sans Devanagari",
-  source: new URL("/fonts/NotoSansDevanagari.woff2", location.href),
+  family: "Product Arabic",
+  source: new URL("/fonts/ProductArabic.woff2", location.href),
 });
 
 await layer.fonts.register({
@@ -23,30 +44,66 @@ await layer.fonts.register({
 });
 ```
 
-System registrations use PixiJS bitmap layout. Binary registrations use HarfBuzz shaping and
-provide glyph outlines to dynamic raster providers. Each registration advances a monotonic font
-revision.
+System registrations use PixiJS bitmap layout. Binary registrations provide HarfBuzz with font
+tables and the dynamic rasterizer with outlines. Each successful registration advances a monotonic
+font revision and invalidates dependent fallback layouts.
 
 ## Fallback chains
 
 ```ts
-layer.fonts.registerFallback("ui", [
-  "Inter",
-  "Noto Sans CJK SC",
-  "Noto Sans Arabic",
-  "Noto Sans Devanagari",
-  "Noto Color Emoji",
+layer.fonts.registerFallback("Product multilingual", [
+  "Product CJKV",
+  "Product Arabic",
+  "Product Devanagari",
+  "Product Hebrew",
+  "Product Thai",
+  "system-ui",
+  "sans-serif",
 ]);
 ```
 
-Set `fontFamily: "ui"` in label styles. Layout resolves the chain in order and keys cached work by
-font revision and style.
+Set `fontFamily: "Product multilingual"` in label styles. Fallback aliases may reference other
+aliases; expansion preserves order, removes duplicates, and guards cycles. A binary candidate wins
+when every shaped glyph ID is present. Layout proceeds through the chain until it finds complete
+label coverage, then uses the remaining system-family stack for browser rasterization when needed.
+
+## Per-label shaping
+
+`TextLabelSpec.shaping` and `TextLabelPatch.shaping` expose the inputs that affect glyph selection:
+
+```ts
+const title = layer.create({
+  text: "繁體中文 · 臺北字型",
+  style: {
+    fontFamily: "Product multilingual",
+    fontSize: 24,
+    fill: 0xffffff,
+  },
+  shaping: {
+    direction: "ltr",
+    language: "zh-TW",
+    script: "Hant",
+    features: ["kern", "liga"],
+    variations: { wght: 560 },
+  },
+});
+
+layer.update(title, {
+  text: "العربية · مرحبا",
+  shaping: { direction: "rtl", language: "ar", script: "Arab" },
+});
+await layer.commit();
+```
+
+Omitted fields use HarfBuzz detection and font defaults. `shaping: null` clears an existing
+override. The layer stores overrides in a sparse `TextId` map, preserving the dense store's fixed
+reference-slot budget for million-label scenes.
 
 ## Worker shaping
 
 The default `LayoutEngine` creates `HarfBuzzWorkerShaper`. Its worker URL resolves from the package
-`text-worker.js` export. Font bytes transfer once per registration revision. Superseded responses
-are discarded through label source revisions.
+`text-worker.js` export. Font bytes transfer once per registration revision, and source revisions
+discard superseded responses.
 
 Worker bundles use ESM because HarfBuzzJS initializes through top-level `await`. For Vite, set
 `worker.format` to `"es"` and `build.target` to `"es2022"` as shown in the
@@ -60,23 +117,58 @@ import { HarfBuzzShaper } from "pixi-glyphflow/shaping";
 const shaper = new HarfBuzzShaper(layer.fonts);
 const run = await shaper.shape({
   text: "مرحبا",
-  family: "Noto Sans Arabic",
+  family: "Product Arabic",
   fontSize: 24,
   direction: "rtl",
+  language: "ar",
+  script: "Arab",
 });
 ```
 
-## Prebuilt and dynamic glyphs
+## Explicit Vite MSDF assets
 
-Prebuilt MSDF/SDF pages provide deterministic startup and stable cache contents. Dynamic raster
-providers cover alpha and color glyphs plus binary-font outlines. `GlyphAtlas` publishes staged
-entries at frame boundaries, pins visible entries, evicts least-recently-used unpinned entries, and
-keeps allocation within its configured byte ceiling.
+Vite applications can bundle the generator worker and WebAssembly module explicitly. This gives
+production builds stable hashed URLs and keeps the worker's `comlink` dependency inside its chunk:
+
+```ts
+import { MSDF } from "@zappar/msdf-generator";
+import msdfWasmUrl from "@zappar/msdf-generator/msdfgen_wasm.wasm?url";
+import msdfWorkerUrl from "@zappar/msdf-generator/worker.js?worker&url";
+import { TextLayer } from "pixi-glyphflow";
+
+const layer = new TextLayer({
+  renderer: app.renderer,
+  rendering: {
+    rasterizerOptions: {
+      generatorConcurrency: 4,
+      createMsdfGenerator: () =>
+        Promise.resolve(new MSDF({ workerUrl: msdfWorkerUrl, wasmUrl: msdfWasmUrl })),
+    },
+  },
+});
+```
+
+Add `@zappar/msdf-generator@1.2.4` as a direct application dependency when the app imports these
+asset entry points. The provider initializes workers lazily, runs separate workers in parallel, and
+serializes font loading plus atlas generation inside each worker.
+
+## Glyph-ID rasterization
+
+MSDF generators accept Unicode characters while HarfBuzz returns glyph IDs. Direct cmap matches
+reuse the registered font bytes. Contextual forms, ligatures, and CJK `locl` alternates receive a
+temporary cmap mapping in a cloned font buffer, so raster output matches the exact shaped glyph.
+The registered source bytes remain immutable.
+
+Prebuilt MSDF/SDF pages provide deterministic startup and stable cache contents. Dynamic providers
+cover alpha and color glyphs plus binary-font outlines. `GlyphAtlas` publishes staged entries at
+frame boundaries, pins visible entries, evicts least-recently-used unpinned entries, and keeps
+allocation within its configured byte ceiling.
 
 ## Operational guidance
 
 - Register binary fonts before the first multilingual commit.
-- Use a fallback chain whose order matches product typography.
-- Reuse style objects across labels to maximize layout cache hits.
+- Match fallback order to the product typography system.
+- Set `language` and `script` for CJKV regional forms and product-critical complex text.
+- Reuse text, style, and shaping values to maximize cross-label shape-cache hits.
 - Package production fonts with explicit redistribution rights.
 - Use prebuilt distance fields for large, stable icon or CJK sets.

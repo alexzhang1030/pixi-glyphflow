@@ -2,13 +2,20 @@ import type { BLEND_MODES, TextStyleOptions } from "pixi.js";
 
 import { GlyphAtlas } from "../atlas/GlyphAtlas";
 import { RasterGlyphProvider } from "../atlas/RasterGlyphProvider";
-import type { GlyphAtlasOptions, GlyphMode, GlyphRaster, RasterGlyphRequest } from "../atlas/types";
+import type {
+  GlyphAtlasOptions,
+  GlyphMode,
+  GlyphRaster,
+  RasterGlyphProviderOptions,
+  RasterGlyphRequest,
+} from "../atlas/types";
 import type { AtlasCommit } from "../atlas/types";
 import type { FontRegistry } from "../FontRegistry";
 import { LayoutEngine } from "../layout/LayoutEngine";
 import type { PositionedRun, TextLayoutInput } from "../layout/types";
 import type { TrustedGlyphRun } from "../shaping/TrustedGlyphRun";
 import { TextDirty } from "../store/types";
+import type { TextShapingOptions } from "../types";
 import { GlyphInstanceStore } from "./GlyphInstanceStore";
 import { TransformPalette } from "./TransformPalette";
 import type {
@@ -33,6 +40,7 @@ export interface RenderLabelSnapshot {
   readonly anchorX: number;
   readonly anchorY: number;
   readonly style: Readonly<TextStyleOptions>;
+  readonly shaping?: Readonly<TextShapingOptions>;
 }
 
 export interface RenderChange {
@@ -60,6 +68,8 @@ export interface RenderCoordinatorOptions {
   readonly registry: FontRegistry;
   readonly layoutEngine?: RenderLayoutEngineLike;
   readonly glyphProvider?: GlyphProviderLike;
+  /** Dynamic canvas and MSDF rasterizer configuration used by the default glyph provider. */
+  readonly rasterizerOptions?: RasterGlyphProviderOptions;
   readonly atlas?: GlyphAtlas;
   readonly instances?: GlyphInstanceStore;
   readonly transforms?: TransformPalette;
@@ -134,7 +144,8 @@ export class RenderCoordinator {
 
   constructor(options: RenderCoordinatorOptions) {
     this.#layout = options.layoutEngine ?? new LayoutEngine(options.registry);
-    this.#provider = options.glyphProvider ?? new RasterGlyphProvider(options.registry);
+    this.#provider =
+      options.glyphProvider ?? new RasterGlyphProvider(options.registry, options.rasterizerOptions);
     this.atlas = options.atlas ?? new GlyphAtlas(options.atlasOptions);
     this.instances = options.instances ?? new GlyphInstanceStore(options.instanceOptions);
     this.transforms = options.transforms ?? new TransformPalette(options.transformOptions);
@@ -301,6 +312,7 @@ export class RenderCoordinator {
       (await this.#layout.layout(change.slot, snapshot.sourceRevision, {
         text: snapshot.text,
         style: snapshot.style,
+        ...snapshot.shaping,
       }));
     if (ticket !== this.#ticket) {
       return { change, run };
@@ -334,6 +346,7 @@ export class RenderCoordinator {
       const request = this.atlas.request(key);
       const raster = await this.#provider.rasterize({
         family: run.fontFamily,
+        ...(run.fontFamilies === undefined ? {} : { fontFamilies: run.fontFamilies }),
         fontRevision: run.fontRevision,
         glyphId,
         glyphText,
@@ -448,7 +461,15 @@ function glyphKey(
   fontSize: number,
   mode: GlyphMode,
 ): string {
-  return [run.fontFamily, run.fontRevision, glyphId, glyphText, fontSize, mode].join("\u0000");
+  return [
+    run.fontFamily,
+    run.fontFamilies?.join("\u0001") ?? "",
+    run.fontRevision,
+    glyphId,
+    glyphText,
+    fontSize,
+    mode,
+  ].join("\u0000");
 }
 
 function resolveFontSize(value: number | string | undefined): number {

@@ -138,7 +138,9 @@ Replace the 0.0.1 object-per-label reference backend with a dense, batch-oriente
 ## Phase 8: Interactive documentation site
 
 - Build one Nuxt SSR page with installation, viewport integration, performance evidence, architecture, API entry points, and guide routing.
-- Run a client-only TextLayer demo with 20,000 resident labels, 2,000 packed position updates every 100 milliseconds, and a pixi-viewport camera.
+- Run a client-only TextLayer demo with 1,000,000 resident labels, 100,000 packed position updates every 100 milliseconds, and a pixi-viewport camera.
+- Register custom Noto subsets for CJKV, Arabic, Devanagari, Hebrew, and Thai, then exercise Vietnamese, Greek, Cyrillic, emoji, and system fallback.
+- Bundle the dynamic MSDF worker and WebAssembly module through explicit Vite asset URLs.
 - Let readers force WebGL 2 or WebGPU and rebuild the complete renderer, viewport, layer, binding, and stress workload in place.
 - Preserve drag, deceleration, wheel, pinch, rotation, keyboard, reduced-motion, and complete renderer teardown behavior.
 - Build the root package before every site development, type-check, generation, and production command.
@@ -147,7 +149,7 @@ Replace the 0.0.1 object-per-label reference backend with a dense, batch-oriente
 ### Checkpoint
 
 - `bun run site:typecheck`, `bun run site:build`, and `bun run site:test` pass from the workspace root.
-- The live demo reports 20,000 resident labels and the exact active renderer adapter without browser console errors.
+- The live demo reports 1,000,000 resident labels, five custom fonts, the exact active renderer adapter, and a drained initial glyph queue without browser console errors.
 - WebGPU-capable Chrome sessions run the position storm and camera controls on both adapters; other sessions expose the capability state.
 - The site workspace stays outside the npm publication files and inside the frozen Bun install graph.
 

@@ -36,8 +36,21 @@ validation before state publication.
 ### Label state
 
 `TextLabelSpec` and `TextLabelPatch` cover text, x/y, scale, rotation, z index, PixiJS blend mode,
-alpha, visibility, anchor, and `TextStyleOptions`. Style objects are captured by value at the store
-boundary.
+alpha, visibility, anchor, `TextStyleOptions`, and an optional sparse `shaping` object. Style and
+shaping objects are captured by value at the store boundary.
+
+`TextShapingOptions` contains:
+
+| Field        | Contract                                                                    |
+| ------------ | --------------------------------------------------------------------------- |
+| `direction`  | `ltr` or `rtl`; HarfBuzz detects direction when the field is omitted        |
+| `language`   | BCP 47 language tag used by language-sensitive OpenType substitutions       |
+| `script`     | Four-letter ISO 15924 tag such as `Hans`, `Hant`, `Jpan`, `Kore`, or `Arab` |
+| `features`   | Immutable HarfBuzz/OpenType feature strings such as `kern=0` or `liga`      |
+| `variations` | Finite variable-font axis coordinates keyed by four-letter OpenType tag     |
+
+`TextLabelPatch.shaping: null` clears a previous override. A shaping-only update advances the label
+source revision and preserves the fixed-width reference slot used by the dense million-label store.
 
 ### Trusted runs
 
@@ -97,3 +110,8 @@ diagnostic types.
 
 These primitives support custom renderer pipelines that preserve the package storage and shader
 contracts.
+
+`TextLayerOptions.rendering.rasterizerOptions` configures the default `RasterGlyphProvider`.
+`generatorConcurrency` controls the lazy MSDF worker pool, while `createMsdfGenerator` supplies
+explicit worker and WebAssembly URLs for production bundlers. Each worker serializes font loading
+and atlas generation; separate workers execute in parallel.

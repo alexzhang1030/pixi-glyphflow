@@ -164,6 +164,11 @@
   - Files: site, package.json, bun.lock, .github/workflows/ci.yml, README.md, CONTRIBUTING.md
 
 - [x] Task 8.2: Exercise both renderer backends in the live documentation demo.
-  - Acceptance: Readers can rebuild the 20,000-label pressure test on WebGL 2 and WebGPU, with exact adapter identity and browser capability state exposed in the interface.
+  - Acceptance: Readers can rebuild the 1,000,000-label and 100,000-position pressure test on WebGL 2 and WebGPU, with exact adapter identity and browser capability state exposed in the interface.
   - Verify: bun run site:typecheck && bun run site:test && bun run test:browser
   - Files: site/components/GlyphflowDemo.client.vue, site/tests/site.pw.ts, site/assets/css/main.css, site/README.md
+
+- [x] Task 8.3: Exercise custom CJKV and multilingual fonts in the live documentation demo.
+  - Acceptance: Five registered binary fonts shape CJKV regional forms, Arabic, Devanagari, Hebrew, and Thai; the fallback stack also presents Vietnamese, Greek, Cyrillic, and emoji samples.
+  - Verify: bun test tests/LayoutEngine.test.ts tests/cmap.test.ts tests/glyph-providers.test.ts && bun run site:test
+  - Files: src/layout, src/fonts, src/atlas, site/components/GlyphflowDemo.client.vue, site/public/fonts, docs/fonts.md
