@@ -204,7 +204,8 @@
   - Verify: bun run site:typecheck && bun run site:test
   - Files: site/app.vue, site/components/ExamplesSection.vue, site/tests/site.pw.ts, site/README.md
 
-- [ ] Task 11.2: Publish and verify 1.1.0.
+- [x] Task 11.2: Publish and verify 1.1.0.
   - Acceptance: Package metadata, site badge, changelog, signed tag, GitHub Release, npm metadata, provenance, and independent installation all resolve to 1.1.0.
   - Verify: bun run release:check && gh release view v1.1.0 && npm view pixi-glyphflow@1.1.0 && independent package smoke
+  - Evidence: [PR #1](https://github.com/alexzhang1030/pixi-glyphflow/pull/1) merged as `7720ed4345052d324d31de98705eb9ac05bd47af`; the [GitHub Release](https://github.com/alexzhang1030/pixi-glyphflow/releases/tag/v1.1.0) and [publish workflow](https://github.com/alexzhang1030/pixi-glyphflow/actions/runs/31879817035) succeeded; npm `latest` resolves to 1.1.0 with shasum `7199c0248978e80337916f856d1b0c3228c34fca` and SLSA provenance; a fresh Node runtime and TypeScript 7 consumer passed against the public package.
   - Files: package.json, CHANGELOG.md, benchmarks/run.ts, benchmarks/PERFORMANCE.md, benchmarks/results, tasks/plan.md, tasks/todo.md
