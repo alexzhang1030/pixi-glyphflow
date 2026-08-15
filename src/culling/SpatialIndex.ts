@@ -116,6 +116,23 @@ export class SpatialIndex {
     return true;
   }
 
+  /** Set visibility for every occupied entry through one dense pass. @internal */
+  setAllVisible(visible: boolean): number {
+    this.#assertActive();
+    if (typeof visible !== "boolean") {
+      throw new TypeError("visible must be a boolean");
+    }
+    const value = Number(visible);
+    let changed = 0;
+    for (let slot = 0; slot < this.#highWater; slot += 1) {
+      if (this.#occupied[slot] !== 1 || this.#visible[slot] === value) continue;
+      this.#visible[slot] = value;
+      changed += 1;
+    }
+
+    return changed;
+  }
+
   translate(slot: number, deltaX: number, deltaY: number): boolean {
     this.#assertActive();
     assertSlot(slot);

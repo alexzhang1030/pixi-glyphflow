@@ -81,6 +81,8 @@ TextLayer is the primary deep module. Callers learn label mutation, commit, font
 | has(id) | Checks current identity validity. |
 | update(id, patch) | Applies a partial mutation and records the minimal dirty domain. |
 | updateMany(entries) | Applies a batch with one journal publication. |
+| showAll() | Sets every current label visible through one columnar pass and returns the change count. |
+| hideAll() | Sets every current label hidden through one columnar pass and returns the change count. |
 | remove(id) | Removes one label and returns whether it existed. |
 | removeMany(ids) | Removes a batch and returns the removal count. |
 | clear() | Removes every label and retires unreferenced resources. |

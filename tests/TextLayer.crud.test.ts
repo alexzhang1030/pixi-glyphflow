@@ -87,6 +87,41 @@ describe("TextLayer 1.0 CRUD", () => {
     layer.destroy();
   });
 
+  test("shows and hides every current label through one bulk visibility mutation", async () => {
+    const layer = new TextLayer({ culling: false, rendering: false });
+    const ids = layer.createMany([
+      { text: "one", zIndex: 1 },
+      { text: "two", visible: false, zIndex: 2 },
+      { text: "three", zIndex: 3 },
+    ]);
+    await layer.commit();
+
+    expect(layer.stats.visibleLabelCount).toBe(2);
+    expect(layer.hideAll()).toBe(2);
+    expect(layer.hideAll()).toBe(0);
+    expect(ids.map((id) => layer.get(id)?.visible)).toEqual([false, false, false]);
+    expect(layer.hitTest({ x: 1, y: 1 })).toBeUndefined();
+    await layer.commit();
+    expect(layer.stats).toMatchObject({
+      visibleLabelCount: 0,
+      lastCommitDirtyLabels: 2,
+      lastCommitTransformLabels: 2,
+    });
+
+    expect(layer.showAll()).toBe(3);
+    expect(layer.showAll()).toBe(0);
+    expect(ids.map((id) => layer.get(id)?.visible)).toEqual([true, true, true]);
+    expect(layer.hitTest({ x: 1, y: 1 })).toBe(ids[2]);
+    await layer.commit();
+    expect(layer.stats).toMatchObject({
+      visibleLabelCount: 3,
+      lastCommitDirtyLabels: 3,
+      lastCommitTransformLabels: 3,
+    });
+
+    layer.destroy();
+  });
+
   test("stores multilingual shaping controls sparsely and revisions source changes", async () => {
     const layer = new TextLayer();
     const id = layer.create({

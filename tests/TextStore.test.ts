@@ -52,6 +52,28 @@ describe("TextStore", () => {
     expect(() => store.update(id, { blendMode: "invalid" as "normal" })).toThrow(TypeError);
   });
 
+  test("sets visibility for every occupied slot while preserving free slots", () => {
+    const store = new TextStore();
+    const first = store.create(label());
+    const removed = store.create(label());
+    const third = store.create(label({ visible: false }));
+    store.remove(removed);
+    store.publishDirty();
+    const warmedBytes = store.stats.allocatedBytes;
+
+    expect(store.setAllVisible(false)).toBe(1);
+    expect(store.setAllVisible(false)).toBe(0);
+    expect(store.get(first)?.visible).toBe(false);
+    expect(store.get(third)?.visible).toBe(false);
+    expect(store.pendingDirty).toEqual({ labels: 1, mask: TextDirty.Transform });
+
+    expect(store.setAllVisible(true)).toBe(2);
+    expect(store.get(first)?.visible).toBe(true);
+    expect(store.get(third)?.visible).toBe(true);
+    expect(store.stats.allocatedBytes).toBe(warmedBytes);
+    expect(() => store.setAllVisible("yes" as unknown as boolean)).toThrow(TypeError);
+  });
+
   test("applies packed positions transactionally while preserving shaping revisions", () => {
     const store = new TextStore();
     const first = store.create(label({ x: 1, y: 2 }));

@@ -18,6 +18,8 @@ and diagnostics.
 | `updateMany(entries)`                        | `number`                         | Apply validated partial-object updates            |
 | `updatePositions(ids, positions)`            | `number`                         | Apply packed x/y columns                          |
 | `updateTextPositions(ids, texts, positions)` | `number`                         | Apply text and packed x/y columns together        |
+| `showAll()`                                  | `number`                         | Show every current label in one columnar pass     |
+| `hideAll()`                                  | `number`                         | Hide every current label in one columnar pass     |
 | `remove(id)`                                 | `boolean`                        | Retire one identity and its render state          |
 | `removeMany(ids)`                            | `number`                         | Retire current identities                         |
 | `clear()`                                    | `number`                         | Retire every label                                |
@@ -32,6 +34,10 @@ and diagnostics.
 
 `TextId` includes a layer namespace, slot, and generation. Stale and foreign identities fail bulk
 validation before state publication.
+
+`showAll()` and `hideAll()` return the number of labels whose `visible` state changed. Repeated calls
+return `0` and preserve revision state. One following `commit()` publishes the complete visibility
+change through culling, hit testing, accessibility, and the active WebGL or WebGPU renderer.
 
 ### Label state
 

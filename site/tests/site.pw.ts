@@ -30,6 +30,17 @@ test("serves the docs, runs the viewport, and fits every target width", async ({
     "false",
   );
 
+  const hideAllButton = page.getByRole("button", { name: "Hide all labels" });
+  await hideAllButton.click();
+  await expect(demo).toHaveAttribute("data-all-visible", "false");
+  await expect(page.getByTestId("visible-count")).toHaveText("0");
+  await expect(page.getByTestId("draw-call-count")).toHaveText("0");
+  await page.getByRole("button", { name: "Show all labels" }).click();
+  await expect(demo).toHaveAttribute("data-all-visible", "true");
+  await expect.poll(() => readMetric(page, "visible-count")).toBeGreaterThan(0);
+  await expect(page.getByTestId("draw-call-count")).toHaveText("1");
+  await expect(page.getByTestId("visibility-duration")).toHaveText(/^\d+\.\d{2} ms$/);
+
   const canvas = demo.locator(".demo-canvas");
   const bounds = await canvas.boundingBox();
   expect(bounds).toBeTruthy();
@@ -101,6 +112,16 @@ test("rebuilds the pressure test across WebGL 2 and an available WebGPU adapter"
 
   const initialRevision = await readMetric(page, "revision-count");
   await expect.poll(() => readMetric(page, "revision-count")).toBeGreaterThan(initialRevision);
+  await page.getByRole("button", { name: "Pause movement" }).click();
+
+  await page.getByRole("button", { name: "Hide all labels" }).click();
+  await expect(demo).toHaveAttribute("data-all-visible", "false");
+  await expect(page.getByTestId("visible-count")).toHaveText("0");
+  await expect(page.getByTestId("draw-call-count")).toHaveText("0");
+  await page.getByRole("button", { name: "Show all labels" }).click();
+  await expect(demo).toHaveAttribute("data-all-visible", "true");
+  await expect.poll(() => readMetric(page, "visible-count")).toBeGreaterThan(0);
+  await expect(page.getByTestId("draw-call-count")).toHaveText("1");
 
   const canvas = demo.locator(".demo-canvas");
   await canvas.focus();

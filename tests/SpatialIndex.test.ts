@@ -40,6 +40,25 @@ describe("SpatialIndex", () => {
     index.destroy();
   });
 
+  test("sets visibility for every occupied entry", () => {
+    const index = new SpatialIndex();
+    const output = new Uint32Array(3);
+    index.set(0, { x: 0, y: 0, width: 1, height: 1 }, 0, true);
+    index.set(1, { x: 1, y: 1, width: 1, height: 1 }, 0, true);
+    index.set(2, { x: 2, y: 2, width: 1, height: 1 }, 0, false);
+    index.remove(1);
+
+    expect(index.setAllVisible(false)).toBe(1);
+    expect(index.setAllVisible(false)).toBe(0);
+    expect(index.queryAll(output)).toBe(0);
+    expect(index.setAllVisible(true)).toBe(2);
+    expect(index.queryAll(output)).toBe(2);
+    expect([...output.subarray(0, 2)]).toEqual([0, 2]);
+    expect(() => index.setAllVisible("yes" as unknown as boolean)).toThrow(TypeError);
+
+    index.destroy();
+  });
+
   test("validates output capacity and finite geometry transactionally", () => {
     const index = new SpatialIndex();
     index.set(0, { x: 0, y: 0, width: 1, height: 1 });

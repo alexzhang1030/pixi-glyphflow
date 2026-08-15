@@ -112,6 +112,7 @@ const methods = [
   ["createMany(specs)", "Create a validated batch and return stable TextIds."],
   ["updatePositions(ids, xy)", "Apply packed position changes in one columnar pass."],
   ["updateTextPositions(ids, text, xy)", "Broadcast dynamic text with packed positions."],
+  ["showAll() / hideAll()", "Toggle every resident label through one columnar mutation."],
   ["commit()", "Publish one monotonic revision through render and culling work."],
   ["setViewportBounds(bounds)", "Select the resident subset submitted to the renderer."],
   ["stats", "Read immutable capacity, culling, upload, draw, and timing diagnostics."],

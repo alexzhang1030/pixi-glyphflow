@@ -10,6 +10,7 @@ worker shaping, bounded glyph atlases, dense culling, and first-class pixi-viewp
 - Eight-page texture banks preserve glyph order while merging mixed atlas pages into one draw.
 - `updatePositions` applies 100,000 packed x/y changes in 3.40 ms p95 on the reference M1 Pro.
 - `updateTextPositions` applies 100,000 text and x/y changes in 14.20 ms p95.
+- `showAll()` and `hideAll()` update the complete resident visibility column with one commit.
 - `bindViewport` coalesces drag, deceleration, wheel, pinch, zoom, and rotation camera work.
 - HarfBuzz worker shaping covers CJKV, Arabic, Devanagari, Hebrew, Thai, bidi text, and OpenType features.
 - Binary font registration, recursive fallback aliases, and sparse per-label shaping controls support product-owned typography.
@@ -161,6 +162,16 @@ pass:
 
 ```ts
 labels.updateTextPositions(ids, "42.7 ms", positions);
+await labels.commit();
+```
+
+Toggle the complete resident set through the allocation-stable columnar path:
+
+```ts
+labels.hideAll();
+await labels.commit();
+
+labels.showAll();
 await labels.commit();
 ```
 

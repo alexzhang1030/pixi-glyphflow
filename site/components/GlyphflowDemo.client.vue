@@ -82,6 +82,8 @@ const requestedBackend = ref<RendererBackend>("webgl");
 const activeBackend = ref<RendererBackend>();
 const webGpuCapability = ref<WebGpuCapability>("checking");
 const stormEnabled = ref(true);
+const allVisible = ref(true);
+const visibilityPending = ref(false);
 const rotationDegrees = ref(0);
 const resident = ref("0");
 const visible = ref("0");
@@ -91,6 +93,7 @@ const glyphs = ref("0");
 const drawCalls = ref(0);
 const atlasTextures = ref(0);
 const updateDuration = ref("0.00 ms");
+const visibilityDuration = ref("0.00 ms");
 const viewportDuration = ref("0.00 ms");
 const fps = ref("0");
 const fontStatus = ref("Loading custom fonts");
@@ -210,10 +213,13 @@ function resetHud(): void {
   drawCalls.value = 0;
   atlasTextures.value = 0;
   updateDuration.value = "0.00 ms";
+  visibilityDuration.value = "0.00 ms";
   viewportDuration.value = "0.00 ms";
   fps.value = "0";
   fontStatus.value = "Loading custom fonts";
   fontFootprint.value = "0 KiB";
+  allVisible.value = true;
+  visibilityPending.value = false;
   rotationDegrees.value = 0;
 }
 
@@ -507,6 +513,26 @@ function toggleStorm(): void {
   stormEnabled.value = !stormEnabled.value;
 }
 
+async function toggleAllVisibility(): Promise<void> {
+  const nextLayer = layer;
+  if (state.value !== "ready" || visibilityPending.value || nextLayer === undefined) return;
+  const runId = rendererRun;
+  const show = !allVisible.value;
+  visibilityPending.value = true;
+  const startedAt = performance.now();
+  try {
+    if (show) nextLayer.showAll();
+    else nextLayer.hideAll();
+    await nextLayer.commit();
+    if (isStale(runId) || layer !== nextLayer) return;
+    allVisible.value = show;
+    visibilityDuration.value = `${(performance.now() - startedAt).toFixed(2)} ms`;
+    updateHud();
+  } finally {
+    if (!isStale(runId)) visibilityPending.value = false;
+  }
+}
+
 function applyRotation(): void {
   const nextViewport = viewport;
   if (nextViewport === undefined) return;
@@ -671,6 +697,7 @@ async function loadCustomFonts(): Promise<readonly Readonly<LoadedFontAsset>[]> 
     :data-pending-glyphs="pendingGlyphs"
     :data-draw-calls="drawCalls"
     :data-atlas-textures="atlasTextures"
+    :data-all-visible="allVisible"
     aria-labelledby="demo-title"
   >
     <header class="demo-header">
@@ -737,7 +764,7 @@ async function loadCustomFonts(): Promise<readonly Readonly<LoadedFontAsset>[]> 
         </div>
         <div>
           <dt>Visible</dt>
-          <dd>{{ visible }}</dd>
+          <dd data-testid="visible-count">{{ visible }}</dd>
         </div>
         <div>
           <dt>Moving / 100 ms</dt>
@@ -750,6 +777,10 @@ async function loadCustomFonts(): Promise<readonly Readonly<LoadedFontAsset>[]> 
         <div>
           <dt>Position commit</dt>
           <dd>{{ updateDuration }}</dd>
+        </div>
+        <div>
+          <dt>Show / hide commit</dt>
+          <dd data-testid="visibility-duration">{{ visibilityDuration }}</dd>
         </div>
         <div>
           <dt>Viewport commit</dt>
@@ -786,6 +817,14 @@ async function loadCustomFonts(): Promise<readonly Readonly<LoadedFontAsset>[]> 
       <div class="demo-controls">
         <button type="button" :aria-pressed="stormEnabled" @click="toggleStorm">
           {{ stormEnabled ? "Pause movement" : "Start movement" }}
+        </button>
+        <button
+          type="button"
+          :aria-label="allVisible ? 'Hide all labels' : 'Show all labels'"
+          :disabled="state !== 'ready' || visibilityPending"
+          @click="toggleAllVisibility"
+        >
+          {{ allVisible ? "Hide all" : "Show all" }}
         </button>
         <button type="button" @click="resetCamera">Reset camera</button>
         <label>

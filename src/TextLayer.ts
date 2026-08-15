@@ -309,6 +309,16 @@ export class TextLayer extends Container {
     return changed;
   }
 
+  /** Show every current label and return the number whose visibility changed. */
+  showAll(): number {
+    return this.#setAllVisible(true);
+  }
+
+  /** Hide every current label and return the number whose visibility changed. */
+  hideAll(): number {
+    return this.#setAllVisible(false);
+  }
+
   /** Apply packed x/y coordinates and return the number of changed labels. */
   updatePositions(
     ids: readonly TextId[] | Float64Array,
@@ -710,6 +720,17 @@ export class TextLayer extends Container {
 
     this.#pendingMutations += count;
     this.#acceptedMutations += count;
+  }
+
+  #setAllVisible(visible: boolean): number {
+    this.#assertActive();
+    const changed = this.#store.setAllVisible(visible);
+    if (changed === 0) return 0;
+    this.#spatial.setAllVisible(visible);
+    this.#visibilityDirty = true;
+    this.#recordMutation(TextDirty.Transform, changed);
+
+    return changed;
   }
 
   #activateRendering(): void {

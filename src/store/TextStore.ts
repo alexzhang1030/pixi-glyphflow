@@ -296,6 +296,23 @@ export class TextStore {
     return dirty;
   }
 
+  /** Set visibility for every occupied slot through one columnar pass. @internal */
+  setAllVisible(visible: boolean): number {
+    if (typeof visible !== "boolean") {
+      throw new TypeError("visible must be a boolean");
+    }
+    const value = Number(visible);
+    let changed = 0;
+    for (let slot = 0; slot < this.#highWater; slot += 1) {
+      if (this.#occupied[slot] !== 1 || this.#visible[slot] === value) continue;
+      this.#visible[slot] = value;
+      this.#journal.record(slot, TextDirty.Transform);
+      changed += 1;
+    }
+
+    return changed;
+  }
+
   /** Copy spatial-bound inputs into caller-owned scratch storage. @internal */
   copyBoundsLabelAt(slot: number, output: MutableTextStoreLabel): boolean {
     if (slot >= this.#highWater || this.#occupied[slot] !== 1) return false;

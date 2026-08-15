@@ -123,6 +123,19 @@ await layer.commit();
 Each bulk call validates the complete input before publishing changes. Reusing typed arrays keeps
 the hot path allocation-stable.
 
+Show or hide the complete resident set through one columnar mutation and one render commit:
+
+```ts
+const hidden = layer.hideAll();
+await layer.commit();
+
+const shown = layer.showAll();
+await layer.commit();
+```
+
+Both methods return the number of labels whose visibility changed. Individual snapshots, hit
+testing, culling, accessibility mirrors, and renderer submission observe the same state.
+
 ## pixi-viewport interaction
 
 ```ts

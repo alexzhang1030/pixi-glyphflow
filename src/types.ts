@@ -166,6 +166,8 @@ export interface TextLayer {
   create(spec: TextLabelSpec): TextId;
   get(id: TextId): Readonly<TextLabelSnapshot> | undefined;
   update(id: TextId, patch: TextLabelPatch): boolean;
+  showAll(): number;
+  hideAll(): number;
   setViewportBounds(bounds: BoundsData | undefined): void;
   getBoundsFor(
     id: TextId,

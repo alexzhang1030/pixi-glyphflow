@@ -19,6 +19,8 @@ const requiredApiTerms = [
   "updateMany",
   "updatePositions",
   "updateTextPositions",
+  "showAll",
+  "hideAll",
   "commit",
   "bindViewport",
   "ViewportBinding",

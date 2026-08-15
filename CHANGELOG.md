@@ -7,6 +7,7 @@
 - Dense, generation-checked storage for 1,000,000 labels with immutable snapshots and compact
   diagnostics.
 - Ergonomic CRUD, object-batch, packed-position, and columnar text-plus-position mutation APIs.
+- Allocation-stable `showAll()` and `hideAll()` mutations for the complete resident label set.
 - PixiJS bitmap layout plus direct and worker-backed HarfBuzz shaping for multilingual text.
 - CJKV regional glyph selection, broad complex-script fallback, custom binary fonts, and sparse
   per-label language, script, direction, feature, and variation controls.
