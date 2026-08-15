@@ -20,7 +20,8 @@ bun run check
 - Add explicit return types to exported functions so Oxc can generate isolated declarations.
 - Keep `pixi.js` external and represented as a peer dependency.
 - Add Bun tests for observable API changes.
-- Update `README.md`, `docs/POC.md`, and `CHANGELOG.md` when their contracts move.
+- Update `README.md`, the affected guides under `docs/`, and `CHANGELOG.md` when their contracts
+  move.
 - Update affected PCR records under `.agents/docs/` in the same change.
 
 ## Commands

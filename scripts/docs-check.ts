@@ -4,7 +4,6 @@ import { dirname, resolve } from "node:path";
 const projectRoot = resolve(import.meta.dir, "..");
 const documentationFiles = [
   "README.md",
-  "docs/POC.md",
   "docs/accessibility.md",
   "docs/api.md",
   "docs/architecture.md",

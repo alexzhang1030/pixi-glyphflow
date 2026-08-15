@@ -208,7 +208,7 @@ bun run site:build
 | `bun run benchmark -- --workload viewport-drag` | Run one workload                                               |
 | `bun run benchmark:check`                       | Enforce committed performance and capacity budgets             |
 | `bun run docs:check`                            | Validate English documentation, links, and public API coverage |
-| `bun run playground:dev`                        | Start the interactive million-label pixi-viewport POC          |
+| `bun run playground:dev`                        | Start the interactive million-label pixi-viewport stress demo  |
 | `bun run site:dev`                              | Start the Nuxt documentation site                              |
 | `bun run site:typecheck`                        | Check Nuxt and Vue through TypeScript 7-native Golar           |
 | `bun run site:test`                             | Build and run responsive browser acceptance                    |
@@ -224,7 +224,6 @@ bun run site:build
 - [Performance](docs/performance.md)
 - [Accessibility](docs/accessibility.md)
 - [Migration from 0.0.1](docs/migration.md)
-- [Release POC](docs/POC.md)
 
 ## License
 
