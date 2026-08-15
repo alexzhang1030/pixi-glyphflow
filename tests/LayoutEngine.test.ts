@@ -51,7 +51,7 @@ describe("LayoutEngine", () => {
     expect(bitmapInputs).toEqual([
       {
         text: "hello",
-        style: { fontFamily: ["System"], fontSize: 16 },
+        style: { fontFamily: "System", fontSize: 16 },
         fontRevision: system.revision,
         cacheRevision: registry.stats.revision,
         direction: "ltr",
@@ -200,6 +200,53 @@ describe("LayoutEngine", () => {
       direction: "ltr",
       trimEnd: true,
     });
+
+    engine.destroy();
+    registry.destroy();
+  });
+
+  test("lays out upright glyphs in top-to-bottom right-to-left columns", async () => {
+    const registry = new FontRegistry();
+    await registry.register({ family: "Vertical fixture" });
+    const horizontalRun: Readonly<PositionedRun> = Object.freeze({
+      source: "bitmap",
+      text: "AB\n中",
+      fontFamily: "Vertical fixture",
+      fontRevision: 1,
+      glyphCount: 3,
+      direction: "ltr",
+      glyphIds: new Uint32Array([101, 102, 20_013]),
+      clusters: new Uint32Array([0, 1, 3]),
+      x: new Float32Array([0, 10, 0]),
+      y: new Float32Array([2, 2, 26]),
+      xAdvance: new Float32Array([10, 10, 20]),
+      yAdvance: new Float32Array([0, 0, 0]),
+      lineIndices: new Uint32Array([0, 0, 1]),
+      glyphKeys: Object.freeze(["A", "B", "中"]),
+      bounds: Object.freeze({ x: 0, y: 0, width: 20, height: 48 }),
+    });
+    const engine = new LayoutEngine(registry, {
+      bitmapAdapter: { layout: () => horizontalRun },
+      harfbuzzShaper: {
+        async shape() {
+          throw new Error("Unexpected binary shaping");
+        },
+      },
+    });
+
+    const run = await engine.layout(20, 1, {
+      text: "AB\n中",
+      style: { fontFamily: "Vertical fixture", fontSize: 20, lineHeight: 24 },
+      writingMode: "vertical-rl",
+    });
+
+    expect(run).not.toBe(horizontalRun);
+    expect([...run.x]).toEqual([24, 24, 0]);
+    expect([...run.y]).toEqual([0, 20, 0]);
+    expect([...run.xAdvance]).toEqual([0, 0, 0]);
+    expect([...run.yAdvance]).toEqual([20, 20, 20]);
+    expect([...run.lineIndices]).toEqual([0, 0, 1]);
+    expect(run.bounds).toEqual({ x: 0, y: 0, width: 48, height: 40 });
 
     engine.destroy();
     registry.destroy();

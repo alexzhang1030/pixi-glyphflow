@@ -70,6 +70,7 @@ async function run(): Promise<void> {
 
   const layer = new TextLayer({ renderer: app.renderer, culling: false });
   app.stage.addChild(layer);
+  const secondaryGroup = layer.createGroup();
   const first = layer.create({
     text: "Primary action",
     x: 24,
@@ -78,6 +79,7 @@ async function run(): Promise<void> {
   });
   const second = layer.create({
     text: "Documentation",
+    group: secondaryGroup,
     x: 142,
     y: 132,
     style: { fontFamily: "Arial", fontSize: 24, fill: 0xffffff },
@@ -120,13 +122,13 @@ async function run(): Promise<void> {
     close(initialFirst.height, expectedBounds.height);
 
   layer.update(first, { text: "Primary action updated", x: 42 });
-  layer.update(second, { visible: false });
+  layer.setGroupVisible(secondaryGroup, false);
   await layer.commit();
   app.render();
   const updatedFirst = snapshotElement(firstElement);
   const hiddenSecond = snapshotElement(secondElement);
 
-  layer.update(second, { visible: true });
+  layer.setGroupVisible(secondaryGroup, true);
   await layer.commit();
   app.render();
   const restoredSecond = snapshotElement(secondElement);

@@ -25,7 +25,14 @@ test("renders appearance controls consistently across WebGL and WebGPU", async (
   const webgpuResult = assertFixture(webgpu, webgpuAvailable ? "webgpu" : "webgl");
   if (!webgpuAvailable) return;
 
-  for (const state of ["base", "effects", "transformed", "translucent"] as const) {
+  for (const state of [
+    "base",
+    "bold",
+    "vertical",
+    "effects",
+    "transformed",
+    "translucent",
+  ] as const) {
     expect(relativeDifference(webglResult[state].count, webgpuResult[state].count)).toBeLessThan(
       0.08,
     );
@@ -53,6 +60,10 @@ function assertFixture(
   expect(result.rendererAdapter).toBe(renderer);
   expect(result.base.count).toBeGreaterThan(500);
   expect(result.base.maxAlpha).toBeGreaterThan(245);
+  expect(result.bold.count).toBeGreaterThan(result.base.count * 1.05);
+  expect(result.vertical.maxY - result.vertical.minY).toBeGreaterThan(
+    (result.vertical.maxX - result.vertical.minX) * 1.4,
+  );
   expect(result.effects.count).toBeGreaterThan(result.base.count);
   expect(result.effects.redDominant).toBeGreaterThan(100);
   expect(result.effects.greenDominant).toBeGreaterThan(50);

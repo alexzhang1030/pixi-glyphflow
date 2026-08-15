@@ -1,14 +1,18 @@
 import type { BLEND_MODES, PointData, Renderer, TextStyleOptions } from "pixi.js";
 
 import type { BoundsData, MutableBoundsData, PointLike } from "./culling/types";
-import type { TextDirection } from "./layout/types";
+import type { TextDirection, TextWritingMode } from "./layout/types";
 import type { RenderCoordinatorOptions } from "./render/RenderCoordinator";
 
 declare const textIdBrand: unique symbol;
+declare const textGroupIdBrand: unique symbol;
 declare const textRevisionBrand: unique symbol;
 
 /** Stable identity for a label owned by one {@link TextLayer}. */
 export type TextId = number & { readonly [textIdBrand]: "TextId" };
+
+/** Opaque identity for a label group owned by one {@link TextLayer}. */
+export type TextGroupId = symbol & { readonly [textGroupIdBrand]: "TextGroupId" };
 
 /** Monotonic revision published by {@link TextLayer.commit}. */
 export type TextRevision = number & { readonly [textRevisionBrand]: "TextRevision" };
@@ -48,6 +52,12 @@ export interface TextShapingOptions {
   readonly variations?: Readonly<Record<string, number>>;
 }
 
+/** Optional label layout controls applied after shaping. */
+export interface TextLayoutOptions {
+  /** Horizontal lines or upright top-to-bottom columns ordered from right to left. */
+  readonly writingMode?: TextWritingMode;
+}
+
 /** Label state accepted by {@link TextLayer.create}. */
 export interface TextLabelSpec {
   /** Text content. Empty strings remain valid labels. */
@@ -72,16 +82,24 @@ export interface TextLabelSpec {
   readonly alpha?: number;
   /** Render visibility. */
   readonly visible?: boolean;
+  /** Optional layer-local group identity created by {@link TextLayer.createGroup}. */
+  readonly group?: TextGroupId;
   /** Origin used for positioning and rotation. */
   readonly anchor?: PointData | number;
   /** PixiJS text style options captured by value. */
   readonly style?: Readonly<TextStyleOptions>;
+  /** Writing-flow controls captured by value. */
+  readonly layout?: Readonly<TextLayoutOptions>;
   /** Language, script, direction, OpenType feature, and variation controls. */
   readonly shaping?: Readonly<TextShapingOptions>;
 }
 
 /** Mutable fields accepted by {@link TextLayer.update}. */
-export type TextLabelPatch = Partial<Omit<TextLabelSpec, "shaping">> & {
+export type TextLabelPatch = Partial<Omit<TextLabelSpec, "group" | "layout" | "shaping">> & {
+  /** Replacement group identity. Null clears the current group membership. */
+  readonly group?: TextGroupId | null;
+  /** Replacement layout controls. Null clears a previous override. */
+  readonly layout?: Readonly<TextLayoutOptions> | null;
   /** Replacement shaping controls. Null clears a previous override. */
   readonly shaping?: Readonly<TextShapingOptions> | null;
 };
@@ -100,8 +118,12 @@ export interface TextLabelSnapshot {
   readonly blendMode: BLEND_MODES;
   readonly alpha: number;
   readonly visible: boolean;
+  /** Visibility after composing the label flag with its optional group mask. */
+  readonly effectiveVisible: boolean;
+  readonly group?: TextGroupId;
   readonly anchor: Readonly<PointData>;
   readonly style: Readonly<TextStyleOptions>;
+  readonly layout?: Readonly<TextLayoutOptions>;
   readonly shaping?: Readonly<TextShapingOptions>;
 }
 
@@ -166,6 +188,10 @@ export interface TextLayer {
   create(spec: TextLabelSpec): TextId;
   get(id: TextId): Readonly<TextLabelSnapshot> | undefined;
   update(id: TextId, patch: TextLabelPatch): boolean;
+  createGroup(): TextGroupId;
+  hasGroup(group: TextGroupId): boolean;
+  setGroupVisible(group: TextGroupId, visible: boolean): number;
+  removeGroup(group: TextGroupId): boolean;
   showAll(): number;
   hideAll(): number;
   setViewportBounds(bounds: BoundsData | undefined): void;

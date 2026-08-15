@@ -1,3 +1,5 @@
+import type { TextStyleFontWeight } from "pixi.js";
+
 export type GlyphMode = "msdf" | "sdf" | "alpha" | "color";
 
 export interface GlyphRequest {
@@ -116,6 +118,7 @@ export interface RasterGlyphRequest {
   readonly glyphId: number;
   readonly glyphText: string;
   readonly fontSize: number;
+  readonly fontWeight?: TextStyleFontWeight;
   readonly mode: GlyphMode;
 }
 

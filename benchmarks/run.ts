@@ -30,7 +30,7 @@ const fixtures: readonly BrowserBenchmarkFixture[] =
 const server = await createServer({
   root: projectRoot,
   logLevel: "error",
-  server: { host: "127.0.0.1", port: 0 },
+  server: { host: "127.0.0.1", port: 0, hmr: false, watch: null },
 });
 await server.listen();
 const address = server.httpServer?.address();

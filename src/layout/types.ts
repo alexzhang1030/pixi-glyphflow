@@ -1,6 +1,7 @@
 import type { TextStyle, TextStyleOptions } from "pixi.js";
 
 export type TextDirection = "ltr" | "rtl";
+export type TextWritingMode = "horizontal-tb" | "vertical-rl";
 
 export interface RunBounds {
   readonly x: number;
@@ -83,6 +84,7 @@ export interface TextLayoutInput {
   readonly script?: string;
   readonly features?: readonly string[];
   readonly variations?: Readonly<Record<string, number>>;
+  readonly writingMode?: TextWritingMode;
   readonly trimEnd?: boolean;
   readonly maxLines?: number;
   readonly ellipsis?: string;
@@ -98,7 +100,7 @@ export interface PositionedRunShaper {
 }
 
 export interface BitmapLayoutAdapterLike {
-  layout(input: BitmapLayoutInput): Readonly<PositionedRun>;
+  layout(input: BitmapLayoutInput): Readonly<PositionedRun> | Promise<Readonly<PositionedRun>>;
 }
 
 export interface LayoutEngineOptions {

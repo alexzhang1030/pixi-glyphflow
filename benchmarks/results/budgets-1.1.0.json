@@ -1,0 +1,716 @@
+{
+  "schemaVersion": 1,
+  "packageVersion": "1.1.0",
+  "capturedAt": "2026-08-15T10:25:36.411Z",
+  "passed": true,
+  "checks": [
+    {
+      "name": "artifact:static-hud",
+      "actual": "present",
+      "limit": "present",
+      "passed": true
+    },
+    {
+      "name": "status:static-hud",
+      "actual": "complete",
+      "limit": "complete",
+      "passed": true
+    },
+    {
+      "name": "samples:static-hud",
+      "actual": 4,
+      "limit": 4,
+      "passed": true
+    },
+    {
+      "name": "labels:static-hud/text",
+      "actual": 1000,
+      "limit": 1000,
+      "passed": true
+    },
+    {
+      "name": "invariant:static-hud/exactLabelCount",
+      "actual": "true",
+      "limit": "true",
+      "passed": true
+    },
+    {
+      "name": "invariant:static-hud/exactSubmittedCount",
+      "actual": "true",
+      "limit": "true",
+      "passed": true
+    },
+    {
+      "name": "invariant:static-hud/everyFrameMeasured",
+      "actual": "true",
+      "limit": "true",
+      "passed": true
+    },
+    {
+      "name": "labels:static-hud/bitmap-text",
+      "actual": 1000,
+      "limit": 1000,
+      "passed": true
+    },
+    {
+      "name": "invariant:static-hud/exactLabelCount",
+      "actual": "true",
+      "limit": "true",
+      "passed": true
+    },
+    {
+      "name": "invariant:static-hud/exactSubmittedCount",
+      "actual": "true",
+      "limit": "true",
+      "passed": true
+    },
+    {
+      "name": "invariant:static-hud/everyFrameMeasured",
+      "actual": "true",
+      "limit": "true",
+      "passed": true
+    },
+    {
+      "name": "labels:static-hud/glyphflow",
+      "actual": 1000,
+      "limit": 1000,
+      "passed": true
+    },
+    {
+      "name": "invariant:static-hud/exactLabelCount",
+      "actual": "true",
+      "limit": "true",
+      "passed": true
+    },
+    {
+      "name": "invariant:static-hud/exactSubmittedCount",
+      "actual": "true",
+      "limit": "true",
+      "passed": true
+    },
+    {
+      "name": "invariant:static-hud/everyFrameMeasured",
+      "actual": "true",
+      "limit": "true",
+      "passed": true
+    },
+    {
+      "name": "labels:static-hud/html-text",
+      "actual": 1000,
+      "limit": 1000,
+      "passed": true
+    },
+    {
+      "name": "invariant:static-hud/exactLabelCount",
+      "actual": "true",
+      "limit": "true",
+      "passed": true
+    },
+    {
+      "name": "invariant:static-hud/exactSubmittedCount",
+      "actual": "true",
+      "limit": "true",
+      "passed": true
+    },
+    {
+      "name": "invariant:static-hud/everyFrameMeasured",
+      "actual": "true",
+      "limit": "true",
+      "passed": true
+    },
+    {
+      "name": "artifact:million-viewport",
+      "actual": "present",
+      "limit": "present",
+      "passed": true
+    },
+    {
+      "name": "status:million-viewport",
+      "actual": "complete",
+      "limit": "complete",
+      "passed": true
+    },
+    {
+      "name": "samples:million-viewport",
+      "actual": 1,
+      "limit": 1,
+      "passed": true
+    },
+    {
+      "name": "labels:million-viewport/glyphflow",
+      "actual": 1000000,
+      "limit": 1000000,
+      "passed": true
+    },
+    {
+      "name": "invariant:million-viewport/exactResidentLabels",
+      "actual": "true",
+      "limit": "true",
+      "passed": true
+    },
+    {
+      "name": "invariant:million-viewport/boundedVisibleSet",
+      "actual": "true",
+      "limit": "true",
+      "passed": true
+    },
+    {
+      "name": "invariant:million-viewport/cameraPreservesRevision",
+      "actual": "true",
+      "limit": "true",
+      "passed": true
+    },
+    {
+      "name": "invariant:million-viewport/storeWithin128MiB",
+      "actual": "true",
+      "limit": "true",
+      "passed": true
+    },
+    {
+      "name": "artifact:dynamic-counters",
+      "actual": "present",
+      "limit": "present",
+      "passed": true
+    },
+    {
+      "name": "status:dynamic-counters",
+      "actual": "complete",
+      "limit": "complete",
+      "passed": true
+    },
+    {
+      "name": "samples:dynamic-counters",
+      "actual": 1,
+      "limit": 1,
+      "passed": true
+    },
+    {
+      "name": "labels:dynamic-counters/glyphflow",
+      "actual": 1000000,
+      "limit": 1000000,
+      "passed": true
+    },
+    {
+      "name": "invariant:dynamic-counters/exactResidentLabels",
+      "actual": "true",
+      "limit": "true",
+      "passed": true
+    },
+    {
+      "name": "invariant:dynamic-counters/exactMutationCount",
+      "actual": "true",
+      "limit": "true",
+      "passed": true
+    },
+    {
+      "name": "invariant:dynamic-counters/revisionPerFrame",
+      "actual": "true",
+      "limit": "true",
+      "passed": true
+    },
+    {
+      "name": "artifact:viewport-drag",
+      "actual": "present",
+      "limit": "present",
+      "passed": true
+    },
+    {
+      "name": "status:viewport-drag",
+      "actual": "complete",
+      "limit": "complete",
+      "passed": true
+    },
+    {
+      "name": "samples:viewport-drag",
+      "actual": 1,
+      "limit": 1,
+      "passed": true
+    },
+    {
+      "name": "labels:viewport-drag/glyphflow",
+      "actual": 1000000,
+      "limit": 1000000,
+      "passed": true
+    },
+    {
+      "name": "invariant:viewport-drag/exactResidentLabels",
+      "actual": "true",
+      "limit": "true",
+      "passed": true
+    },
+    {
+      "name": "invariant:viewport-drag/boundedVisibleSet",
+      "actual": "true",
+      "limit": "true",
+      "passed": true
+    },
+    {
+      "name": "invariant:viewport-drag/fullZoomRangeCovered",
+      "actual": "true",
+      "limit": "true",
+      "passed": true
+    },
+    {
+      "name": "invariant:viewport-drag/cameraPreservesRevision",
+      "actual": "true",
+      "limit": "true",
+      "passed": true
+    },
+    {
+      "name": "invariant:viewport-drag/cameraPreservesShaping",
+      "actual": "true",
+      "limit": "true",
+      "passed": true
+    },
+    {
+      "name": "invariant:viewport-drag/everyFrameCommitted",
+      "actual": "true",
+      "limit": "true",
+      "passed": true
+    },
+    {
+      "name": "artifact:viewport-zoom",
+      "actual": "present",
+      "limit": "present",
+      "passed": true
+    },
+    {
+      "name": "status:viewport-zoom",
+      "actual": "complete",
+      "limit": "complete",
+      "passed": true
+    },
+    {
+      "name": "samples:viewport-zoom",
+      "actual": 1,
+      "limit": 1,
+      "passed": true
+    },
+    {
+      "name": "labels:viewport-zoom/glyphflow",
+      "actual": 1000000,
+      "limit": 1000000,
+      "passed": true
+    },
+    {
+      "name": "invariant:viewport-zoom/exactResidentLabels",
+      "actual": "true",
+      "limit": "true",
+      "passed": true
+    },
+    {
+      "name": "invariant:viewport-zoom/boundedVisibleSet",
+      "actual": "true",
+      "limit": "true",
+      "passed": true
+    },
+    {
+      "name": "invariant:viewport-zoom/fullZoomRangeCovered",
+      "actual": "true",
+      "limit": "true",
+      "passed": true
+    },
+    {
+      "name": "invariant:viewport-zoom/cameraPreservesRevision",
+      "actual": "true",
+      "limit": "true",
+      "passed": true
+    },
+    {
+      "name": "invariant:viewport-zoom/cameraPreservesShaping",
+      "actual": "true",
+      "limit": "true",
+      "passed": true
+    },
+    {
+      "name": "invariant:viewport-zoom/everyFrameCommitted",
+      "actual": "true",
+      "limit": "true",
+      "passed": true
+    },
+    {
+      "name": "artifact:position-storm",
+      "actual": "present",
+      "limit": "present",
+      "passed": true
+    },
+    {
+      "name": "status:position-storm",
+      "actual": "complete",
+      "limit": "complete",
+      "passed": true
+    },
+    {
+      "name": "samples:position-storm",
+      "actual": 1,
+      "limit": 1,
+      "passed": true
+    },
+    {
+      "name": "labels:position-storm/glyphflow",
+      "actual": 1000000,
+      "limit": 1000000,
+      "passed": true
+    },
+    {
+      "name": "invariant:position-storm/exactResidentLabels",
+      "actual": "true",
+      "limit": "true",
+      "passed": true
+    },
+    {
+      "name": "invariant:position-storm/exactMutationCount",
+      "actual": "true",
+      "limit": "true",
+      "passed": true
+    },
+    {
+      "name": "invariant:position-storm/packedPositionStorage",
+      "actual": "true",
+      "limit": "true",
+      "passed": true
+    },
+    {
+      "name": "artifact:multilingual-stream",
+      "actual": "present",
+      "limit": "present",
+      "passed": true
+    },
+    {
+      "name": "status:multilingual-stream",
+      "actual": "complete",
+      "limit": "complete",
+      "passed": true
+    },
+    {
+      "name": "samples:multilingual-stream",
+      "actual": 1,
+      "limit": 1,
+      "passed": true
+    },
+    {
+      "name": "labels:multilingual-stream/glyphflow",
+      "actual": 10000,
+      "limit": 10000,
+      "passed": true
+    },
+    {
+      "name": "invariant:multilingual-stream/exactResidentLabels",
+      "actual": "true",
+      "limit": "true",
+      "passed": true
+    },
+    {
+      "name": "invariant:multilingual-stream/multilingualShapingActive",
+      "actual": "true",
+      "limit": "true",
+      "passed": true
+    },
+    {
+      "name": "invariant:multilingual-stream/boundedVisibleSet",
+      "actual": "true",
+      "limit": "true",
+      "passed": true
+    },
+    {
+      "name": "artifact:scale-scan",
+      "actual": "present",
+      "limit": "present",
+      "passed": true
+    },
+    {
+      "name": "status:scale-scan",
+      "actual": "complete",
+      "limit": "complete",
+      "passed": true
+    },
+    {
+      "name": "samples:scale-scan",
+      "actual": 1,
+      "limit": 1,
+      "passed": true
+    },
+    {
+      "name": "labels:scale-scan/glyphflow",
+      "actual": 50000,
+      "limit": 50000,
+      "passed": true
+    },
+    {
+      "name": "invariant:scale-scan/exactResidentLabels",
+      "actual": "true",
+      "limit": "true",
+      "passed": true
+    },
+    {
+      "name": "invariant:scale-scan/scaleRangeCovered",
+      "actual": "true",
+      "limit": "true",
+      "passed": true
+    },
+    {
+      "name": "invariant:scale-scan/rotatedCameraCovered",
+      "actual": "true",
+      "limit": "true",
+      "passed": true
+    },
+    {
+      "name": "invariant:scale-scan/renderedGlyphs",
+      "actual": "true",
+      "limit": "true",
+      "passed": true
+    },
+    {
+      "name": "artifact:atlas-pressure",
+      "actual": "present",
+      "limit": "present",
+      "passed": true
+    },
+    {
+      "name": "status:atlas-pressure",
+      "actual": "complete",
+      "limit": "complete",
+      "passed": true
+    },
+    {
+      "name": "samples:atlas-pressure",
+      "actual": 1,
+      "limit": 1,
+      "passed": true
+    },
+    {
+      "name": "labels:atlas-pressure/glyphflow",
+      "actual": 20000,
+      "limit": 20000,
+      "passed": true
+    },
+    {
+      "name": "invariant:atlas-pressure/exactRequests",
+      "actual": "true",
+      "limit": "true",
+      "passed": true
+    },
+    {
+      "name": "invariant:atlas-pressure/boundedAtlasBytes",
+      "actual": "true",
+      "limit": "true",
+      "passed": true
+    },
+    {
+      "name": "invariant:atlas-pressure/evictionActivated",
+      "actual": "true",
+      "limit": "true",
+      "passed": true
+    },
+    {
+      "name": "invariant:atlas-pressure/zeroCapacityFailures",
+      "actual": "true",
+      "limit": "true",
+      "passed": true
+    },
+    {
+      "name": "artifact:million-full",
+      "actual": "present",
+      "limit": "present",
+      "passed": true
+    },
+    {
+      "name": "status:million-full",
+      "actual": "complete",
+      "limit": "complete",
+      "passed": true
+    },
+    {
+      "name": "samples:million-full",
+      "actual": 1,
+      "limit": 1,
+      "passed": true
+    },
+    {
+      "name": "labels:million-full/glyphflow",
+      "actual": 1000000,
+      "limit": 1000000,
+      "passed": true
+    },
+    {
+      "name": "invariant:million-full/exactResidentLabels",
+      "actual": "true",
+      "limit": "true",
+      "passed": true
+    },
+    {
+      "name": "invariant:million-full/exactVisibleGlyphs",
+      "actual": "true",
+      "limit": "true",
+      "passed": true
+    },
+    {
+      "name": "invariant:million-full/eightGlyphsPerLabel",
+      "actual": "true",
+      "limit": "true",
+      "passed": true
+    },
+    {
+      "name": "invariant:million-full/singleDrawCall",
+      "actual": "true",
+      "limit": "true",
+      "passed": true
+    },
+    {
+      "name": "invariant:million-full/gpuDrawObserved",
+      "actual": "true",
+      "limit": "true",
+      "passed": true
+    },
+    {
+      "name": "invariant:million-full/exactSubmittedInstanceCount",
+      "actual": "true",
+      "limit": "true",
+      "passed": true
+    },
+    {
+      "name": "invariant:million-full/nonTransparentOutput",
+      "actual": "true",
+      "limit": "true",
+      "passed": true
+    },
+    {
+      "name": "static-glyphflow-vs-bitmap-text-p95-ms",
+      "actual": 0.09999999403953552,
+      "limit": 0.09999999403953552,
+      "passed": true
+    },
+    {
+      "name": "million-full-frame-p95-ms",
+      "actual": 0.09999999403953552,
+      "limit": 16.67,
+      "passed": true
+    },
+    {
+      "name": "million-full-store-bytes",
+      "actual": 75497472,
+      "limit": 134217728,
+      "passed": true
+    },
+    {
+      "name": "million-viewport-frame-p95-ms",
+      "actual": 5.4000000059604645,
+      "limit": 16.67,
+      "passed": true
+    },
+    {
+      "name": "million-viewport-store-bytes",
+      "actual": 75497472,
+      "limit": 134217728,
+      "passed": true
+    },
+    {
+      "name": "dynamic-counters-frame-p95-ms",
+      "actual": 16.400000005960464,
+      "limit": 16.67,
+      "passed": true
+    },
+    {
+      "name": "dynamic-counters-store-bytes",
+      "actual": 76021760,
+      "limit": 134217728,
+      "passed": true
+    },
+    {
+      "name": "viewport-drag-frame-p95-ms",
+      "actual": 5.800000011920929,
+      "limit": 16.67,
+      "passed": true
+    },
+    {
+      "name": "viewport-drag-store-bytes",
+      "actual": 75497472,
+      "limit": 134217728,
+      "passed": true
+    },
+    {
+      "name": "viewport-zoom-frame-p95-ms",
+      "actual": 7.5999999940395355,
+      "limit": 16.67,
+      "passed": true
+    },
+    {
+      "name": "viewport-zoom-store-bytes",
+      "actual": 75497472,
+      "limit": 134217728,
+      "passed": true
+    },
+    {
+      "name": "position-storm-frame-p95-ms",
+      "actual": 9.5,
+      "limit": 16.67,
+      "passed": true
+    },
+    {
+      "name": "position-storm-store-bytes",
+      "actual": 76021760,
+      "limit": 134217728,
+      "passed": true
+    },
+    {
+      "name": "dynamic-counters-mutation-p95-ms",
+      "actual": 15.699999988079071,
+      "limit": 16.67,
+      "passed": true
+    },
+    {
+      "name": "position-storm-mutation-p95-ms",
+      "actual": 3.600000023841858,
+      "limit": 16.67,
+      "passed": true
+    },
+    {
+      "name": "full-visible-glyphs",
+      "actual": 8000000,
+      "limit": 8000000,
+      "passed": true
+    },
+    {
+      "name": "instance-bytes-per-glyph",
+      "actual": 32,
+      "limit": 32,
+      "passed": true
+    },
+    {
+      "name": "instance-buffer-bytes",
+      "actual": 256000000,
+      "limit": 268435456,
+      "passed": true
+    },
+    {
+      "name": "transform-bytes-per-label",
+      "actual": 64,
+      "limit": 64,
+      "passed": true
+    },
+    {
+      "name": "full-draw-calls",
+      "actual": 1,
+      "limit": 1,
+      "passed": true
+    },
+    {
+      "name": "atlas-bytes",
+      "actual": 4194304,
+      "limit": 4194304,
+      "passed": true
+    },
+    {
+      "name": "atlas-evictions",
+      "actual": 3616,
+      "limit": "> 0",
+      "passed": true
+    },
+    {
+      "name": "core-esm-gzip-bytes",
+      "actual": 39996,
+      "limit": 40960,
+      "passed": true
+    }
+  ]
+}

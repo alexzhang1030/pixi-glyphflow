@@ -13,6 +13,21 @@ import type {
 
 const DEFAULT_CACHE_SIZE = 2_048;
 const DEFAULT_DISTANCE_FIELD_MIN_FONT_SIZE = 48;
+const FONT_WEIGHTS = new Set([
+  "normal",
+  "bold",
+  "bolder",
+  "lighter",
+  "100",
+  "200",
+  "300",
+  "400",
+  "500",
+  "600",
+  "700",
+  "800",
+  "900",
+]);
 
 export class RasterGlyphProvider {
   readonly #registry: FontRegistry;
@@ -345,6 +360,9 @@ function validateRequest(request: RasterGlyphRequest): void {
   if (!Number.isFinite(request.fontSize) || request.fontSize <= 0) {
     throw new TypeError("fontSize must be a positive finite number");
   }
+  if (request.fontWeight !== undefined && !FONT_WEIGHTS.has(request.fontWeight)) {
+    throw new TypeError("fontWeight must be a supported CSS font weight");
+  }
   assertMode(request.mode);
 }
 
@@ -375,13 +393,14 @@ function requestCacheKey(request: RasterGlyphRequest): string {
     request.glyphId,
     request.glyphText,
     request.fontSize,
+    request.fontWeight ?? "normal",
     request.mode,
   ].join("\u0000");
 }
 
 function canvasFont(request: RasterGlyphRequest): string {
   const families = request.fontFamilies ?? [request.family];
-  return `${String(request.fontSize)}px ${families.map(formatFamily).join(", ")}`;
+  return `${request.fontWeight ?? "normal"} ${String(request.fontSize)}px ${families.map(formatFamily).join(", ")}`;
 }
 
 const CSS_GENERIC_FAMILIES = new Set([

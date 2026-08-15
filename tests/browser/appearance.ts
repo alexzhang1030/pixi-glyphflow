@@ -9,6 +9,8 @@ interface AppearanceFixtureState {
   result?: {
     rendererAdapter: string;
     base: PixelProfile;
+    bold: PixelProfile;
+    vertical: PixelProfile;
     effects: PixelProfile;
     transformed: PixelProfile;
     translucent: PixelProfile;
@@ -58,6 +60,28 @@ async function run(): Promise<void> {
   const base = await measurePixelProfile(app, layer);
 
   layer.update(id, {
+    style: { fontFamily: "Arial", fontSize: 64, fontWeight: "bold", fill: 0xffffff },
+  });
+  await layer.commit();
+  app.render();
+  const bold = await measurePixelProfile(app, layer);
+
+  layer.update(id, {
+    text: "AB",
+    x: 48,
+    y: 60,
+    layout: { writingMode: "vertical-rl" },
+    style: { fontFamily: "Arial", fontSize: 32, fill: 0xffffff },
+  });
+  await layer.commit();
+  app.render();
+  const vertical = await measurePixelProfile(app, layer);
+
+  layer.update(id, {
+    text: "W",
+    layout: null,
+    x: 24,
+    y: 102,
     alpha: 0.5,
     style: {
       fontFamily: "Arial",
@@ -104,6 +128,8 @@ async function run(): Promise<void> {
   window.__glyphflowAppearance.result = {
     rendererAdapter: layer.stats.rendererAdapter,
     base,
+    bold,
+    vertical,
     effects,
     transformed,
     translucent,

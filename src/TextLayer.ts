@@ -31,11 +31,13 @@ import {
   type TextStoreSnapshot,
 } from "./store/types";
 import type {
+  TextGroupId,
   TextId,
   TextCompactionResult,
   TextLabelPatch,
   TextLabelSnapshot,
   TextLabelSpec,
+  TextLayoutOptions,
   TextLayerOptions,
   TextLayerCullingOptions,
   TextLayerRenderingOptions,
@@ -49,6 +51,15 @@ const EMPTY_STYLE: Readonly<TextStyleOptions> = Object.freeze({});
 const ALL_DIRTY = TextDirty.Content | TextDirty.Transform | TextDirty.Style;
 export const TEXT_LAYER_COMMIT_EVENT = "glyphflow:commit";
 
+interface TextGroupState {
+  visible: boolean;
+  readonly members: Set<TextId>;
+}
+
+interface LayerRenderChange extends RenderChange {
+  readonly labelId?: TextId;
+}
+
 /**
  * Dense, revisioned text state and the PixiJS scene-object seam for glyph rendering.
  *
@@ -61,6 +72,9 @@ export class TextLayer extends Container {
   readonly #spatial: SpatialIndex;
   readonly #trustedRuns = new Map<TextId, TrustedGlyphRun>();
   readonly #shaping = new Map<TextId, Readonly<TextShapingOptions>>();
+  readonly #layouts = new Map<TextId, Readonly<TextLayoutOptions>>();
+  readonly #groups = new Map<TextGroupId, TextGroupState>();
+  readonly #labelGroups = new Map<TextId, TextGroupId>();
   #revision = 0;
   #pendingMutations = 0;
   #acceptedMutations = 0;
@@ -134,13 +148,83 @@ export class TextLayer extends Container {
     }
   }
 
+  /** Create one collision-free group identity owned by this layer. */
+  createGroup(): TextGroupId {
+    this.#assertActive();
+    const group = Symbol("pixi-glyphflow TextGroup") as TextGroupId;
+    this.#groups.set(group, { visible: true, members: new Set() });
+
+    return group;
+  }
+
+  /** Check whether a group identity currently belongs to this layer. */
+  hasGroup(group: TextGroupId): boolean {
+    this.#assertActive();
+    return this.#groups.has(group);
+  }
+
+  /** Set one group visibility mask and return the effective label change count. */
+  setGroupVisible(group: TextGroupId, visible: boolean): number {
+    this.#assertActive();
+    if (typeof visible !== "boolean") {
+      throw new TypeError("Group visibility must be a boolean");
+    }
+    const state = this.#requireGroup(group);
+    if (state.visible === visible) return 0;
+    state.visible = visible;
+
+    let changed = 0;
+    for (const id of state.members) {
+      const slot = this.#store.slotOf(id);
+      if (slot === undefined) continue;
+      if (!this.#store.copyBoundsLabelAt(slot, this.#labelScratch)) continue;
+      if (!this.#labelScratch.visible) continue;
+      this.#store.markDirty(id, TextDirty.Transform);
+      this.#spatial.setVisible(slot, visible);
+      changed += 1;
+    }
+    if (changed > 0) this.#visibilityDirty = true;
+    this.#recordMutation(TextDirty.Transform, changed);
+
+    return changed;
+  }
+
+  /** Retire one group identity while retaining and detaching its labels. */
+  removeGroup(group: TextGroupId): boolean {
+    this.#assertActive();
+    const state = this.#groups.get(group);
+    if (state === undefined) return false;
+
+    let changed = 0;
+    for (const id of state.members) {
+      this.#labelGroups.delete(id);
+      if (state.visible) continue;
+      const slot = this.#store.slotOf(id);
+      if (slot === undefined) continue;
+      if (!this.#store.copyBoundsLabelAt(slot, this.#labelScratch)) continue;
+      if (!this.#labelScratch.visible) continue;
+      this.#store.markDirty(id, TextDirty.Transform);
+      this.#spatial.setVisible(slot, true);
+      changed += 1;
+    }
+    this.#groups.delete(group);
+    if (changed > 0) this.#visibilityDirty = true;
+    this.#recordMutation(TextDirty.Transform, changed);
+
+    return true;
+  }
+
   /** Create one label and return its layer-local identity. */
   create(spec: TextLabelSpec): TextId {
     this.#assertActive();
     assertLabelSpec(spec);
+    if (spec.group !== undefined) this.#requireGroup(spec.group);
+    const layout = normalizeLayoutOptions(spec.layout);
     const shaping = normalizeShapingOptions(spec.shaping);
     const label = normalizeLabel(spec, this.#labelScratch);
     const id = this.#store.create(label);
+    if (spec.group !== undefined) this.#associateGroup(id, spec.group);
+    if (layout !== undefined) this.#layouts.set(id, layout);
     if (shaping !== undefined) this.#shaping.set(id, shaping);
     this.#indexLabel(id, label);
     this.#visibilityDirty = true;
@@ -154,7 +238,9 @@ export class TextLayer extends Container {
     this.#assertActive();
     for (const spec of specs) {
       assertLabelSpec(spec);
+      if (spec.group !== undefined) this.#requireGroup(spec.group);
     }
+    const layouts = specs.map((spec) => normalizeLayoutOptions(spec.layout));
     const shapings = specs.map((spec) => normalizeShapingOptions(spec.shaping));
     this.#store.reserve(specs.length);
     this.#spatial.reserve(this.#store.capacity);
@@ -166,6 +252,9 @@ export class TextLayer extends Container {
       const label = normalizeLabel(spec, this.#labelScratch);
       const id = this.#store.create(label);
       ids.push(id);
+      if (spec.group !== undefined) this.#associateGroup(id, spec.group);
+      const layout = layouts[index];
+      if (layout !== undefined) this.#layouts.set(id, layout);
       const shaping = shapings[index];
       if (shaping !== undefined) this.#shaping.set(id, shaping);
       this.#indexLabel(id, label);
@@ -185,6 +274,8 @@ export class TextLayer extends Container {
     }
 
     const shaping = this.#shaping.get(id);
+    const layout = this.#layouts.get(id);
+    const group = this.#labelGroups.get(id);
     return Object.freeze({
       id: snapshot.id,
       sourceRevision: snapshot.sourceRevision,
@@ -198,8 +289,11 @@ export class TextLayer extends Container {
       blendMode: snapshot.blendMode,
       alpha: snapshot.alpha,
       visible: snapshot.visible,
+      effectiveVisible: this.#isEffectivelyVisible(id, snapshot.visible),
+      ...(group === undefined ? {} : { group }),
       anchor: Object.freeze({ x: snapshot.anchorX, y: snapshot.anchorY }),
       style: snapshot.style,
+      ...(layout === undefined ? {} : { layout }),
       ...(shaping === undefined ? {} : { shaping }),
     });
   }
@@ -214,26 +308,45 @@ export class TextLayer extends Container {
   update(id: TextId, patch: TextLabelPatch): boolean {
     this.#assertActive();
     assertLabelPatch(patch);
+    const groupPatch = normalizeGroupPatch(patch);
+    if (groupPatch !== undefined && groupPatch !== null) this.#requireGroup(groupPatch);
+    const nextGroup = groupPatch === null ? undefined : groupPatch;
+    const groupChanged = groupPatch !== undefined && this.#labelGroups.get(id) !== nextGroup;
+    const layoutPatch = normalizeLayoutPatch(patch);
+    const nextLayout = layoutPatch === null ? undefined : layoutPatch;
+    const layoutChanged =
+      layoutPatch !== undefined && !equalLayout(this.#layouts.get(id), nextLayout);
     const shapingPatch = normalizeShapingPatch(patch);
     const nextShaping = shapingPatch === null ? undefined : shapingPatch;
     const shapingChanged =
       shapingPatch !== undefined && !equalShaping(this.#shaping.get(id), nextShaping);
     let dirty = this.#store.update(id, normalizePatch(patch));
-    if (shapingChanged) {
+    if (groupChanged) {
+      this.#moveGroup(id, nextGroup);
+      this.#store.markDirty(id, TextDirty.Transform);
+      dirty |= TextDirty.Transform;
+    }
+    if (layoutChanged || shapingChanged) {
       if ((dirty & (TextDirty.Content | TextDirty.Style)) !== 0) {
         this.#store.markDirty(id, TextDirty.Style);
       } else {
         this.#store.markSourceDirty(id, TextDirty.Style);
       }
-      if (nextShaping === undefined) this.#shaping.delete(id);
-      else this.#shaping.set(id, nextShaping);
+      if (layoutChanged) {
+        if (nextLayout === undefined) this.#layouts.delete(id);
+        else this.#layouts.set(id, nextLayout);
+      }
+      if (shapingChanged) {
+        if (nextShaping === undefined) this.#shaping.delete(id);
+        else this.#shaping.set(id, nextShaping);
+      }
       dirty |= TextDirty.Style;
     }
     if (dirty !== TextDirty.None) {
       const snapshot = this.#store.get(id);
       if (snapshot === undefined) throw new Error("Updated label disappeared from its store");
       this.#indexLabel(id, snapshot);
-      if (patch.visible !== undefined) this.#visibilityDirty = true;
+      if (patch.visible !== undefined || groupChanged) this.#visibilityDirty = true;
     }
     if ((dirty & (TextDirty.Content | TextDirty.Style)) !== 0) {
       this.#trustedRuns.delete(id);
@@ -254,7 +367,9 @@ export class TextLayer extends Container {
     if (this.#bulkSlots.length < entries.length) {
       this.#bulkSlots = growTypedArray(this.#bulkSlots, nextPowerOfTwo(entries.length));
     }
+    const layoutPatches: NormalizedLayoutPatch[] = [];
     const shapingPatches: NormalizedShapingPatch[] = [];
+    const groupPatches: NormalizedGroupPatch[] = [];
     for (let index = 0; index < entries.length; index += 1) {
       const entry = entries[index];
       if (entry === undefined) throw new TypeError(`Missing update at index ${String(index)}`);
@@ -263,7 +378,11 @@ export class TextLayer extends Container {
         throw new RangeError(`Unknown or stale TextId: ${String(entry.id)}`);
       }
       assertLabelPatch(entry.patch);
+      layoutPatches[index] = normalizeLayoutPatch(entry.patch);
       shapingPatches[index] = normalizeShapingPatch(entry.patch);
+      const groupPatch = normalizeGroupPatch(entry.patch);
+      if (groupPatch !== undefined && groupPatch !== null) this.#requireGroup(groupPatch);
+      groupPatches[index] = groupPatch;
       this.#bulkSlots[index] = slot;
     }
 
@@ -277,18 +396,37 @@ export class TextLayer extends Container {
         throw new Error(`Validated update is unavailable at index ${String(index)}`);
       }
       let entryDirty = this.#store.updateAt(slot, normalizePatch(entry.patch));
+      const groupPatch = groupPatches[index];
+      const nextGroup = groupPatch === null ? undefined : groupPatch;
+      const groupChanged =
+        groupPatch !== undefined && this.#labelGroups.get(entry.id) !== nextGroup;
+      if (groupChanged) {
+        this.#moveGroup(entry.id, nextGroup);
+        this.#store.markDirty(entry.id, TextDirty.Transform);
+        entryDirty |= TextDirty.Transform;
+      }
+      const layoutPatch = layoutPatches[index];
+      const nextLayout = layoutPatch === null ? undefined : layoutPatch;
+      const layoutChanged =
+        layoutPatch !== undefined && !equalLayout(this.#layouts.get(entry.id), nextLayout);
       const shapingPatch = shapingPatches[index];
       const nextShaping = shapingPatch === null ? undefined : shapingPatch;
       const shapingChanged =
         shapingPatch !== undefined && !equalShaping(this.#shaping.get(entry.id), nextShaping);
-      if (shapingChanged) {
+      if (layoutChanged || shapingChanged) {
         if ((entryDirty & (TextDirty.Content | TextDirty.Style)) !== 0) {
           this.#store.markDirty(entry.id, TextDirty.Style);
         } else {
           this.#store.markSourceDirty(entry.id, TextDirty.Style);
         }
-        if (nextShaping === undefined) this.#shaping.delete(entry.id);
-        else this.#shaping.set(entry.id, nextShaping);
+        if (layoutChanged) {
+          if (nextLayout === undefined) this.#layouts.delete(entry.id);
+          else this.#layouts.set(entry.id, nextLayout);
+        }
+        if (shapingChanged) {
+          if (nextShaping === undefined) this.#shaping.delete(entry.id);
+          else this.#shaping.set(entry.id, nextShaping);
+        }
         entryDirty |= TextDirty.Style;
       }
       if (entryDirty !== TextDirty.None) {
@@ -300,8 +438,8 @@ export class TextLayer extends Container {
         if (!this.#store.copyBoundsLabelAt(slot, this.#labelScratch)) {
           throw new Error("Updated label disappeared from its store");
         }
-        this.#reindexCurrentSlot(slot, this.#labelScratch);
-        if (entry.patch.visible !== undefined) this.#visibilityDirty = true;
+        this.#reindexCurrentSlot(slot, entry.id, this.#labelScratch);
+        if (entry.patch.visible !== undefined || groupChanged) this.#visibilityDirty = true;
       }
     }
     this.#recordMutation(dirty, changed);
@@ -357,7 +495,9 @@ export class TextLayer extends Container {
         if (!this.#store.copyBoundsLabelAt(slot, this.#labelScratch)) {
           throw new Error("Updated label disappeared from its store");
         }
-        this.#reindexCurrentSlot(slot, this.#labelScratch);
+        const id = ids[index];
+        if (id === undefined) throw new Error("Updated label identity is unavailable");
+        this.#reindexCurrentSlot(slot, id as TextId, this.#labelScratch);
       },
     );
     this.#recordMutation(result.mask, result.changed);
@@ -374,7 +514,9 @@ export class TextLayer extends Container {
       if (slot === undefined) throw new Error("Removed label slot is unavailable");
       this.#spatial.remove(slot);
       this.#trustedRuns.delete(id);
+      this.#layouts.delete(id);
       this.#shaping.delete(id);
+      this.#detachGroup(id);
       this.#visibilityDirty = true;
     }
     this.#recordMutation(ALL_DIRTY, Number(removed));
@@ -393,7 +535,9 @@ export class TextLayer extends Container {
         if (slot === undefined) throw new Error("Removed label slot is unavailable");
         this.#spatial.remove(slot);
         this.#trustedRuns.delete(currentId);
+        this.#layouts.delete(currentId);
         this.#shaping.delete(currentId);
+        this.#detachGroup(currentId);
         removed += 1;
       }
     }
@@ -407,10 +551,13 @@ export class TextLayer extends Container {
   clear(): number {
     this.#assertActive();
     const removed = this.#store.size;
+    this.#labelGroups.clear();
+    for (const state of this.#groups.values()) state.members.clear();
     if (removed > 0) {
       this.#store.clear();
       this.#spatial.clear();
       this.#trustedRuns.clear();
+      this.#layouts.clear();
       this.#shaping.clear();
       this.#visibilityDirty = true;
       this.#recordMutation(ALL_DIRTY, removed);
@@ -588,14 +735,22 @@ export class TextLayer extends Container {
       for (const change of changes) {
         if (change.snapshot === undefined) continue;
         const run = coordinator.getRun(change.slot);
-        if (run !== undefined) {
-          this.#spatial.set(
-            change.slot,
-            transformedLabelBounds(change.snapshot, run.bounds, this.#boundsScratch),
-            change.snapshot.zIndex,
-            change.snapshot.visible,
-          );
+        const current = this.#store.snapshotAt(change.slot);
+        if (
+          run === undefined ||
+          current === undefined ||
+          change.labelId === undefined ||
+          current.id !== change.labelId ||
+          current.sourceRevision !== change.snapshot.sourceRevision
+        ) {
+          continue;
         }
+        this.#spatial.set(
+          change.slot,
+          transformedLabelBounds(current, run.bounds, this.#boundsScratch),
+          current.zIndex,
+          this.#isEffectivelyVisible(current.id, current.visible),
+        );
       }
     });
     this.#renderTail = renderWork.then(
@@ -707,7 +862,10 @@ export class TextLayer extends Container {
     this.#renderCoordinator?.destroy();
     this.#renderCoordinator = undefined;
     this.fonts.destroy();
+    this.#layouts.clear();
     this.#shaping.clear();
+    this.#labelGroups.clear();
+    this.#groups.clear();
     this.#spatial.destroy();
     this.#store.dispose();
     super.destroy(options);
@@ -722,11 +880,55 @@ export class TextLayer extends Container {
     this.#acceptedMutations += count;
   }
 
+  #associateGroup(id: TextId, group: TextGroupId): void {
+    this.#requireGroup(group).members.add(id);
+    this.#labelGroups.set(id, group);
+  }
+
+  #moveGroup(id: TextId, group: TextGroupId | undefined): void {
+    this.#detachGroup(id);
+    if (group === undefined) {
+      return;
+    }
+    this.#associateGroup(id, group);
+  }
+
+  #detachGroup(id: TextId): void {
+    const group = this.#labelGroups.get(id);
+    if (group === undefined) return;
+    this.#groups.get(group)?.members.delete(id);
+    this.#labelGroups.delete(id);
+  }
+
+  #requireGroup(group: TextGroupId): TextGroupState {
+    const state = this.#groups.get(group);
+    if (state === undefined) {
+      throw new RangeError("Unknown or stale TextGroupId");
+    }
+
+    return state;
+  }
+
+  #isEffectivelyVisible(id: TextId, labelVisible: boolean): boolean {
+    if (!labelVisible) return false;
+    const group = this.#labelGroups.get(id);
+    return group === undefined || this.#groups.get(group)?.visible === true;
+  }
+
   #setAllVisible(visible: boolean): number {
     this.#assertActive();
     const changed = this.#store.setAllVisible(visible);
     if (changed === 0) return 0;
     this.#spatial.setAllVisible(visible);
+    if (visible) {
+      for (const state of this.#groups.values()) {
+        if (state.visible) continue;
+        for (const id of state.members) {
+          const slot = this.#store.slotOf(id);
+          if (slot !== undefined) this.#spatial.setVisible(slot, false);
+        }
+      }
+    }
     this.#visibilityDirty = true;
     this.#recordMutation(TextDirty.Transform, changed);
 
@@ -753,11 +955,12 @@ export class TextLayer extends Container {
   ): void {
     const slot = this.#store.slotOf(id);
     if (slot === undefined) throw new Error("Label slot is unavailable for spatial indexing");
-    this.#indexSlot(slot, label, runBounds);
+    this.#indexSlot(slot, id, label, runBounds);
   }
 
   #indexSlot(
     slot: number,
+    id: TextId,
     label: Readonly<TextStoreSnapshot> | Parameters<TextStore["create"]>[0],
     runBounds?: BoundsData,
   ): void {
@@ -765,12 +968,13 @@ export class TextLayer extends Container {
       slot,
       transformedLabelBounds(label, runBounds, this.#boundsScratch),
       label.zIndex,
-      label.visible,
+      this.#isEffectivelyVisible(id, label.visible),
     );
   }
 
   #reindexCurrentSlot(
     slot: number,
+    id: TextId,
     label: Readonly<TextStoreSnapshot> | Parameters<TextStore["create"]>[0],
     runBounds?: BoundsData,
   ): void {
@@ -778,7 +982,7 @@ export class TextLayer extends Container {
       slot,
       transformedLabelBounds(label, runBounds, this.#boundsScratch),
       label.zIndex,
-      label.visible,
+      this.#isEffectivelyVisible(id, label.visible),
     );
   }
 
@@ -800,14 +1004,14 @@ export class TextLayer extends Container {
     return this.#spatial.queryAll(this.#visibleSlots);
   }
 
-  #buildRenderChanges(): RenderChange[] {
+  #buildRenderChanges(): LayerRenderChange[] {
     let previousEpoch = this.#renderEpoch;
     if (previousEpoch === 0xffff_ffff) {
       this.#renderedEpochs.fill(0);
       previousEpoch = 0;
     }
     const nextEpoch = previousEpoch + 1;
-    const changes: RenderChange[] = [];
+    const changes: LayerRenderChange[] = [];
     for (let index = 0; index < this.#visibleCount; index += 1) {
       const slot = this.#visibleSlots[index];
       if (slot === undefined) throw new Error("Visible slot list is incomplete");
@@ -822,8 +1026,14 @@ export class TextLayer extends Container {
       const trustedRun = this.#trustedRuns.get(snapshot.id);
       changes.push({
         slot,
+        labelId: snapshot.id,
         mask: wasRendered ? dirtyMask : ALL_DIRTY,
-        snapshot: toRenderSnapshot(snapshot, order, this.#shaping.get(snapshot.id)),
+        snapshot: toRenderSnapshot(
+          snapshot,
+          order,
+          this.#layouts.get(snapshot.id),
+          this.#shaping.get(snapshot.id),
+        ),
         ...(trustedRun === undefined ? {} : { trustedRun }),
       });
     }
@@ -922,6 +1132,7 @@ function normalizeLabel(
 function toRenderSnapshot(
   snapshot: Readonly<TextStoreSnapshot>,
   order: number,
+  layout: Readonly<TextLayoutOptions> | undefined,
   shaping: Readonly<TextShapingOptions> | undefined,
 ): Readonly<RenderLabelSnapshot> {
   return Object.freeze({
@@ -940,11 +1151,38 @@ function toRenderSnapshot(
     anchorX: snapshot.anchorX,
     anchorY: snapshot.anchorY,
     style: snapshot.style,
+    ...(layout === undefined ? {} : { layout }),
     ...(shaping === undefined ? {} : { shaping }),
   });
 }
 
+type NormalizedLayoutPatch = Readonly<TextLayoutOptions> | null | undefined;
 type NormalizedShapingPatch = Readonly<TextShapingOptions> | null | undefined;
+type NormalizedGroupPatch = TextGroupId | null | undefined;
+
+function normalizeGroupPatch(patch: TextLabelPatch): NormalizedGroupPatch {
+  return patch.group;
+}
+
+function normalizeLayoutPatch(patch: TextLabelPatch): NormalizedLayoutPatch {
+  if (patch.layout === undefined) return undefined;
+  if (patch.layout === null) return null;
+  return normalizeLayoutOptions(patch.layout) ?? null;
+}
+
+function normalizeLayoutOptions(
+  layout: Readonly<TextLayoutOptions> | undefined,
+): Readonly<TextLayoutOptions> | undefined {
+  if (layout === undefined || layout.writingMode === undefined) return undefined;
+  return Object.freeze({ writingMode: layout.writingMode });
+}
+
+function equalLayout(
+  left: Readonly<TextLayoutOptions> | undefined,
+  right: Readonly<TextLayoutOptions> | undefined,
+): boolean {
+  return left === right || left?.writingMode === right?.writingMode;
+}
 
 function normalizeShapingPatch(patch: TextLabelPatch): NormalizedShapingPatch {
   if (patch.shaping === undefined) return undefined;
@@ -1051,6 +1289,9 @@ function assertLabelSpec(spec: TextLabelSpec): void {
   if (spec.shaping === null) {
     throw new TypeError("Label shaping must be an object");
   }
+  if (spec.layout === null) {
+    throw new TypeError("Label layout must be an object");
+  }
   assertLabelPatch(spec);
 }
 
@@ -1072,13 +1313,32 @@ function assertLabelPatch(patch: TextLabelPatch): void {
   if (patch.visible !== undefined && typeof patch.visible !== "boolean") {
     throw new TypeError("visible must be a boolean");
   }
+  if (patch.group !== undefined && patch.group !== null && typeof patch.group !== "symbol") {
+    throw new TypeError("group must be a TextGroupId or null");
+  }
   if (patch.scale !== undefined) readPoint(patch.scale, 1);
   if (patch.anchor !== undefined) readPoint(patch.anchor, 0);
   if (patch.style !== undefined && (typeof patch.style !== "object" || patch.style === null)) {
     throw new TypeError("style must be an object");
   }
+  if (patch.layout !== undefined && patch.layout !== null) {
+    assertLayoutOptions(patch.layout);
+  }
   if (patch.shaping !== undefined && patch.shaping !== null) {
     assertShapingOptions(patch.shaping);
+  }
+}
+
+function assertLayoutOptions(layout: Readonly<TextLayoutOptions>): void {
+  if (typeof layout !== "object" || layout === null || Array.isArray(layout)) {
+    throw new TypeError("layout must be an object");
+  }
+  if (
+    layout.writingMode !== undefined &&
+    layout.writingMode !== "horizontal-tb" &&
+    layout.writingMode !== "vertical-rl"
+  ) {
+    throw new TypeError("layout.writingMode must be horizontal-tb or vertical-rl");
   }
 }
 

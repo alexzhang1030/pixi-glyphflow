@@ -11,6 +11,8 @@ worker shaping, bounded glyph atlases, dense culling, and first-class pixi-viewp
 - `updatePositions` applies 100,000 packed x/y changes in 3.40 ms p95 on the reference M1 Pro.
 - `updateTextPositions` applies 100,000 text and x/y changes in 14.20 ms p95.
 - `showAll()` and `hideAll()` update the complete resident visibility column with one commit.
+- Independently created label groups apply reusable visibility masks without changing local label state.
+- Basic vertical writing stacks upright glyphs in top-to-bottom, right-to-left columns.
 - `bindViewport` coalesces drag, deceleration, wheel, pinch, zoom, and rotation camera work.
 - HarfBuzz worker shaping covers CJKV, Arabic, Devanagari, Hebrew, Thai, bidi text, and OpenType features.
 - Binary font registration, recursive fallback aliases, and sparse per-label shaping controls support product-owned typography.
@@ -175,6 +177,42 @@ labels.showAll();
 await labels.commit();
 ```
 
+## Group visibility and basic layout
+
+Every `createGroup()` call returns a fresh opaque `TextGroupId`. Labels keep their generated
+`TextId` and may reference one group identity:
+
+```ts
+const stationLabels = labels.createGroup();
+
+const platform = labels.create({
+  text: "站台\n入口",
+  x: 80,
+  y: 40,
+  group: stationLabels,
+  layout: { writingMode: "vertical-rl" },
+  style: {
+    fontFamily: "system-ui",
+    fontSize: 20,
+    fontWeight: "700",
+    fill: 0xffcc66,
+  },
+});
+
+labels.setGroupVisible(stationLabels, false);
+await labels.commit();
+
+labels.setGroupVisible(stationLabels, true);
+labels.update(platform, { visible: false });
+await labels.commit();
+```
+
+Effective visibility is `label.visible && group.visible`. Restoring a group preserves each label's
+local visibility. `removeGroup(group)` retains its labels and clears their membership. Basic
+`vertical-rl` layout keeps glyphs upright, stacks them from top to bottom, and orders explicit lines
+from right to left. PixiJS `TextStyleOptions` continues to provide `fontWeight`, `fill`, and the
+remaining supported appearance controls.
+
 ## Package entry points
 
 | Import                          | Purpose                                                   |
@@ -193,12 +231,12 @@ GPU completion, warmup frames, and p95 reporting.
 
 | Workload                          |                           Scale | Frame p95 |
 | --------------------------------- | ------------------------------: | --------: |
-| Million-label viewport            |              1,000,000 resident |   5.20 ms |
-| Dynamic counters                  | 100,000 text + position updates |  14.80 ms |
-| pixi-viewport drag + deceleration |              1,000,000 resident |   5.40 ms |
-| pixi-viewport wheel + pinch zoom  |              1,000,000 resident |   7.10 ms |
-| Position storm                    |          100,000 packed updates |   9.00 ms |
-| Multilingual stream               |  10,000 resident, 1,000 updates |   3.90 ms |
+| Million-label viewport            |              1,000,000 resident |   5.40 ms |
+| Dynamic counters                  | 100,000 text + position updates |  16.40 ms |
+| pixi-viewport drag + deceleration |              1,000,000 resident |   5.80 ms |
+| pixi-viewport wheel + pinch zoom  |              1,000,000 resident |   7.60 ms |
+| Position storm                    |          100,000 packed updates |   9.50 ms |
+| Multilingual stream               |  10,000 resident, 1,000 updates |   1.50 ms |
 
 The [generated performance report](benchmarks/PERFORMANCE.md) links every raw artifact and records
 memory, atlas, draw, fixture, and invariant evidence.

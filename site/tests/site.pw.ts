@@ -12,6 +12,14 @@ test("serves the docs, runs the viewport, and fits every target width", async ({
     page.getByRole("heading", { level: 1, name: /Render text at scene scale/ }),
   ).toBeVisible();
   await expect(page.getByRole("navigation", { name: "Primary navigation" })).toBeVisible();
+  const examples = page.locator("#examples");
+  await expect(
+    examples.getByRole("heading", { level: 2, name: "Add the state each label needs." }),
+  ).toBeVisible();
+  await expect(examples).toContainText("Create with one required field");
+  await expect(examples).toContainText("createGroup");
+  await expect(examples).toContainText("vertical-rl");
+  await expect(examples.locator("figure")).toHaveCount(3);
 
   const demo = page.getByTestId("glyphflow-demo");
   await expect(demo).toHaveAttribute("data-demo-state", "ready");

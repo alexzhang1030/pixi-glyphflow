@@ -1,4 +1,4 @@
-# pixi-glyphflow 1.0 task ledger
+# pixi-glyphflow task ledger
 
 ## Phase 0
 
@@ -172,3 +172,39 @@
   - Acceptance: Five registered binary fonts shape CJKV regional forms, Arabic, Devanagari, Hebrew, and Thai; the fallback stack also presents Vietnamese, Greek, Cyrillic, and emoji samples.
   - Verify: bun test tests/LayoutEngine.test.ts tests/cmap.test.ts tests/glyph-providers.test.ts && bun run site:test
   - Files: src/layout, src/fonts, src/atlas, site/components/GlyphflowDemo.client.vue, site/public/fonts, docs/fonts.md
+
+## Phase 9
+
+- [x] Task 9.1: Add independently created label groups and composed visibility.
+  - Acceptance: Every group has a unique layer-local identity; labels retain local visibility while group masks affect rendering, culling, hit testing, and accessibility.
+  - Verify: bun test tests/TextLayer.groups.test.ts
+  - Files: src/TextLayer.ts, src/types.ts, src/accessibility/AccessibilityAdapter.ts, tests/TextLayer.groups.test.ts
+
+- [x] Task 9.2: Add basic vertical writing and verify existing style controls.
+  - Acceptance: Vertical-rl labels stack upright glyphs top-to-bottom, explicit lines form right-to-left columns, and font weight plus fill updates publish through the style dirty domain.
+  - Verify: bun test tests/LayoutEngine.test.ts tests/TextLayer.commit.test.ts
+  - Files: src/layout/LayoutEngine.ts, src/layout/types.ts, src/TextLayer.ts, src/types.ts, tests/LayoutEngine.test.ts, tests/TextLayer.commit.test.ts
+
+- [x] Task 9.3: Document and verify the new public surface.
+  - Acceptance: README, API reference, changelog, PCR specification, and generated declarations describe group lifecycle, visibility composition, vertical writing, and styling.
+  - Verify: bun run check
+  - Files: README.md, docs/api.md, CHANGELOG.md, .agents/docs/pixi-glyphflow-blueprint.md, tasks/plan.md, tasks/todo.md
+
+## Phase 10
+
+- [x] Task 10.1: Restore the core ESM startup budget with lazy default backends.
+  - Acceptance: Default bitmap layout, HarfBuzz worker shaping, and glyph rasterization load on first use while injected backends retain their direct path; core gzip stays below 40 KiB.
+  - Verify: bun run benchmark:check && bun run test:browser && bun run site:test
+  - Files: src/layout/LayoutEngine.ts, src/layout/types.ts, src/render/RenderCoordinator.ts, docs/architecture.md, CHANGELOG.md, .agents/docs/pixi-glyphflow-blueprint.md
+
+## Phase 11
+
+- [x] Task 11.1: Add progressive public-API examples to the documentation site.
+  - Acceptance: The site presents minimal creation, separately created group visibility, per-ID visibility, vertical writing, font weight, and fill while stating that `text` is the required creation field.
+  - Verify: bun run site:typecheck && bun run site:test
+  - Files: site/app.vue, site/components/ExamplesSection.vue, site/tests/site.pw.ts, site/README.md
+
+- [ ] Task 11.2: Publish and verify 1.1.0.
+  - Acceptance: Package metadata, site badge, changelog, signed tag, GitHub Release, npm metadata, provenance, and independent installation all resolve to 1.1.0.
+  - Verify: bun run release:check && gh release view v1.1.0 && npm view pixi-glyphflow@1.1.0 && independent package smoke
+  - Files: package.json, CHANGELOG.md, benchmarks/run.ts, benchmarks/PERFORMANCE.md, benchmarks/results, tasks/plan.md, tasks/todo.md

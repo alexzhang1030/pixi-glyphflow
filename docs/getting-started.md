@@ -136,6 +136,41 @@ await layer.commit();
 Both methods return the number of labels whose visibility changed. Individual snapshots, hit
 testing, culling, accessibility mirrors, and renderer submission observe the same state.
 
+## Groups and vertical labels
+
+Create groups independently and reference their opaque identities from labels:
+
+```ts
+const mapAnnotations = layer.createGroup();
+
+const entrance = layer.create({
+  text: "入口\n东门",
+  group: mapAnnotations,
+  layout: { writingMode: "vertical-rl" },
+  style: {
+    fontFamily: "system-ui",
+    fontSize: 18,
+    fontWeight: "bold",
+    fill: 0x38bdf8,
+  },
+});
+
+layer.setGroupVisible(mapAnnotations, false);
+await layer.commit();
+
+layer.setGroupVisible(mapAnnotations, true);
+layer.update(entrance, { visible: false });
+await layer.commit();
+```
+
+`TextLabelSnapshot.visible` reports the label-local flag. `effectiveVisible` includes the current
+group mask. Group changes flow through rendering, culling, hit testing, and accessibility in the
+same commit. `removeGroup(mapAnnotations)` retains the labels and clears their memberships.
+
+Basic `vertical-rl` layout keeps glyphs upright and stacks them from top to bottom. Newlines create
+columns ordered from right to left. `fontWeight` and `fill` use PixiJS `TextStyleOptions`; system
+fonts apply the selected weight during canvas glyph rasterization.
+
 ## pixi-viewport interaction
 
 ```ts

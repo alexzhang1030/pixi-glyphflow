@@ -202,7 +202,7 @@ export class AccessibilityAdapter {
       width: Math.max(0, bounds.width),
       height: Math.max(0, bounds.height),
       hidden:
-        !snapshot.visible ||
+        !snapshot.effectiveVisible ||
         snapshot.alpha <= 0 ||
         bounds.width <= 0 ||
         bounds.height <= 0 ||
