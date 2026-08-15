@@ -1,4 +1,4 @@
-# Implementation plan: pixi-glyphflow 1.0.0
+# Implementation plan: pixi-glyphflow
 
 ## Overview
 
@@ -153,6 +153,47 @@ Replace the 0.0.1 object-per-label reference backend with a dense, batch-oriente
 - WebGPU-capable Chrome sessions run the position storm and camera controls on both adapters; other sessions expose the capability state.
 - The site workspace stays outside the npm publication files and inside the frozen Bun install graph.
 
+## Phase 9: Label groups and basic layout controls
+
+- Add independently created, layer-local TextGroupId values and sparse label membership.
+- Compose per-label and per-group visibility through one TextLayer commit seam.
+- Add basic vertical-rl glyph flow while retaining PixiJS font weight and fill styling.
+- Document the public interface, lifecycle rules, and runnable examples.
+
+### Checkpoint
+
+- Public-seam tests cover unique group identities, membership changes, group removal, and composed visibility.
+- Layout tests cover upright top-to-bottom glyph placement and right-to-left newline columns.
+- Style tests cover font-weight and fill updates through the existing style dirty domain.
+- Focused tests, type checking, formatting, documentation checks, and the package build pass.
+
+## Phase 10: Core startup bundle budget
+
+- Move the default bitmap adapter, HarfBuzz worker shaper, and raster glyph provider behind shared
+  first-use imports.
+- Preserve constructor injection so custom backends retain their direct execution path.
+- Measure each split against the generated core ESM gzip artifact.
+
+### Checkpoint
+
+- `bun run benchmark:check` keeps the core ESM entry below 40 KiB gzip.
+- Root browser coverage, the custom-font site suite, and destruction paths pass with lazy defaults.
+
+## Phase 11: Progressive examples and the 1.1.0 release
+
+- Add site examples that begin with the required `text` field and progressively introduce groups,
+  per-ID visibility, vertical layout, font weight, and fill.
+- Promote post-1.0 work into a curated 1.1.0 changelog and align package and site versions.
+- Land the release commit through GitHub CI, create the signed `v1.1.0` release tag, publish through
+  npm Trusted Publishing, and verify an independent registry install.
+
+### Checkpoint
+
+- Site type checking and browser acceptance pass at 320, 768, 1024, and 1440 pixels.
+- `bun run release:check` passes from the versioned commit.
+- GitHub Release, tag, package metadata, npm provenance, and a clean external consumer agree on
+  version 1.1.0.
+
 ## Risks and mitigations
 
 | Risk                                     | Impact | Mitigation                                                                                       |
@@ -167,7 +208,7 @@ Replace the 0.0.1 object-per-label reference backend with a dense, batch-oriente
 
 ## Release rollback
 
-- Keep v0.0.1 installable.
-- Publish 1.0.0 only after all gates pass.
-- Deprecate a defective 1.0.0 with a precise message and publish the corrected patch release.
+- Keep v0.0.1 and v1.0.0 installable.
+- Publish 1.1.0 after all gates pass.
+- Deprecate a defective release with a precise message and publish the corrected patch release.
 - Preserve raw artifacts, tag evidence, and package integrity for diagnosis.

@@ -1,5 +1,41 @@
 # Changelog
 
+## 1.1.0 - 2026-08-15
+
+### Added
+
+- Independently created `TextGroupId` values with sparse membership, composed group visibility,
+  group lifecycle operations, and synchronized rendering, culling, hit testing, and accessibility.
+- Basic `vertical-rl` writing with upright top-to-bottom glyphs and right-to-left newline columns.
+- Progressive site examples and regression coverage for minimal labels, independent groups,
+  `TextId` visibility, vertical writing, `fontWeight`, and `fill`.
+- Allocation-stable `showAll()` and `hideAll()` mutations for the complete resident label set.
+- CJKV regional glyph selection, broad complex-script fallback, custom binary fonts, and sparse
+  per-label language, script, direction, feature, and variation controls.
+- Exact glyph-ID MSDF rasterization for contextual forms, ligatures, and localized alternates, plus
+  an explicitly configurable worker and WebAssembly asset boundary.
+- Interactive documentation with one million resident multilingual labels, five custom Noto font
+  subsets, 100,000 position updates, and live WebGL 2 / WebGPU switching.
+
+### Fixed
+
+- Single-family bitmap layout keeps a scalar PixiJS font family, restoring deterministic browser
+  compositing and renderer reattachment.
+- Completed render work preserves the latest label and group visibility state across queued commits.
+- Small CJK glyphs use oversampled distance fields with logical-size normalization, preserving
+  continuous strokes across viewport zoom. The documentation CJK font uses a static Medium instance
+  for deterministic MSDF outlines.
+- Atlas pages bind in eight-texture banks, collapsing the documentation site's fully zoomed-out
+  WebGPU workload from 2,111 page-alternating draws to one and keeping PixiJS uniform batches within
+  capacity.
+- Benchmark Vite servers disable file watching and HMR so every isolated workload closes cleanly
+  after writing its artifact.
+
+### Performance
+
+- Default bitmap layout, HarfBuzz worker shaping, and dynamic glyph rasterization load on first use.
+  The core ESM entry measures 39,996 bytes gzip, down from 47,995 bytes and within the 40 KiB budget.
+
 ## 1.0.0 - 2026-08-15
 
 ### Added
@@ -7,20 +43,13 @@
 - Dense, generation-checked storage for 1,000,000 labels with immutable snapshots and compact
   diagnostics.
 - Ergonomic CRUD, object-batch, packed-position, and columnar text-plus-position mutation APIs.
-- Allocation-stable `showAll()` and `hideAll()` mutations for the complete resident label set.
 - PixiJS bitmap layout plus direct and worker-backed HarfBuzz shaping for multilingual text.
-- CJKV regional glyph selection, broad complex-script fallback, custom binary fonts, and sparse
-  per-label language, script, direction, feature, and variation controls.
-- Exact glyph-ID MSDF rasterization for contextual forms, ligatures, and localized alternates, plus
-  an explicitly configurable worker and WebAssembly asset boundary.
 - Bounded MSDF, SDF, alpha, and color glyph atlases with generation-safe eviction.
 - Compact glyph instances, transform palettes, dirty-range uploads, and paired WebGL/WebGPU shaders.
 - Spatial culling, hit testing, bounds, z order, blend modes, effects, lifecycle isolation, and
   accessibility mirroring.
 - pixi-viewport 6 binding for drag, deceleration, wheel, pinch, zoom, and rotated cameras.
 - Interactive million-label playground with a 100,000-label position storm.
-- Interactive documentation with one million resident multilingual labels, five custom Noto font
-  subsets, 100,000 position updates, and live WebGL 2 / WebGPU switching.
 - Isolated browser benchmark laboratory, committed raw artifacts, generated reports, and CI budgets.
 - Focused root, viewport, accessibility, shaping, advanced, and worker package entry points.
 
@@ -30,15 +59,6 @@
 - Eight million visible glyphs use a 256,000,000-byte instance buffer and one observed instanced draw.
 - Million-label viewport, dynamic counter, drag, zoom, and position-storm frame p95 values stay within
   the 16.67 millisecond budget on the reference Apple M1 Pro browser fixture.
-
-### Fixed
-
-- Small CJK glyphs use oversampled distance fields with logical-size normalization, preserving
-  continuous strokes across viewport zoom. The documentation CJK font uses a static Medium instance
-  for deterministic MSDF outlines.
-- Atlas pages bind in eight-texture banks, collapsing the documentation site's fully zoomed-out
-  WebGPU workload from 2,111 page-alternating draws to one and keeping PixiJS uniform batches within
-  capacity.
 
 ## 0.0.1 - 2026-08-15
 

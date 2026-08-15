@@ -1,6 +1,6 @@
 # Performance
 
-Generated from raw browser artifacts for pixi-glyphflow 1.0.0.
+Generated from raw browser artifacts for pixi-glyphflow 1.1.0.
 
 ## Reference environment
 
@@ -18,25 +18,25 @@ Each workload starts in an isolated Chrome process. Setup, warmup, mutation, com
 
 | Workload            |    Labels | Mutations |      Setup | Frame p50 | Frame p95 | Mutation p95 | Commit p95 | Visible glyphs | Draws | Status   |
 | ------------------- | --------: | --------: | ---------: | --------: | --------: | -----------: | ---------: | -------------: | ----: | -------- |
-| static-hud          |     1,000 |         1 |   57.20 ms |   0.00 ms |   0.10 ms |            — |          — |          8,000 |     1 | complete |
-| million-viewport    | 1,000,000 |         1 |  307.50 ms |   4.90 ms |   5.20 ms |            — |          — |         33,456 |     0 | complete |
-| dynamic-counters    | 1,000,000 |   100,000 |  308.90 ms |  14.20 ms |  14.80 ms |     14.20 ms |    0.70 ms |      9,000,000 |     0 | complete |
-| viewport-drag       | 1,000,000 |         1 |  365.70 ms |   5.30 ms |   5.40 ms |            — |          — |         64,521 |     0 | complete |
-| viewport-zoom       | 1,000,000 |         1 |  365.80 ms |   5.20 ms |   7.10 ms |            — |          — |      1,000,000 |     0 | complete |
-| position-storm      | 1,000,000 |   100,000 |  304.80 ms |   8.70 ms |   9.00 ms |      3.40 ms |    5.70 ms |          4,080 |     0 | complete |
-| multilingual-stream |    10,000 |     1,000 |   70.70 ms |   1.70 ms |   3.90 ms |      0.30 ms |    3.70 ms |          3,240 |   288 | complete |
-| scale-scan          |    50,000 |         1 |   86.20 ms |   0.50 ms |   5.20 ms |            — |          — |         50,500 |     1 | complete |
-| atlas-pressure      |    20,000 |         1 | 2238.30 ms |   0.90 ms | 594.90 ms |            — |          — |         16,384 |     0 | complete |
-| million-full        | 1,000,000 |         1 |  491.40 ms |   0.10 ms |   0.10 ms |            — |          — |      8,000,000 |     1 | complete |
+| static-hud          |     1,000 |         1 |   77.10 ms |   0.00 ms |   0.10 ms |            — |          — |          8,000 |     1 | complete |
+| million-viewport    | 1,000,000 |         1 |  354.60 ms |   5.30 ms |   5.40 ms |            — |          — |         33,456 |     0 | complete |
+| dynamic-counters    | 1,000,000 |   100,000 |  343.90 ms |  15.50 ms |  16.40 ms |     15.70 ms |    0.70 ms |      9,000,000 |     0 | complete |
+| viewport-drag       | 1,000,000 |         1 |  386.30 ms |   5.60 ms |   5.80 ms |            — |          — |         64,521 |     0 | complete |
+| viewport-zoom       | 1,000,000 |         1 |  402.90 ms |   5.60 ms |   7.60 ms |            — |          — |      1,000,000 |     0 | complete |
+| position-storm      | 1,000,000 |   100,000 |  335.60 ms |   9.30 ms |   9.50 ms |      3.60 ms |    6.10 ms |          4,080 |     0 | complete |
+| multilingual-stream |    10,000 |     1,000 |  101.10 ms |   1.10 ms |   1.50 ms |      0.30 ms |    1.30 ms |          3,240 |     1 | complete |
+| scale-scan          |    50,000 |         1 |  109.80 ms |   0.50 ms |   6.10 ms |            — |          — |         50,500 |     1 | complete |
+| atlas-pressure      |    20,000 |         1 | 2378.50 ms |   1.10 ms | 638.50 ms |            — |          — |         16,384 |     0 | complete |
+| million-full        | 1,000,000 |         1 |  637.20 ms |   0.00 ms |   0.10 ms |            — |          — |      8,000,000 |     1 | complete |
 
 ## Equal-content static HUD
 
 | Fixture     |      Setup | Frame p50 | Frame p95 |
 | ----------- | ---------: | --------: | --------: |
-| text        |  313.30 ms |   0.10 ms |   0.60 ms |
-| bitmap-text |   52.00 ms |   0.00 ms |   0.10 ms |
-| glyphflow   |   57.20 ms |   0.00 ms |   0.10 ms |
-| html-text   | 3326.10 ms |   0.10 ms |   0.30 ms |
+| text        |  581.40 ms |   0.10 ms |   0.70 ms |
+| bitmap-text |   56.20 ms |   0.00 ms |   0.10 ms |
+| glyphflow   |   77.10 ms |   0.00 ms |   0.10 ms |
+| html-text   | 3658.90 ms |   0.10 ms |   0.80 ms |
 
 ## Capacity and storage
 
@@ -59,13 +59,13 @@ Every recorded boolean invariant passed.
 
 ## Raw artifacts
 
-- [static-hud](results/browser-static-hud-1.0.0.json)
-- [million-viewport](results/browser-million-viewport-1.0.0.json)
-- [dynamic-counters](results/browser-dynamic-counters-1.0.0.json)
-- [viewport-drag](results/browser-viewport-drag-1.0.0.json)
-- [viewport-zoom](results/browser-viewport-zoom-1.0.0.json)
-- [position-storm](results/browser-position-storm-1.0.0.json)
-- [multilingual-stream](results/browser-multilingual-stream-1.0.0.json)
-- [scale-scan](results/browser-scale-scan-1.0.0.json)
-- [atlas-pressure](results/browser-atlas-pressure-1.0.0.json)
-- [million-full](results/browser-million-full-1.0.0.json)
+- [static-hud](results/browser-static-hud-1.1.0.json)
+- [million-viewport](results/browser-million-viewport-1.1.0.json)
+- [dynamic-counters](results/browser-dynamic-counters-1.1.0.json)
+- [viewport-drag](results/browser-viewport-drag-1.1.0.json)
+- [viewport-zoom](results/browser-viewport-zoom-1.1.0.json)
+- [position-storm](results/browser-position-storm-1.1.0.json)
+- [multilingual-stream](results/browser-multilingual-stream-1.1.0.json)
+- [scale-scan](results/browser-scale-scan-1.1.0.json)
+- [atlas-pressure](results/browser-atlas-pressure-1.1.0.json)
+- [million-full](results/browser-million-full-1.1.0.json)
