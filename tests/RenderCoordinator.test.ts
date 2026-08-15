@@ -96,6 +96,47 @@ describe("RenderCoordinator", () => {
     registry.destroy();
   });
 
+  test("renders oversampled atlas glyphs at logical layout dimensions", async () => {
+    const registry = new FontRegistry();
+    await registry.register({ family: "Fixture" });
+    const coordinator = new RenderCoordinator({
+      registry,
+      layoutEngine: {
+        layout(_slot, _revision, input) {
+          return Promise.resolve(run(input.text));
+        },
+        destroy() {},
+      },
+      glyphProvider: {
+        rasterize(request: RasterGlyphRequest): Promise<GlyphRaster> {
+          return Promise.resolve({
+            mode: request.mode,
+            width: 24,
+            height: 48,
+            pixels: new Uint8Array(24 * 48).fill(255),
+            metrics: { bearingX: 1, bearingY: 14, advance: 10, rasterScale: 3 },
+          });
+        },
+        destroy() {},
+      },
+      atlasOptions: { pageWidth: 64, pageHeight: 64, maxBytes: 8_192 },
+    });
+
+    await coordinator.commit(1, [{ slot: 0, mask: CONTENT | STYLE, snapshot: label(1, 0, 0) }]);
+
+    const view = new DataView(coordinator.instances.buffer);
+    expect([
+      view.getFloat32(0, true),
+      view.getFloat32(4, true),
+      view.getFloat32(8, true),
+      view.getFloat32(12, true),
+    ]).toEqual([1, -9, 8, 16]);
+    expect(((view.getUint32(28, true) >>> 18) & 0x1fff) / 64).toBe(3);
+
+    coordinator.destroy();
+    registry.destroy();
+  });
+
   test("keeps the newer label generation when asynchronous layouts resolve out of order", async () => {
     const registry = new FontRegistry();
     await registry.register({ family: "Fixture" });

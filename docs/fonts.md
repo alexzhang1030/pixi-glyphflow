@@ -16,8 +16,10 @@ CJKV typography uses language-specific glyph selection. Pass both a BCP 47 langu
 | Japanese            | `ja`     | `Jpan` |
 | Korean              | `ko`     | `Kore` |
 
-The live documentation registers a Noto Sans CJK variable-font subset and exercises all four
-routes. The [Noto CJK distribution guide](https://github.com/notofonts/noto-cjk/blob/main/Sans/README.md)
+The live documentation registers a static Medium instance derived from Noto Sans CJK SC Variable
+and exercises all four routes. The static instance gives runtime MSDF generation a deterministic
+weight because the upstream variable font defaults to Thin. The
+[Noto CJK distribution guide](https://github.com/notofonts/noto-cjk/blob/main/Sans/README.md)
 documents full regional coverage and language-tagged localized forms; the demo assets retain those
 layout tables under the [SIL Open Font License 1.1](https://github.com/notofonts/noto-cjk/blob/main/Sans/LICENSE).
 
@@ -141,6 +143,7 @@ const layer = new TextLayer({
   rendering: {
     rasterizerOptions: {
       generatorConcurrency: 4,
+      distanceFieldMinFontSize: 48,
       createMsdfGenerator: () =>
         Promise.resolve(new MSDF({ workerUrl: msdfWorkerUrl, wasmUrl: msdfWasmUrl })),
     },
@@ -151,6 +154,16 @@ const layer = new TextLayer({
 Add `@zappar/msdf-generator@1.2.4` as a direct application dependency when the app imports these
 asset entry points. The provider initializes workers lazily, runs separate workers in parallel, and
 serializes font loading plus atlas generation inside each worker.
+
+`distanceFieldMinFontSize` defaults to `48`. Smaller layout sizes generate a higher-resolution
+distance field and store its physical-to-logical raster scale with the atlas entry. Glyph geometry,
+stroke, and shadow effects remain in layout units while CJK strokes retain enough source detail for
+zooming. Raise the value for unusually intricate display fonts; the trade-off is atlas memory and
+generation time.
+
+The dynamic generator consumes the outline encoded by the supplied font bytes. For a precise
+variable-font weight, register a static instance at that axis location. `shaping.variations`
+continues to control HarfBuzz glyph selection and positioning.
 
 ## Glyph-ID rasterization
 

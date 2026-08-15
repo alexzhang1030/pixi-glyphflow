@@ -56,6 +56,7 @@ describe("glyph providers", () => {
     let generatorCalls = 0;
     const provider = new RasterGlyphProvider(registry, {
       generatorConcurrency: 1,
+      distanceFieldMinFontSize: 32,
       canvasRasterizer(request): Promise<GlyphRaster> {
         canvasCalls += 1;
         const channels = request.mode === "color" ? 4 : 1;
@@ -127,8 +128,70 @@ describe("glyph providers", () => {
     registry.destroy();
   });
 
+  test("oversamples small distance fields while preserving logical metrics", async () => {
+    const registry = new FontRegistry();
+    const font = await registry.register({ family: "CJK fixture", source: new Uint8Array([1, 2]) });
+    let generationOptions: Readonly<Record<string, unknown>> | undefined;
+    const provider = new RasterGlyphProvider(registry, {
+      generatorConcurrency: 1,
+      async createMsdfGenerator() {
+        return {
+          async generateAtlas(options) {
+            generationOptions = options;
+            return {
+              texture: {
+                width: 64,
+                height: 64,
+                data: new Uint8ClampedArray(64 * 64 * 4).fill(255),
+              },
+              glyphs: [
+                {
+                  char: "漢",
+                  atlasPosition: [0, 0],
+                  atlasSize: [24, 48],
+                  bounds: { left: 3, bottom: -6, right: 27, top: 42 },
+                  advance: 30,
+                },
+              ],
+              fieldRange: 6,
+            };
+          },
+          async dispose() {},
+        };
+      },
+    });
+
+    const raster = await provider.rasterize({
+      family: "CJK fixture",
+      fontRevision: font.revision,
+      glyphId: 28_050,
+      glyphText: "漢",
+      fontSize: 16,
+      mode: "msdf",
+    });
+
+    expect(generationOptions).toMatchObject({ fontSize: 48, textureSize: [128, 128] });
+    expect(raster).toMatchObject({
+      width: 24,
+      height: 48,
+      metrics: {
+        bearingX: 1,
+        bearingY: 14,
+        advance: 10,
+        fieldRange: 2,
+        rasterScale: 3,
+      },
+    });
+
+    await provider.destroy();
+    registry.destroy();
+  });
+
   test("validates dynamic request identities before raster work", async () => {
     const registry = new FontRegistry();
+    expect(() => new RasterGlyphProvider(registry, { distanceFieldMinFontSize: 0 })).toThrow(
+      TypeError,
+    );
     const provider = new RasterGlyphProvider(registry, {
       canvasRasterizer: async () => {
         throw new Error("unreachable");

@@ -112,6 +112,8 @@ These primitives support custom renderer pipelines that preserve the package sto
 contracts.
 
 `TextLayerOptions.rendering.rasterizerOptions` configures the default `RasterGlyphProvider`.
-`generatorConcurrency` controls the lazy MSDF worker pool, while `createMsdfGenerator` supplies
-explicit worker and WebAssembly URLs for production bundlers. Each worker serializes font loading
-and atlas generation; separate workers execute in parallel.
+`generatorConcurrency` controls the lazy MSDF worker pool. `distanceFieldMinFontSize` controls the
+minimum source resolution for dynamic MSDF/SDF glyphs and defaults to `48`. The renderer stores the
+physical-to-logical raster scale so layout, stroke, and shadow dimensions remain stable.
+`createMsdfGenerator` supplies explicit worker and WebAssembly URLs for production bundlers. Each
+worker serializes font loading and atlas generation; separate workers execute in parallel.

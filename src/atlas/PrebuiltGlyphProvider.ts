@@ -145,7 +145,9 @@ function validateMetrics(metrics: GlyphMetrics): void {
     !Number.isFinite(metrics.bearingY) ||
     !Number.isFinite(metrics.advance) ||
     (metrics.fieldRange !== undefined &&
-      (!Number.isFinite(metrics.fieldRange) || metrics.fieldRange < 0))
+      (!Number.isFinite(metrics.fieldRange) || metrics.fieldRange < 0)) ||
+    (metrics.rasterScale !== undefined &&
+      (!Number.isFinite(metrics.rasterScale) || metrics.rasterScale < 1))
   ) {
     throw new TypeError("Prebuilt glyph metrics must contain finite values");
   }

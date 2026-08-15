@@ -23,6 +23,9 @@ interface FreeRange {
 const DEFAULT_CAPACITY = 16;
 const DEFAULT_MAX_CAPACITY = 0x100_0000;
 const ACTIVE_BIT = 0x8000_0000;
+const RASTER_SCALE_SHIFT = 18;
+const RASTER_SCALE_MAX = 0x1fff;
+const RASTER_SCALE_PRECISION = 64;
 
 export class GlyphInstanceStore {
   readonly #minimumCapacity: number;
@@ -342,12 +345,16 @@ function validateBatch(batch: GlyphInstanceBatch): number {
   if (!(batch.modes instanceof Uint8Array)) {
     throw new TypeError("modes must be a Uint8Array");
   }
+  if (batch.rasterScales !== undefined && !(batch.rasterScales instanceof Float32Array)) {
+    throw new TypeError("rasterScales must be a Float32Array");
+  }
   const count = batch.paletteIndices.length;
   if (
     batch.positions.length !== count * 4 ||
     batch.uvs.length !== count * 4 ||
     batch.pages.length !== count ||
-    batch.modes.length !== count
+    batch.modes.length !== count ||
+    (batch.rasterScales !== undefined && batch.rasterScales.length !== count)
   ) {
     throw new TypeError("Glyph instance batch arrays have inconsistent lengths");
   }
@@ -366,12 +373,28 @@ function validateBatch(batch: GlyphInstanceBatch): number {
       throw new TypeError("Glyph modes must use values from 0 to 3");
     }
   }
+  for (const scale of batch.rasterScales ?? []) {
+    if (!Number.isFinite(scale) || scale < 1) {
+      throw new TypeError("Glyph raster scales must be finite values greater than or equal to 1");
+    }
+  }
 
   return count;
 }
 
 function metadata(batch: GlyphInstanceBatch, index: number): number {
-  return (ACTIVE_BIT | ((batch.modes[index] ?? 0) << 16) | (batch.pages[index] ?? 0)) >>> 0;
+  const rasterScale = batch.rasterScales?.[index] ?? 1;
+  const packedRasterScale = Math.min(
+    RASTER_SCALE_MAX,
+    Math.max(1, Math.round(rasterScale * RASTER_SCALE_PRECISION)),
+  );
+  return (
+    (ACTIVE_BIT |
+      (packedRasterScale << RASTER_SCALE_SHIFT) |
+      ((batch.modes[index] ?? 0) << 16) |
+      (batch.pages[index] ?? 0)) >>>
+    0
+  );
 }
 
 function packUv(value: number): number {

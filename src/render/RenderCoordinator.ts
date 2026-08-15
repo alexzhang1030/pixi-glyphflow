@@ -376,6 +376,7 @@ export class RenderCoordinator {
     const paletteIndices = new Uint32Array(count);
     const pages = new Uint16Array(count);
     const modes = new Uint8Array(count);
+    const rasterScales = new Float32Array(count);
     for (let index = 0; index < count; index += 1) {
       const mode = selectMode(run, index);
       const glyphText = resolveGlyphText(run, index);
@@ -387,11 +388,12 @@ export class RenderCoordinator {
         throw new Error(`Atlas entry missing for positioned glyph: ${key}`);
       }
       const outputOffset = index * 4;
+      const rasterScale = entry.metrics?.rasterScale ?? 1;
       positions[outputOffset] = (run.x[index] ?? 0) + (entry.metrics?.bearingX ?? 0) - run.bounds.x;
       positions[outputOffset + 1] =
         (run.y[index] ?? 0) - (entry.metrics?.bearingY ?? 0) - run.bounds.y;
-      positions[outputOffset + 2] = entry.width;
-      positions[outputOffset + 3] = entry.height;
+      positions[outputOffset + 2] = entry.width / rasterScale;
+      positions[outputOffset + 3] = entry.height / rasterScale;
       uvs[outputOffset] = entry.u0;
       uvs[outputOffset + 1] = entry.v0;
       uvs[outputOffset + 2] = entry.u1;
@@ -399,9 +401,10 @@ export class RenderCoordinator {
       paletteIndices[index] = slot;
       pages[index] = entry.page;
       modes[index] = modeCode(entry.mode);
+      rasterScales[index] = rasterScale;
     }
 
-    return { positions, uvs, paletteIndices, pages, modes };
+    return { positions, uvs, paletteIndices, pages, modes, rasterScales };
   }
 
   #result(

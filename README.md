@@ -116,6 +116,9 @@ language-specific CJK glyph form while the million-label fixed store remains com
 [Fonts and shaping](docs/fonts.md) for CJKV routing, fallback behavior, and explicit Vite MSDF
 assets.
 
+Dynamic MSDF/SDF glyphs use a 48px minimum source resolution by default, preserving intricate
+small-size strokes across viewport zoom while retaining logical layout and effect dimensions.
+
 ## Bind pixi-viewport
 
 ```ts

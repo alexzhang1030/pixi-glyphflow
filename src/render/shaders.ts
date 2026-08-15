@@ -22,6 +22,7 @@ flat out uint vMode;
 flat out vec4 vEffects;
 flat out vec4 vUvBounds;
 flat out vec4 vFill;
+flat out float vRasterScale;
 
 vec4 paletteTexel(uint index) {
     uint width = uint(uPaletteWidth);
@@ -50,6 +51,7 @@ void main(void) {
     vEffects = paletteTexel(paletteBase + 3u);
     vUvBounds = aInstanceUv;
     vFill = paletteColor;
+    vRasterScale = max(float((aMetadata >> 18u) & 8191u) / 64.0, 1.0);
 }
 `;
 
@@ -67,6 +69,7 @@ flat in uint vMode;
 flat in vec4 vEffects;
 flat in vec4 vUvBounds;
 flat in vec4 vFill;
+flat in float vRasterScale;
 
 out vec4 finalColor;
 
@@ -120,7 +123,7 @@ void main(void) {
     vec4 fill = vMode == 3u
         ? sampleColor * fillTint
         : vec4(fillTint.rgb * fillCoverage, fillTint.a * fillCoverage);
-    vec2 texel = 1.0 / vec2(textureSize(uTexture, 0));
+    vec2 texel = vRasterScale / vec2(textureSize(uTexture, 0));
 
     uint shadowPacked = uint(round(vEffects.w));
     uint strokePacked = uint(round(vEffects.y));
@@ -205,6 +208,7 @@ struct VertexOutput {
     @location(3) @interpolate(flat) effects: vec4<f32>,
     @location(4) @interpolate(flat) uvBounds: vec4<f32>,
     @location(5) @interpolate(flat) fill: vec4<f32>,
+    @location(6) @interpolate(flat) rasterScale: f32,
 };
 
 fn paletteIndex(linear: u32, width: u32) -> vec2<i32> {
@@ -248,6 +252,7 @@ fn mainVertex(
         effects,
         aInstanceUv,
         paletteColor,
+        max(f32((aMetadata >> 18u) & 8191u) / 64.0, 1.0),
     );
 }
 
@@ -307,7 +312,7 @@ fn mainFragment(input: VertexOutput) -> @location(0) vec4<f32> {
         fillTint.a * fillCoverage,
     );
     let fill = select(distanceColor, sampleColor * fillTint, input.mode == 3u);
-    let texel = 1.0 / vec2<f32>(textureDimensions(uTexture));
+    let texel = input.rasterScale / vec2<f32>(textureDimensions(uTexture));
 
     let shadowPacked = u32(round(input.effects.w));
     let strokePacked = u32(round(input.effects.y));

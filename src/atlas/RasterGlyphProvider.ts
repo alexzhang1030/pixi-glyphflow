@@ -12,11 +12,13 @@ import type {
 } from "./types";
 
 const DEFAULT_CACHE_SIZE = 2_048;
+const DEFAULT_DISTANCE_FIELD_MIN_FONT_SIZE = 48;
 
 export class RasterGlyphProvider {
   readonly #registry: FontRegistry;
   readonly #cacheSize: number;
   readonly #generatorConcurrency: number;
+  readonly #distanceFieldMinFontSize: number;
   readonly #canvasRasterizer: (request: RasterGlyphRequest) => Promise<GlyphRaster>;
   readonly #createMsdfGenerator: () => Promise<MsdfGeneratorLike>;
   readonly #cache = new Map<string, Readonly<GlyphRaster>>();
@@ -41,6 +43,11 @@ export class RasterGlyphProvider {
       options.generatorConcurrency ?? Math.min(4, globalThis.navigator?.hardwareConcurrency ?? 1);
     if (!Number.isSafeInteger(this.#generatorConcurrency) || this.#generatorConcurrency <= 0) {
       throw new TypeError("generatorConcurrency must be a positive safe integer");
+    }
+    this.#distanceFieldMinFontSize =
+      options.distanceFieldMinFontSize ?? DEFAULT_DISTANCE_FIELD_MIN_FONT_SIZE;
+    if (!Number.isFinite(this.#distanceFieldMinFontSize) || this.#distanceFieldMinFontSize <= 0) {
+      throw new TypeError("distanceFieldMinFontSize must be a positive finite number");
     }
     this.#generatorPromises = Array.from({ length: this.#generatorConcurrency });
     this.#generatorTails = Array.from({ length: this.#generatorConcurrency });
@@ -142,18 +149,20 @@ export class RasterGlyphProvider {
       throw new RangeError(`Binary font data is unavailable: ${request.family}`);
     }
     const prepared = prepareGlyphFont(bytes, request.glyphId, request.glyphText);
-    const textureSize = nextPowerOfTwo(Math.max(32, Math.ceil(request.fontSize * 2)));
+    const rasterFontSize = Math.max(request.fontSize, this.#distanceFieldMinFontSize);
+    const rasterScale = rasterFontSize / request.fontSize;
+    const textureSize = nextPowerOfTwo(Math.max(32, Math.ceil(rasterFontSize * 2)));
     const atlas = await this.#generateAtlas({
       font: prepared.bytes,
       charset: prepared.glyphText,
-      fontSize: request.fontSize,
+      fontSize: rasterFontSize,
       textureSize: [textureSize, textureSize],
       fieldRange: 4,
       padding: 2,
       fixOverlaps: true,
     });
 
-    return extractDistanceField(request, atlas, prepared.glyphText);
+    return extractDistanceField(request, atlas, prepared.glyphText, rasterScale);
   }
 
   #generateAtlas(options: Readonly<Record<string, unknown>>): Promise<MsdfAtlasLike> {
@@ -196,6 +205,7 @@ function extractDistanceField(
   request: RasterGlyphRequest,
   atlas: MsdfAtlasLike,
   generatedGlyphText: string,
+  rasterScale: number,
 ): Readonly<GlyphRaster> {
   const glyph =
     atlas.glyphs.find((candidate) => candidate.char === generatedGlyphText) ?? atlas.glyphs[0];
@@ -224,10 +234,11 @@ function extractDistanceField(
     rgba.set(atlas.texture.data.subarray(sourceStart, sourceStart + width * 4), row * width * 4);
   }
   const metrics: Readonly<GlyphMetrics> = Object.freeze({
-    bearingX: glyph.bounds.left,
-    bearingY: glyph.bounds.top,
-    advance: glyph.advance,
-    fieldRange: atlas.fieldRange,
+    bearingX: glyph.bounds.left / rasterScale,
+    bearingY: glyph.bounds.top / rasterScale,
+    advance: glyph.advance / rasterScale,
+    fieldRange: atlas.fieldRange / rasterScale,
+    ...(rasterScale === 1 ? {} : { rasterScale }),
   });
   if (request.mode === "msdf") {
     return Object.freeze({ mode: "msdf", width, height, pixels: rgba, metrics });

@@ -27,6 +27,7 @@ describe("GlyphInstanceStore", () => {
       paletteIndex: 10,
       page: 0,
       mode: 0,
+      rasterScale: 1,
       active: true,
     });
     store.consumeDirty();
@@ -113,6 +114,7 @@ function readInstance(
     paletteIndex: view.getUint32(24, true),
     page: metadata & 0xffff,
     mode: (metadata >>> 16) & 0x3,
+    rasterScale: ((metadata >>> 18) & 0x1fff) / 64,
     active: (metadata & 0x8000_0000) !== 0,
   };
 }

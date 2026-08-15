@@ -15,7 +15,7 @@ Status: unstamped project record dated 2026-08-15. Package versions are pinned b
 | Vue type checking | Golar 0.1.10 and @golar/vue 0.1.10 | Golar uses typescript-go 7.0 for strict Vue SFC and template diagnostics. It preserves the repository-wide TypeScript 7 toolchain. |
 | Rendering host | PixiJS 8.19.0 development pin and ^8.19.0 peer range | The implementation uses public scene, geometry, shader, texture, and bitmap-font interfaces. Advanced compatibility code stays isolated under src/pixi/compat. |
 | Complex shaping | harfbuzzjs, loaded on demand | HarfBuzz supplies glyph IDs, cluster mapping, positioning, and outlines for registered binary fonts. Its version lands as an exact dependency with the shaping slice. |
-| Dynamic distance fields | @zappar/msdf-generator 1.2.4, loaded on demand | Runtime MSDF work runs outside the core startup path. Vite applications can provide explicit bundled worker and WebAssembly URLs through rasterizer options. Each worker serializes its mutable font state; the pool supplies parallelism. |
+| Dynamic distance fields | @zappar/msdf-generator 1.2.4, loaded on demand | Runtime MSDF work runs outside the core startup path. Vite applications can provide explicit bundled worker and WebAssembly URLs through rasterizer options. Each worker serializes its mutable font state; the pool supplies parallelism. A 48px minimum source size preserves intricate small glyphs while packed raster scales keep logical geometry and effects stable. |
 | Publication | npm 12 and GitHub OIDC Trusted Publishing | Release tags align with package versions. Provenance and public consumer verification form part of the release gate. |
 
 ## Compatibility constraints

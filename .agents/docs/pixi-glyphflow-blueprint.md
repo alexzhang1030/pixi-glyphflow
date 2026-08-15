@@ -176,7 +176,7 @@ The layout cache key additionally contains:
     wrap width + line height + alignment + letter spacing
     + word break + maximum lines + ellipsis policy
 
-HarfBuzz runs in a worker for registered binary fonts and returns transferable typed arrays. The browser bitmap path serves system fonts and color grapheme clusters. Prebuilt bitmap fonts serve the lowest-startup-cost path. Dynamic MSDF rasterization uses exact HarfBuzz glyph IDs, remaps contextual or localized alternates in temporary font clones, and serializes mutable font state inside each worker.
+HarfBuzz runs in a worker for registered binary fonts and returns transferable typed arrays. The browser bitmap path serves system fonts and color grapheme clusters. Prebuilt bitmap fonts serve the lowest-startup-cost path. Dynamic MSDF rasterization uses exact HarfBuzz glyph IDs, remaps contextual or localized alternates in temporary font clones, serializes mutable font state inside each worker, and oversamples small glyphs at a 48px minimum while retaining logical geometry through packed raster scales.
 
 Every async request carries label generation, label revision, font revision, shaping key, layout key, atlas generation, and destination identity. A complete previous generation remains visible until the replacement commits at a frame boundary.
 

@@ -30,6 +30,12 @@
 - Million-label viewport, dynamic counter, drag, zoom, and position-storm frame p95 values stay within
   the 16.67 millisecond budget on the reference Apple M1 Pro browser fixture.
 
+### Fixed
+
+- Small CJK glyphs use oversampled distance fields with logical-size normalization, preserving
+  continuous strokes across viewport zoom. The documentation CJK font uses a static Medium instance
+  for deterministic MSDF outlines.
+
 ## 0.0.1 - 2026-08-15
 
 ### Added

@@ -277,6 +277,7 @@ async function initialize(backend: RendererBackend, runId: number): Promise<void
     initialCapacity: LABEL_COUNT,
     rendering: {
       rasterizerOptions: {
+        distanceFieldMinFontSize: 48,
         createMsdfGenerator: () =>
           Promise.resolve(new MSDF({ workerUrl: msdfWorkerUrl, wasmUrl: msdfWasmUrl })),
       },

@@ -14,6 +14,8 @@ export interface GlyphInstanceBatch {
   readonly pages: Uint16Array;
   /** 0=MSDF, 1=SDF, 2=alpha, 3=color. */
   readonly modes: Uint8Array;
+  /** Physical atlas pixels per logical layout unit. Defaults to 1. */
+  readonly rasterScales?: Float32Array;
 }
 
 export interface GlyphInstanceRange {

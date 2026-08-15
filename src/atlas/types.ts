@@ -18,6 +18,8 @@ export interface GlyphMetrics {
   readonly bearingY: number;
   readonly advance: number;
   readonly fieldRange?: number;
+  /** Physical atlas pixels per logical layout unit. Defaults to 1. */
+  readonly rasterScale?: number;
 }
 
 export interface AtlasEntry {
@@ -150,6 +152,8 @@ export interface RasterGlyphProviderOptions {
   readonly cacheSize?: number;
   /** Parallel lazy MSDF workers. Browser defaults use up to four hardware threads. */
   readonly generatorConcurrency?: number;
+  /** Minimum MSDF/SDF rasterization size. Defaults to 48px for small-glyph detail. */
+  readonly distanceFieldMinFontSize?: number;
   readonly canvasRasterizer?: (request: RasterGlyphRequest) => Promise<GlyphRaster>;
   readonly createMsdfGenerator?: () => Promise<MsdfGeneratorLike>;
 }

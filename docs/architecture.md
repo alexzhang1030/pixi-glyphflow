@@ -63,7 +63,8 @@ glyphs pin entries. LRU eviction reclaims unpinned entries under a fixed allocat
 Binary-font rasterization consumes the exact HarfBuzz glyph ID. Direct cmap hits reuse the original
 font bytes; contextual, ligature, and language-localized glyphs receive a temporary cmap mapping for
 the character-based MSDF generator. A bounded worker pool runs in parallel and serializes operations
-inside each worker so mutable font state remains isolated.
+inside each worker so mutable font state remains isolated. Small distance fields rasterize at a
+48-pixel minimum and carry a physical-to-logical scale through atlas entries and packed instances.
 
 Each glyph instance uses 32 bytes. Each label transform palette record uses 64 bytes. Dirty-range
 adapters issue partial WebGL buffer updates or budgeted WebGPU queue writes.
