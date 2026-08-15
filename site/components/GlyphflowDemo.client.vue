@@ -15,10 +15,16 @@ const STORM_INTERVAL_MS = 100;
 const INITIAL_ZOOM = 0.24;
 const numberFormat = new Intl.NumberFormat("en-US");
 
+type RendererBackend = "webgl" | "webgpu";
+type WebGpuCapability = "checking" | "available" | "unavailable";
+
 const canvasHost = ref<HTMLElement>();
 const state = ref<"booting" | "ready" | "error">("booting");
 const errorMessage = ref("");
 const loadedPercent = ref(0);
+const requestedBackend = ref<RendererBackend>("webgl");
+const activeBackend = ref<RendererBackend>();
+const webGpuCapability = ref<WebGpuCapability>("checking");
 const stormEnabled = ref(true);
 const rotationDegrees = ref(0);
 const resident = ref("0");
@@ -28,10 +34,16 @@ const glyphs = ref("0");
 const updateDuration = ref("0.00 ms");
 const viewportDuration = ref("0.00 ms");
 const fps = ref("0");
-const rendererName = ref("WebGL");
+const rendererName = computed(() => formatRenderer(activeBackend.value ?? requestedBackend.value));
+
+const webGpuCapabilityLabel = computed(() => {
+  if (webGpuCapability.value === "available") return "WebGPU available";
+  if (webGpuCapability.value === "unavailable") return "WebGPU unavailable";
+  return "Checking WebGPU";
+});
 
 const stateLabel = computed(() => {
-  if (state.value === "ready") return "Live";
+  if (state.value === "ready") return `${rendererName.value} live`;
   if (state.value === "error") return "Error";
   return `Loading ${loadedPercent.value}%`;
 });
@@ -50,42 +62,118 @@ let useSecondPositions = true;
 let stormPending = false;
 let demoVisible = true;
 let destroyed = false;
+let rendererRun = 0;
 
 onMounted(() => {
   stormEnabled.value = !window.matchMedia("(prefers-reduced-motion: reduce)").matches;
-  void initialize().catch((error: unknown) => {
-    cleanup();
-    state.value = "error";
-    errorMessage.value = error instanceof Error ? error.message : String(error);
-    console.error(error);
-  });
+  requestedBackend.value = readInitialBackend();
+  void probeWebGpu();
+  void restartRenderer(requestedBackend.value);
 });
 
 onBeforeUnmount(() => {
   destroyed = true;
+  rendererRun += 1;
   cleanup();
 });
 
-async function initialize(): Promise<void> {
+function selectBackend(backend: RendererBackend): void {
+  if (state.value === "booting") return;
+  if (backend === requestedBackend.value && state.value === "ready") return;
+  if (backend === "webgpu" && webGpuCapability.value !== "available") return;
+  updateRendererQuery(backend);
+  void restartRenderer(backend);
+}
+
+async function restartRenderer(backend: RendererBackend): Promise<void> {
+  const runId = rendererRun + 1;
+  rendererRun = runId;
+  cleanup();
+  requestedBackend.value = backend;
+  activeBackend.value = undefined;
+  state.value = "booting";
+  errorMessage.value = "";
+  resetHud();
+
+  try {
+    await initialize(backend, runId);
+  } catch (error: unknown) {
+    if (isStale(runId)) return;
+    cleanup();
+    state.value = "error";
+    errorMessage.value = error instanceof Error ? error.message : String(error);
+    console.error(error);
+  }
+}
+
+async function probeWebGpu(): Promise<void> {
+  const gpu = navigator.gpu;
+  if (gpu === undefined) {
+    webGpuCapability.value = "unavailable";
+    return;
+  }
+
+  try {
+    const adapter = await gpu.requestAdapter({ powerPreference: "high-performance" });
+    if (destroyed) return;
+    webGpuCapability.value =
+      adapter === null && activeBackend.value !== "webgpu" ? "unavailable" : "available";
+  } catch {
+    if (!destroyed && activeBackend.value !== "webgpu") {
+      webGpuCapability.value = "unavailable";
+    }
+  }
+}
+
+function readInitialBackend(): RendererBackend {
+  return new URL(window.location.href).searchParams.get("renderer") === "webgpu"
+    ? "webgpu"
+    : "webgl";
+}
+
+function updateRendererQuery(backend: RendererBackend): void {
+  const url = new URL(window.location.href);
+  url.searchParams.set("renderer", backend);
+  window.history.replaceState(window.history.state, "", url);
+}
+
+function resetHud(): void {
+  loadedPercent.value = 0;
+  resident.value = "0";
+  visible.value = "0";
+  revision.value = "0";
+  glyphs.value = "0";
+  updateDuration.value = "0.00 ms";
+  viewportDuration.value = "0.00 ms";
+  fps.value = "0";
+  rotationDegrees.value = 0;
+}
+
+function isStale(runId: number): boolean {
+  return destroyed || runId !== rendererRun;
+}
+
+async function initialize(backend: RendererBackend, runId: number): Promise<void> {
   const host = canvasHost.value;
   if (host === undefined) throw new Error("Demo canvas host is unavailable");
 
   const nextApp = new Application();
-  app = nextApp;
   await nextApp.init({
     width: Math.max(host.clientWidth, 320),
     height: Math.max(host.clientHeight, 320),
-    preference: "webgl",
+    preference: [backend],
     preferWebGLVersion: 2,
+    powerPreference: "high-performance",
     antialias: false,
     autoDensity: true,
     resolution: Math.min(window.devicePixelRatio, 2),
     background: "#080d12",
   });
-  if (destroyed) {
+  if (isStale(runId)) {
     nextApp.destroy(true);
     return;
   }
+  app = nextApp;
   nextApp.stop();
   nextApp.canvas.className = "demo-canvas-element";
   nextApp.canvas.setAttribute("role", "img");
@@ -147,7 +235,7 @@ async function initialize(): Promise<void> {
   let movingIndex = 0;
 
   for (let start = 0; start < LABEL_COUNT; start += CHUNK_SIZE) {
-    if (destroyed) return;
+    if (isStale(runId)) return;
     const count = Math.min(CHUNK_SIZE, LABEL_COUNT - start);
     const specs = Array.from({ length: count }, (_, localIndex): TextLabelSpec => {
       const index = start + localIndex;
@@ -174,13 +262,20 @@ async function initialize(): Promise<void> {
   await nextLayer.commit();
   nextViewport.emit("frame-end", nextViewport);
   await nextBinding.whenIdle();
-  if (destroyed) return;
+  if (isStale(runId)) return;
 
-  rendererName.value = formatRenderer(nextLayer.stats.rendererAdapter);
+  const rendererAdapter = nextLayer.stats.rendererAdapter;
+  if (rendererAdapter !== backend) {
+    throw new Error(
+      `${formatRenderer(backend)} was requested and PixiJS selected ${formatRenderer(rendererAdapter)}`,
+    );
+  }
+  activeBackend.value = backend;
+  if (backend === "webgpu") webGpuCapability.value = "available";
   state.value = "ready";
   updateHud(0);
   nextApp.start();
-  startRuntime(nextApp, nextViewport, worldWidth, worldHeight);
+  startRuntime(nextApp, nextViewport, worldWidth, worldHeight, runId);
 }
 
 function captureMovingLabel(id: TextId, labelIndex: number, movingIndex: number): void {
@@ -202,6 +297,7 @@ function startRuntime(
   nextViewport: Viewport,
   worldWidth: number,
   worldHeight: number,
+  runId: number,
 ): void {
   let frameCount = 0;
   let lastFpsSample = performance.now();
@@ -222,11 +318,11 @@ function startRuntime(
     }
   });
 
-  stormTimer = window.setInterval(() => void runPositionStorm(), STORM_INTERVAL_MS);
+  stormTimer = window.setInterval(() => void runPositionStorm(runId), STORM_INTERVAL_MS);
   resizeObserver = new ResizeObserver(() => {
     window.requestAnimationFrame(() => {
       const host = canvasHost.value;
-      if (destroyed || host === undefined) return;
+      if (isStale(runId) || host === undefined) return;
       nextApp.renderer.resize(Math.max(host.clientWidth, 320), Math.max(host.clientHeight, 320));
       nextViewport.resize(nextApp.screen.width, nextApp.screen.height, worldWidth, worldHeight);
       nextViewport.emit("frame-end", nextViewport);
@@ -236,6 +332,7 @@ function startRuntime(
 
   intersectionObserver = new IntersectionObserver(
     ([entry]) => {
+      if (isStale(runId)) return;
       demoVisible = entry?.isIntersecting ?? true;
       if (demoVisible) nextApp.start();
       else nextApp.stop();
@@ -245,13 +342,14 @@ function startRuntime(
   if (canvasHost.value !== undefined) intersectionObserver.observe(canvasHost.value);
 }
 
-async function runPositionStorm(): Promise<void> {
+async function runPositionStorm(runId: number): Promise<void> {
   const nextLayer = layer;
   const ids = movingIds;
   const first = firstPositions;
   const second = secondPositions;
   if (
     state.value !== "ready" ||
+    isStale(runId) ||
     !stormEnabled.value ||
     !demoVisible ||
     stormPending ||
@@ -270,7 +368,7 @@ async function runPositionStorm(): Promise<void> {
     await nextLayer.commit();
     updateDuration.value = `${(performance.now() - startedAt).toFixed(2)} ms`;
   } finally {
-    stormPending = false;
+    if (!isStale(runId)) stormPending = false;
   }
 }
 
@@ -371,6 +469,12 @@ function cleanup(): void {
   layer = undefined;
   viewport = undefined;
   app = undefined;
+  movingIds = undefined;
+  firstPositions = undefined;
+  secondPositions = undefined;
+  useSecondPositions = true;
+  stormPending = false;
+  demoVisible = true;
 }
 
 function formatRenderer(value: string): string {
@@ -389,6 +493,7 @@ function nextFrame(): Promise<void> {
     class="demo-shell"
     data-testid="glyphflow-demo"
     :data-demo-state="state"
+    :data-renderer-backend="activeBackend"
     aria-labelledby="demo-title"
   >
     <header class="demo-header">
@@ -396,10 +501,38 @@ function nextFrame(): Promise<void> {
         <p class="demo-kicker">LIVE RENDER PATH</p>
         <h2 id="demo-title">Viewport pressure test</h2>
       </div>
-      <span class="live-state" :class="{ ready: state === 'ready', failed: state === 'error' }">
-        <span aria-hidden="true" />
-        <span aria-live="polite">{{ stateLabel }}</span>
-      </span>
+      <div class="demo-header-actions">
+        <fieldset class="renderer-picker">
+          <legend class="sr-only">Renderer backend</legend>
+          <div class="renderer-picker-options">
+            <button
+              type="button"
+              data-testid="backend-webgl"
+              :aria-pressed="requestedBackend === 'webgl'"
+              :disabled="state === 'booting'"
+              @click="selectBackend('webgl')"
+            >
+              WebGL 2
+            </button>
+            <button
+              type="button"
+              data-testid="backend-webgpu"
+              :aria-pressed="requestedBackend === 'webgpu'"
+              :disabled="state === 'booting' || webGpuCapability !== 'available'"
+              @click="selectBackend('webgpu')"
+            >
+              WebGPU
+            </button>
+          </div>
+          <span class="renderer-capability" data-testid="webgpu-capability">
+            {{ webGpuCapabilityLabel }}
+          </span>
+        </fieldset>
+        <span class="live-state" :class="{ ready: state === 'ready', failed: state === 'error' }">
+          <span aria-hidden="true" />
+          <span aria-live="polite">{{ stateLabel }}</span>
+        </span>
+      </div>
     </header>
 
     <div
@@ -435,7 +568,7 @@ function nextFrame(): Promise<void> {
         </div>
         <div>
           <dt>Revision</dt>
-          <dd>{{ revision }}</dd>
+          <dd data-testid="revision-count">{{ revision }}</dd>
         </div>
         <div>
           <dt>Position commit</dt>
@@ -450,8 +583,10 @@ function nextFrame(): Promise<void> {
           <dd>{{ glyphs }}</dd>
         </div>
         <div>
-          <dt>{{ rendererName }}</dt>
-          <dd>{{ fps }} FPS</dd>
+          <dt>Renderer / FPS</dt>
+          <dd>
+            <span data-testid="renderer-adapter">{{ rendererName }}</span> · {{ fps }} FPS
+          </dd>
         </div>
       </dl>
 

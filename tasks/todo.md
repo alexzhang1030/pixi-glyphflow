@@ -162,3 +162,8 @@
   - Acceptance: One responsive Nuxt SSR page presents the package surface and runs a real TextLayer plus pixi-viewport movement stress scene.
   - Verify: bun run site:typecheck && bun run site:build && bun run site:test
   - Files: site, package.json, bun.lock, .github/workflows/ci.yml, README.md, CONTRIBUTING.md
+
+- [x] Task 8.2: Exercise both renderer backends in the live documentation demo.
+  - Acceptance: Readers can rebuild the 20,000-label pressure test on WebGL 2 and WebGPU, with exact adapter identity and browser capability state exposed in the interface.
+  - Verify: bun run site:typecheck && bun run site:test && bun run test:browser
+  - Files: site/components/GlyphflowDemo.client.vue, site/tests/site.pw.ts, site/assets/css/main.css, site/README.md

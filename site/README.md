@@ -23,6 +23,7 @@ points through exact aliases to `dist/`.
 
 `components/GlyphflowDemo.client.vue` runs the public package surface with:
 
+- a forced WebGL 2 / WebGPU selector that rebuilds the complete PixiJS scene;
 - 20,000 resident labels and viewport culling;
 - 2,000 packed position updates every 100 milliseconds;
 - pixi-viewport drag, deceleration, wheel, pinch, zoom, and rotation;
@@ -35,5 +36,6 @@ keeping documentation navigation responsive.
 ## Browser acceptance
 
 `bun run site:test` builds the root package and Nuxt server, then runs Chrome checks for the live
-renderer, camera controls, theme switching, reduced motion, keyboard access, console errors, and
+WebGL 2 renderer, capability-gated WebGPU renderer, backend teardown and rebuild, position-storm
+revisions, camera controls, theme switching, reduced motion, keyboard access, console errors, and
 horizontal fit at 320, 768, 1024, and 1440 pixels.

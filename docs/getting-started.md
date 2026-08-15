@@ -40,7 +40,11 @@ import { Application } from "pixi.js";
 import { TextLayer } from "pixi-glyphflow";
 
 const app = new Application();
-await app.init({ resizeTo: window, preference: "webgl" });
+await app.init({
+  resizeTo: window,
+  preference: ["webgpu", "webgl"],
+  webgl: { preferWebGLVersion: 2 },
+});
 
 const layer = new TextLayer({ renderer: app.renderer });
 app.stage.addChild(layer);

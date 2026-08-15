@@ -1,4 +1,4 @@
-import { expect, test } from "@playwright/test";
+import { expect, test, type Page } from "@playwright/test";
 
 test("serves the docs, runs the viewport, and fits every target width", async ({ page }) => {
   const consoleErrors: string[] = [];
@@ -15,6 +15,8 @@ test("serves the docs, runs the viewport, and fits every target width", async ({
 
   const demo = page.getByTestId("glyphflow-demo");
   await expect(demo).toHaveAttribute("data-demo-state", "ready");
+  await expect(demo).toHaveAttribute("data-renderer-backend", "webgl");
+  await expect(page.getByTestId("renderer-adapter")).toHaveText("WebGL 2");
   await expect(page.getByTestId("resident-count")).toHaveText("20,000");
   await expect(demo.locator("canvas")).toBeVisible();
 
@@ -65,6 +67,52 @@ test("serves the docs, runs the viewport, and fits every target width", async ({
   expect(consoleErrors).toEqual([]);
 });
 
+test("rebuilds the pressure test across WebGL 2 and an available WebGPU adapter", async ({
+  page,
+}) => {
+  const consoleErrors: string[] = [];
+  page.on("console", (message) => {
+    if (message.type() === "error") consoleErrors.push(message.text());
+  });
+  page.on("pageerror", (error) => consoleErrors.push(error.message));
+
+  await page.goto("/", { waitUntil: "domcontentloaded" });
+  const demo = page.getByTestId("glyphflow-demo");
+  const webGpuButton = page.getByTestId("backend-webgpu");
+  const capability = page.getByTestId("webgpu-capability");
+  await expect(demo).toHaveAttribute("data-renderer-backend", "webgl");
+  await expect(capability).toHaveText(/WebGPU (available|unavailable)/);
+
+  if ((await capability.textContent())?.includes("unavailable") === true) {
+    await expect(webGpuButton).toBeDisabled();
+    expect(consoleErrors).toEqual([]);
+    return;
+  }
+
+  await expect(webGpuButton).toBeEnabled();
+  await webGpuButton.click();
+  await expect(demo).toHaveAttribute("data-renderer-backend", "webgpu");
+  await expect(demo).toHaveAttribute("data-demo-state", "ready");
+  await expect(page.getByTestId("renderer-adapter")).toHaveText("WebGPU");
+  await expect(page.getByTestId("resident-count")).toHaveText("20,000");
+
+  const initialRevision = await readMetric(page, "revision-count");
+  await expect.poll(() => readMetric(page, "revision-count")).toBeGreaterThan(initialRevision);
+
+  const canvas = demo.locator(".demo-canvas");
+  await canvas.focus();
+  await page.keyboard.press("ArrowLeft");
+  await page.keyboard.press("+");
+  await page.keyboard.press("0");
+
+  await page.getByTestId("backend-webgl").click();
+  await expect(demo).toHaveAttribute("data-renderer-backend", "webgl");
+  await expect(demo).toHaveAttribute("data-demo-state", "ready");
+  await expect(page.getByTestId("renderer-adapter")).toHaveText("WebGL 2");
+  await expect(page.getByTestId("resident-count")).toHaveText("20,000");
+  expect(consoleErrors).toEqual([]);
+});
+
 test("honors reduced motion and exposes keyboard controls", async ({ page }) => {
   await page.emulateMedia({ reducedMotion: "reduce", colorScheme: "dark" });
   await page.goto("/", { waitUntil: "domcontentloaded" });
@@ -83,3 +131,8 @@ test("honors reduced motion and exposes keyboard controls", async ({ page }) => 
   await page.keyboard.press("0");
   await expect(page.getByRole("button", { name: "Reset camera" })).toBeEnabled();
 });
+
+async function readMetric(page: Page, testId: string): Promise<number> {
+  const text = (await page.getByTestId(testId).textContent()) ?? "0";
+  return Number(text.replaceAll(",", ""));
+}

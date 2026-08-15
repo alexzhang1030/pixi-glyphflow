@@ -200,6 +200,7 @@ a {
 .icon-button:focus-visible,
 .button:focus-visible,
 .code-toolbar button:focus-visible,
+.renderer-picker button:focus-visible,
 .demo-controls button:focus-visible,
 .guide-list a:focus-visible,
 .text-link:focus-visible {
@@ -401,6 +402,66 @@ a {
   letter-spacing: -0.02em;
 }
 
+.demo-header-actions {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  gap: 12px;
+  margin-left: auto;
+}
+
+.renderer-picker {
+  display: grid;
+  gap: 4px;
+  margin: 0;
+  padding: 0;
+  border: 0;
+}
+
+.renderer-picker-options {
+  display: inline-flex;
+  padding: 2px;
+  border: 1px solid #27343e;
+  border-radius: 8px;
+  background: #0c1319;
+}
+
+.renderer-picker button {
+  min-height: 26px;
+  padding: 0 9px;
+  border: 0;
+  border-radius: 5px;
+  background: transparent;
+  color: #71828f;
+  font-family: var(--font-mono);
+  font-size: 9px;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.renderer-picker button[aria-pressed="true"] {
+  background: #1b2a34;
+  color: #e7f1f6;
+  box-shadow: inset 0 0 0 1px #344957;
+}
+
+.renderer-picker button:disabled {
+  cursor: default;
+  opacity: 0.48;
+}
+
+.demo-shell[data-demo-state="booting"] .renderer-picker button:disabled {
+  cursor: wait;
+}
+
+.renderer-capability {
+  color: #60727f;
+  font-family: var(--font-mono);
+  font-size: 8px;
+  line-height: 1;
+  text-align: right;
+}
+
 .demo-kicker {
   color: #6d7e8c;
   font-size: 9px;
@@ -416,6 +477,7 @@ a {
   color: #98a8b5;
   font-family: var(--font-mono);
   font-size: 10px;
+  white-space: nowrap;
 }
 
 .live-state > span:first-child {
@@ -1033,6 +1095,15 @@ a {
 
   .demo-header {
     min-height: 66px;
+    align-items: flex-start;
+    flex-direction: column;
+    gap: 12px;
+  }
+
+  .demo-header-actions {
+    width: 100%;
+    justify-content: space-between;
+    margin-left: 0;
   }
 
   .demo-canvas {
