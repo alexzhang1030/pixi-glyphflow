@@ -48,6 +48,8 @@ export interface RenderChange {
   readonly mask: number;
   readonly snapshot: Readonly<RenderLabelSnapshot> | undefined;
   readonly trustedRun?: TrustedGlyphRun;
+  /** Transform dirty is only x/y; patch palette texels without rewriting fill/effects. */
+  readonly positionOnly?: boolean;
 }
 
 export interface RenderLayoutEngineLike {
@@ -233,24 +235,28 @@ export class RenderCoordinator {
       } else {
         this.#transformOnlyLabels += 1;
       }
-      this.transforms.set(
-        change.slot,
-        {
-          x: change.snapshot.x,
-          y: change.snapshot.y,
-          scaleX: change.snapshot.scaleX,
-          scaleY: change.snapshot.scaleY,
-          rotation: change.snapshot.rotation,
-          alpha: change.snapshot.alpha,
-          visible: change.snapshot.visible,
-          anchorX: change.snapshot.anchorX,
-          anchorY: change.snapshot.anchorY,
-          fill: change.snapshot.style.fill,
-          stroke: change.snapshot.style.stroke,
-          dropShadow: change.snapshot.style.dropShadow,
-        },
-        run.bounds,
-      );
+      if (change.positionOnly === true && !sourceChanged) {
+        this.transforms.setPosition(change.slot, change.snapshot.x, change.snapshot.y);
+      } else {
+        this.transforms.set(
+          change.slot,
+          {
+            x: change.snapshot.x,
+            y: change.snapshot.y,
+            scaleX: change.snapshot.scaleX,
+            scaleY: change.snapshot.scaleY,
+            rotation: change.snapshot.rotation,
+            alpha: change.snapshot.alpha,
+            visible: change.snapshot.visible,
+            anchorX: change.snapshot.anchorX,
+            anchorY: change.snapshot.anchorY,
+            fill: change.snapshot.style.fill,
+            stroke: change.snapshot.style.stroke,
+            dropShadow: change.snapshot.style.dropShadow,
+          },
+          run.bounds,
+        );
+      }
       appliedLabels += 1;
     }
     this.#revisions += 1;

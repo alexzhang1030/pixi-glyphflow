@@ -148,6 +148,38 @@ describe("TextStore", () => {
     expect(store.capacity).toBe(4);
   });
 
+  test("interns equal styles so shared formats share one frozen object", () => {
+    const store = new TextStore();
+    const first = store.create(label({ style: { fill: 0x38bdf8, fontSize: 18 } }));
+    const second = store.create(label({ style: { fontSize: 18, fill: 0x38bdf8 } }));
+    const firstStyle = store.get(first)?.style;
+    const secondStyle = store.get(second)?.style;
+
+    expect(firstStyle).toBe(secondStyle);
+    expect(Object.isFrozen(firstStyle)).toBe(true);
+    expect(store.update(first, { style: { fill: 0x38bdf8, fontSize: 18 } })).toBe(TextDirty.None);
+
+    store.dispose();
+  });
+
+  test("marks packed x/y updates as position-only until another transform field changes", () => {
+    const store = new TextStore();
+    const first = store.create(label({ x: 1, y: 2 }));
+    const second = store.create(label({ x: 3, y: 4 }));
+    store.publishDirty();
+
+    expect(store.updatePositions([first, second], new Float32Array([10, 20, 30, 40]))).toBe(2);
+    expect(store.consumePositionOnly(store.slotOf(first) ?? -1)).toBe(true);
+    expect(store.consumePositionOnly(store.slotOf(second) ?? -1)).toBe(true);
+
+    store.update(first, { x: 11 });
+    expect(store.consumePositionOnly(store.slotOf(first) ?? -1)).toBe(true);
+    store.update(second, { x: 31, rotation: 0.25 });
+    expect(store.consumePositionOnly(store.slotOf(second) ?? -1)).toBe(false);
+
+    store.dispose();
+  });
+
   test("validates construction and mutation inputs", () => {
     expect(() => new TextStore({ initialCapacity: 0 })).toThrow(TypeError);
 

@@ -25,7 +25,7 @@ export class SpatialIndex {
   #minimumY: Float32Array;
   #maximumX: Float32Array;
   #maximumY: Float32Array;
-  #zIndex: Float64Array;
+  #zIndex: Float32Array;
   #order: Uint32Array;
   #occupied: Uint8Array;
   #visible: Uint8Array;
@@ -53,7 +53,7 @@ export class SpatialIndex {
     this.#minimumY = new Float32Array(this.#capacity);
     this.#maximumX = new Float32Array(this.#capacity);
     this.#maximumY = new Float32Array(this.#capacity);
-    this.#zIndex = new Float64Array(this.#capacity);
+    this.#zIndex = new Float32Array(this.#capacity);
     this.#order = new Uint32Array(this.#capacity);
     this.#occupied = new Uint8Array(this.#capacity);
     this.#visible = new Uint8Array(this.#capacity);
@@ -314,7 +314,7 @@ export class SpatialIndex {
     this.#minimumY = new Float32Array();
     this.#maximumX = new Float32Array();
     this.#maximumY = new Float32Array();
-    this.#zIndex = new Float64Array();
+    this.#zIndex = new Float32Array();
     this.#order = new Uint32Array();
     this.#occupied = new Uint8Array();
     this.#visible = new Uint8Array();

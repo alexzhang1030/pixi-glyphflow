@@ -24,6 +24,9 @@ const MAX_NAMESPACE = 0xf_ffff;
 const MAX_CAPACITY = 0x100_0000;
 const DEFAULT_CAPACITY = 16;
 const ALL_DIRTY = TextDirty.Content | TextDirty.Transform | TextDirty.Style;
+const POSITION_ONLY = 1;
+const FULL_TRANSFORM = 2;
+const EMPTY_STYLE: Readonly<TextStoreLabel["style"]> = Object.freeze({});
 let nextNamespace = 1;
 
 export interface TextStoreOptions {
@@ -48,7 +51,7 @@ export class TextStore {
   #scaleX: Float32Array;
   #scaleY: Float32Array;
   #rotation: Float32Array;
-  #zIndex: Float64Array;
+  #zIndex: Float32Array;
   #blendModes: Uint8Array;
   #alpha: Float32Array;
   #visible: Uint8Array;
@@ -56,6 +59,10 @@ export class TextStore {
   #anchorY: Float32Array;
   #texts: Array<string | undefined>;
   #styles: Array<Readonly<TextStoreLabel["style"]> | undefined>;
+  #positionOnly: Uint8Array;
+  readonly #styleIntern = new Map<string, Readonly<TextStoreLabel["style"]>>();
+  #lastStyle: Readonly<TextStoreLabel["style"]> | undefined;
+  #lastStyleKey: string | undefined;
   readonly #freeSlots: number[] = [];
   #positionSlots = new Uint32Array();
   readonly #journal: DirtyJournal;
@@ -78,7 +85,7 @@ export class TextStore {
     this.#scaleX = new Float32Array(this.#capacity);
     this.#scaleY = new Float32Array(this.#capacity);
     this.#rotation = new Float32Array(this.#capacity);
-    this.#zIndex = new Float64Array(this.#capacity);
+    this.#zIndex = new Float32Array(this.#capacity);
     this.#blendModes = new Uint8Array(this.#capacity);
     this.#alpha = new Float32Array(this.#capacity);
     this.#visible = new Uint8Array(this.#capacity);
@@ -86,6 +93,7 @@ export class TextStore {
     this.#anchorY = new Float32Array(this.#capacity);
     this.#texts = Array.from({ length: this.#capacity }, () => undefined);
     this.#styles = Array.from({ length: this.#capacity }, () => undefined);
+    this.#positionOnly = new Uint8Array(this.#capacity);
     this.#journal = new DirtyJournal(this.#capacity);
   }
 
@@ -128,6 +136,7 @@ export class TextStore {
       this.#visible.byteLength +
       this.#anchorX.byteLength +
       this.#anchorY.byteLength +
+      this.#positionOnly.byteLength +
       this.#positionSlots.byteLength +
       this.#journal.allocatedBytes;
     const referenceSlotBytes = this.#capacity * 2 * 8;
@@ -225,6 +234,7 @@ export class TextStore {
   /** Apply an already-validated patch to a current dense slot. @internal */
   updateAt(slot: number, patch: TextStoreLabelPatch): TextDirtyMask {
     let dirty = TextDirty.None as TextDirtyMask;
+    let transformKind = 0;
 
     if (patch.text !== undefined && patch.text !== this.#texts[slot]) {
       this.#texts[slot] = patch.text;
@@ -233,26 +243,32 @@ export class TextStore {
     if (patch.x !== undefined && patch.x !== this.#x[slot]) {
       this.#x[slot] = patch.x;
       dirty |= TextDirty.Transform;
+      transformKind |= POSITION_ONLY;
     }
     if (patch.y !== undefined && patch.y !== this.#y[slot]) {
       this.#y[slot] = patch.y;
       dirty |= TextDirty.Transform;
+      transformKind |= POSITION_ONLY;
     }
     if (patch.scaleX !== undefined && patch.scaleX !== this.#scaleX[slot]) {
       this.#scaleX[slot] = patch.scaleX;
       dirty |= TextDirty.Transform;
+      transformKind |= FULL_TRANSFORM;
     }
     if (patch.scaleY !== undefined && patch.scaleY !== this.#scaleY[slot]) {
       this.#scaleY[slot] = patch.scaleY;
       dirty |= TextDirty.Transform;
+      transformKind |= FULL_TRANSFORM;
     }
     if (patch.rotation !== undefined && patch.rotation !== this.#rotation[slot]) {
       this.#rotation[slot] = patch.rotation;
       dirty |= TextDirty.Transform;
+      transformKind |= FULL_TRANSFORM;
     }
     if (patch.zIndex !== undefined && patch.zIndex !== this.#zIndex[slot]) {
       this.#zIndex[slot] = patch.zIndex;
       dirty |= TextDirty.Transform;
+      transformKind |= FULL_TRANSFORM;
     }
     if (
       patch.blendMode !== undefined &&
@@ -260,27 +276,36 @@ export class TextStore {
     ) {
       this.#blendModes[slot] = encodeBlendMode(patch.blendMode);
       dirty |= TextDirty.Transform;
+      transformKind |= FULL_TRANSFORM;
     }
     if (patch.alpha !== undefined && patch.alpha !== this.#alpha[slot]) {
       this.#alpha[slot] = patch.alpha;
       dirty |= TextDirty.Transform;
+      transformKind |= FULL_TRANSFORM;
     }
     if (patch.visible !== undefined && Number(patch.visible) !== this.#visible[slot]) {
       this.#visible[slot] = Number(patch.visible);
       dirty |= TextDirty.Transform;
+      transformKind |= FULL_TRANSFORM;
     }
     if (patch.anchorX !== undefined && patch.anchorX !== this.#anchorX[slot]) {
       this.#anchorX[slot] = patch.anchorX;
       dirty |= TextDirty.Transform;
+      transformKind |= FULL_TRANSFORM;
     }
     if (patch.anchorY !== undefined && patch.anchorY !== this.#anchorY[slot]) {
       this.#anchorY[slot] = patch.anchorY;
       dirty |= TextDirty.Transform;
+      transformKind |= FULL_TRANSFORM;
     }
-    if (patch.style !== undefined && patch.style !== this.#styles[slot]) {
-      this.#styles[slot] = freezeStyle(patch.style);
-      dirty |= TextDirty.Style;
+    if (patch.style !== undefined) {
+      const interned = this.#internStyle(patch.style);
+      if (interned !== this.#styles[slot]) {
+        this.#styles[slot] = interned;
+        dirty |= TextDirty.Style;
+      }
     }
+    this.#markTransformKind(slot, transformKind);
 
     if ((dirty & (TextDirty.Content | TextDirty.Style)) !== 0) {
       const revision = this.#sourceRevisions[slot] ?? 0;
@@ -306,6 +331,7 @@ export class TextStore {
     for (let slot = 0; slot < this.#highWater; slot += 1) {
       if (this.#occupied[slot] !== 1 || this.#visible[slot] === value) continue;
       this.#visible[slot] = value;
+      this.#markTransformKind(slot, FULL_TRANSFORM);
       this.#journal.record(slot, TextDirty.Transform);
       changed += 1;
     }
@@ -379,6 +405,7 @@ export class TextStore {
 
       this.#x[slot] = x;
       this.#y[slot] = y;
+      this.#markTransformKind(slot, POSITION_ONLY);
       this.#journal.record(slot, TextDirty.Transform);
       visitor?.(slot, x, y, previousX, previousY);
       changed += 1;
@@ -446,6 +473,7 @@ export class TextStore {
         this.#x[slot] = x;
         this.#y[slot] = y;
         dirty |= TextDirty.Transform;
+        this.#markTransformKind(slot, contentChanged ? FULL_TRANSFORM : POSITION_ONLY);
       }
       this.#journal.record(slot, dirty);
       visitor?.(slot, index, contentChanged);
@@ -501,7 +529,17 @@ export class TextStore {
     if (!Number.isSafeInteger(mask) || mask <= TextDirty.None || (mask & ~ALL_DIRTY) !== 0) {
       throw new TypeError("Dirty mask contains unsupported domains");
     }
+    if ((mask & TextDirty.Transform) !== 0) {
+      this.#markTransformKind(slot, FULL_TRANSFORM);
+    }
     this.#journal.record(slot, mask);
+  }
+
+  /** True when this epoch's transform dirty is only x/y. Consuming clears the flag. @internal */
+  consumePositionOnly(slot: number): boolean {
+    const value = this.#positionOnly[slot] === POSITION_ONLY;
+    this.#positionOnly[slot] = 0;
+    return value;
   }
 
   /** Advance source identity and publish a source-affecting dirty domain. @internal */
@@ -533,6 +571,9 @@ export class TextStore {
     let marked = 0;
     for (let slot = 0; slot < this.#highWater; slot += 1) {
       if (this.#occupied[slot] === 1) {
+        if ((mask & TextDirty.Transform) !== 0) {
+          this.#markTransformKind(slot, FULL_TRANSFORM);
+        }
         this.#journal.record(slot, mask);
         marked += 1;
       }
@@ -562,6 +603,7 @@ export class TextStore {
       this.#visible = resizeTypedArray(this.#visible, afterCapacity);
       this.#anchorX = resizeTypedArray(this.#anchorX, afterCapacity);
       this.#anchorY = resizeTypedArray(this.#anchorY, afterCapacity);
+      this.#positionOnly = resizeTypedArray(this.#positionOnly, afterCapacity);
       this.#texts.length = afterCapacity;
       this.#styles.length = afterCapacity;
       this.#journal.resize(afterCapacity);
@@ -590,7 +632,7 @@ export class TextStore {
     this.#scaleX = new Float32Array();
     this.#scaleY = new Float32Array();
     this.#rotation = new Float32Array();
-    this.#zIndex = new Float64Array();
+    this.#zIndex = new Float32Array();
     this.#blendModes = new Uint8Array();
     this.#alpha = new Float32Array();
     this.#visible = new Uint8Array();
@@ -598,6 +640,10 @@ export class TextStore {
     this.#anchorY = new Float32Array();
     this.#texts = [];
     this.#styles = [];
+    this.#positionOnly = new Uint8Array();
+    this.#styleIntern.clear();
+    this.#lastStyle = undefined;
+    this.#lastStyleKey = undefined;
     this.#freeSlots.length = 0;
     this.#positionSlots = new Uint32Array();
     this.#journal.dispose();
@@ -635,6 +681,7 @@ export class TextStore {
     this.#visible = growTypedArray(this.#visible, capacity);
     this.#anchorX = growTypedArray(this.#anchorX, capacity);
     this.#anchorY = growTypedArray(this.#anchorY, capacity);
+    this.#positionOnly = growTypedArray(this.#positionOnly, capacity);
     this.#texts.length = capacity;
     this.#styles.length = capacity;
     this.#journal.reserve(capacity);
@@ -654,7 +701,34 @@ export class TextStore {
     this.#visible[slot] = Number(label.visible);
     this.#anchorX[slot] = label.anchorX;
     this.#anchorY[slot] = label.anchorY;
-    this.#styles[slot] = freezeStyle(label.style);
+    this.#styles[slot] = this.#internStyle(label.style);
+  }
+
+  #markTransformKind(slot: number, kind: number): void {
+    if (kind === 0) return;
+    if (kind === POSITION_ONLY && this.#positionOnly[slot] !== FULL_TRANSFORM) {
+      this.#positionOnly[slot] = POSITION_ONLY;
+      return;
+    }
+    this.#positionOnly[slot] = FULL_TRANSFORM;
+  }
+
+  #internStyle(style: Readonly<TextStoreLabel["style"]>): Readonly<TextStoreLabel["style"]> {
+    if (isEmptyStyle(style)) return EMPTY_STYLE;
+    if (style === this.#lastStyle) return style;
+    const key = styleInternKey(style);
+    if (key === this.#lastStyleKey && this.#lastStyle !== undefined) return this.#lastStyle;
+    const existing = this.#styleIntern.get(key);
+    if (existing !== undefined) {
+      this.#lastStyle = existing;
+      this.#lastStyleKey = key;
+      return existing;
+    }
+    const frozen = Object.isFrozen(style) ? style : Object.freeze({ ...style });
+    this.#styleIntern.set(key, frozen);
+    this.#lastStyle = frozen;
+    this.#lastStyleKey = key;
+    return frozen;
   }
 
   #retireSlot(slot: number): void {
@@ -760,13 +834,26 @@ function assertFiniteField(name: string, value: number | undefined): void {
   }
 }
 
-function freezeStyle(style: Readonly<TextStoreLabel["style"]>): Readonly<TextStoreLabel["style"]> {
-  if (Object.isFrozen(style)) {
-    return style;
-  }
-
-  return Object.freeze({ ...style });
+function isEmptyStyle(style: Readonly<TextStoreLabel["style"]>): boolean {
+  for (const _key in style) return false;
+  return true;
 }
+
+function styleInternKey(style: Readonly<TextStoreLabel["style"]>): string {
+  try {
+    const keys = Object.keys(style).sort();
+    if (keys.length === 0) return "";
+    const ordered: Record<string, unknown> = {};
+    for (const key of keys) {
+      ordered[key] = (style as Record<string, unknown>)[key];
+    }
+    return JSON.stringify(ordered);
+  } catch {
+    return `\0${String(++styleKeyFallback)}`;
+  }
+}
+
+let styleKeyFallback = 0;
 
 function growTypedArray<T extends Uint8Array | Uint32Array | Float32Array | Float64Array>(
   source: T,

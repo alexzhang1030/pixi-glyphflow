@@ -128,6 +128,65 @@ describe("TextLayer commit and maintenance", () => {
     layer.destroy();
   });
 
+  test("reuses glyph work for packed position storms", async () => {
+    let layouts = 0;
+    const run: PositionedRun = Object.freeze({
+      source: "bitmap",
+      text: "A",
+      fontFamily: "sans-serif",
+      fontRevision: 0,
+      direction: "ltr",
+      glyphCount: 1,
+      glyphIds: new Uint32Array([65]),
+      glyphKeys: Object.freeze(["A"]),
+      clusters: new Uint32Array([0]),
+      x: new Float32Array([0]),
+      y: new Float32Array([8]),
+      xAdvance: new Float32Array([8]),
+      yAdvance: new Float32Array([0]),
+      lineIndices: new Uint32Array([0]),
+      bounds: Object.freeze({ x: 0, y: 0, width: 8, height: 10 }),
+    });
+    const layer = new TextLayer({
+      renderer: {} as Renderer,
+      rendering: {
+        layoutEngine: {
+          async layout() {
+            layouts += 1;
+            return run;
+          },
+          destroy() {},
+        },
+        glyphProvider: {
+          async rasterize() {
+            return {
+              mode: "alpha" as const,
+              width: 8,
+              height: 10,
+              pixels: new Uint8Array(80).fill(255),
+            };
+          },
+          destroy() {},
+        },
+        atlasOptions: { pageWidth: 32, pageHeight: 32, maxBytes: 4_096 },
+      },
+    });
+    const id = layer.create({ text: "A", style: { fontSize: 16 } });
+    await layer.commit();
+    layer.updatePositions([id], new Float32Array([40, 50]));
+    await layer.commit();
+
+    expect(layouts).toBe(1);
+    expect(layer.stats).toMatchObject({
+      glyphCount: 1,
+      shapedLabels: 1,
+      transformOnlyLabels: 1,
+    });
+    expect(layer.get(id)).toMatchObject({ x: 40, y: 50 });
+
+    layer.destroy();
+  });
+
   test("publishes writing mode, font weight, and fill through the render commit seam", async () => {
     const inputs: Array<{
       readonly writingMode?: string;

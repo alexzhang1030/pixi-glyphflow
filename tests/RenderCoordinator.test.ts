@@ -88,7 +88,14 @@ describe("RenderCoordinator", () => {
     expect(new Uint8Array(coordinator.instances.buffer)).toEqual(instanceBytes);
     expect(coordinator.transforms.consumeDirty()).toEqual([{ offset: 0, length: 64 }]);
 
-    await coordinator.commit(3, [{ slot: 0, mask: CONTENT, snapshot: undefined }]);
+    const shifted = await coordinator.commit(3, [
+      { slot: 0, mask: TRANSFORM, snapshot: label(1, 104, 208), positionOnly: true },
+    ]);
+    expect(shifted).toMatchObject({ stale: false, appliedLabels: 1, glyphs: 2, atlasUploads: 0 });
+    expect(coordinator.transforms.consumeDirty()).toEqual([{ offset: 0, length: 16 }]);
+    expect(Array.from(coordinator.transforms.data.subarray(0, 2))).toEqual([104, 208]);
+
+    await coordinator.commit(4, [{ slot: 0, mask: CONTENT, snapshot: undefined }]);
     expect(coordinator.instances.getRange(0)).toBeUndefined();
     expect(coordinator.transforms.stats.activeLabels).toBe(0);
 
