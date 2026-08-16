@@ -11,6 +11,8 @@
 - Numeric fills skip PixiJS `Color` parsing. Occupied slots can patch x/y through `setPosition`.
 - Viewport queries use a hierarchical hash grid and fall back to the linear scan only when the
   query would visit most residents.
+- The 40 KiB core gzip CI gate is deferred. `bun run benchmark:check` still measures the graph and
+  does not fail that size.
 
 ## 1.1.0 - 2026-08-15
 

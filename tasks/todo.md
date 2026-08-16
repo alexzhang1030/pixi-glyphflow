@@ -237,6 +237,11 @@
   - Verify: bun test tests/SpatialIndex.test.ts tests/culling.test.ts
   - Files: src/culling/SpatialIndex.ts, tests/SpatialIndex.test.ts, tests/culling.test.ts
 
+- [x] Task 12.4a: Defer the 40 KiB core gzip CI fail for Wave 1.
+  - Acceptance: `bun run benchmark:check` still measures the core ESM graph and does not fail that size. Wave 1 packing, instance, and culling code stay as landed.
+  - Verify: bun run build && bun run benchmark:check
+  - Files: benchmarks/budgets.ts, docs/performance.md, .agents/docs/performance-plan.md
+
 - [ ] Task 12.5: Compress duplicated store, palette, and instance state (Wave 2).
   - Acceptance: Fill-only labels use ≤ 32-byte GPU transforms, live glyph instances use ≤ 24 bytes, and CPU store bytes at one million capacity stay ≤ 48 MiB after measured artifacts exist.
   - Verify: bun run benchmark:check

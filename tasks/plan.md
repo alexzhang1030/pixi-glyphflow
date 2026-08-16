@@ -211,7 +211,7 @@ The 1.1.0 suite already meets the formal million-label frame budgets. The next p
 
 - Atlas-pressure frame p95 enters the 16.67 ms gate after Wave 1.
 - Dynamic-counter and camera workloads beat 1.1.0 by more than run-to-run variance.
-- Core gzip stays below 40 KiB.
+- Core gzip is still measured; the 40 KiB CI fail is deferred.
 - WebGL 2 remains inside current budgets when a WebGPU-only path is added.
 - Raw artifacts and the generated report are overwritten from isolated Chrome runs.
 

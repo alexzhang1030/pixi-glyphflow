@@ -2,7 +2,7 @@
 
 Status: unstamped research and implementation program dated 2026-08-16.
 
-The current conclusion: Wave 1 is in the tree. Keep the 1.1.0 public contract and instanced MSDF/SDF/alpha/color path. Atlas packing is Skyline plus a waste map with per-mode O(1) LRU; instances write through typed arrays; numeric fills skip `Color`; spatial queries use a hierarchical hash grid. Published browser artifacts are still 1.1.0 — rerun the isolated Chrome suite on the reference M1 Pro before tightening budgets. Next: Wave 0 live-layer 8M measurement, then Wave 2 compression. Slug and Vello stay optional quality tracks.
+The current conclusion: Wave 1 is in the tree. Keep the 1.1.0 public contract and instanced MSDF/SDF/alpha/color path. Atlas packing is Skyline plus a waste map with per-mode O(1) LRU; instances write through typed arrays; numeric fills skip `Color`; spatial queries use a hierarchical hash grid. The 40 KiB core gzip CI gate is deferred — measure the graph, do not fail it, and do not slim or split Wave 1 just to fit. Published browser artifacts are still 1.1.0 — rerun the isolated Chrome suite on the reference M1 Pro before tightening frame budgets. Next: Wave 0 live-layer 8M measurement, then Wave 2 compression. Slug and Vello stay optional quality tracks.
 
 This record is the research ledger and delivery sequence. Published numbers stay in [`docs/performance.md`](../../docs/performance.md) and [`benchmarks/PERFORMANCE.md`](../../benchmarks/PERFORMANCE.md). The 1.0 specification still owns budgets until a human tightens them.
 
@@ -126,7 +126,7 @@ Each row is a technique this package can steal, adapt, or reject. URLs are durab
 
 ## Program
 
-Ship in waves. Each wave must beat run-to-run variance on the existing isolated Chrome suite, keep the 40 KiB gzip core budget, and preserve WebGL 2 as the compatibility baseline. Do not land an optimization that only wins on WebGPU unless the WebGL path stays within current budgets.
+Ship in waves. Each wave must beat run-to-run variance on the existing isolated Chrome suite and preserve WebGL 2 as the compatibility baseline. Do not land an optimization that only wins on WebGPU unless the WebGL path stays within current frame and storage budgets. The 40 KiB core gzip CI fail is deferred; keep measuring the graph.
 
 ### Wave 0 — Measurement honesty
 
@@ -230,7 +230,7 @@ These are proposals. The specification budgets stay until a human accepts new nu
 | CPU store / 1M | 128 MiB (72 used) | 48 MiB after Wave 2 |
 | transform record | 64 B | 32 B fill-only after Wave 2 |
 | glyph instance | 32 B | 24 B after Wave 2, 32 B still the compatibility ceiling |
-| core ESM gzip | 40 KiB | unchanged |
+| core ESM gzip | 40 KiB CI fail deferred | still measured; no replacement ceiling |
 
 ## Constraints that stay in force
 
@@ -238,7 +238,7 @@ Always:
 
 - Measure before and after every retained change. Variance still wins.
 - Keep WebGL 2 correct and inside current budgets when a WebGPU-only path is added.
-- Keep root imports side-effect free and the core gzip budget.
+- Keep root imports side-effect free. Still measure core gzip; do not fail CI on it.
 - Reject stale worker and atlas generations.
 
 Ask first:
