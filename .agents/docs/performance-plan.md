@@ -2,7 +2,7 @@
 
 Status: unstamped research and implementation program dated 2026-08-16.
 
-The current conclusion: keep the 1.1.0 public contract and instanced MSDF/SDF/alpha/color path. The next gains come from replacing three CPU structures that already show up in committed artifacts — the guillotine atlas plus linear LRU, the DataView instance writer, and the O(n) spatial scan — then compressing duplicated CPU/GPU state, then adding a WebGPU compute cull path. Atlas-free outline rendering (Slug) and compute-centric vector engines (Vello) stay optional quality or research tracks, not the default million-label path.
+The current conclusion: Wave 1 is in the tree. Keep the 1.1.0 public contract and instanced MSDF/SDF/alpha/color path. Atlas packing is Skyline plus a waste map with per-mode O(1) LRU; instances write through typed arrays; numeric fills skip `Color`; spatial queries use a hierarchical hash grid. Published browser artifacts are still 1.1.0 — rerun the isolated Chrome suite on the reference M1 Pro before tightening budgets. Next: Wave 0 live-layer 8M measurement, then Wave 2 compression. Slug and Vello stay optional quality tracks.
 
 This record is the research ledger and delivery sequence. Published numbers stay in [`docs/performance.md`](../../docs/performance.md) and [`benchmarks/PERFORMANCE.md`](../../benchmarks/PERFORMANCE.md). The 1.0 specification still owns budgets until a human tightens them.
 

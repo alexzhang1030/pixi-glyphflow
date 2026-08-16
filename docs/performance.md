@@ -81,11 +81,11 @@ how far the current code can go:
 - `million-full` draws a synthetic 8,000,000-instance mesh. It proves one instanced GPU
   submission, not the live `TextLayer` commit, cull, and instance-build path.
 
-The next program is recorded in
-[`.agents/docs/performance-plan.md`](../.agents/docs/performance-plan.md): honest timers first,
-then Skyline atlas packing, typed instance writes, a hierarchical hash grid, compressed
-fill-only transforms, and an optional WebGPU compute cull. Published budgets stay until a
-human accepts tighter numbers.
+Wave 1 of that program is in source: Skyline atlas packing, per-mode O(1) LRU, typed instance
+writes, numeric fill packing, and a hierarchical hash grid. Published browser artifacts remain
+1.1.0 until the isolated Chrome suite is rerun on the reference fixture. The next program is
+recorded in [`.agents/docs/performance-plan.md`](../.agents/docs/performance-plan.md). Published
+budgets stay until a human accepts tighter numbers.
 
 ## Application tuning
 

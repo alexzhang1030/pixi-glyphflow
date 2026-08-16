@@ -1,5 +1,17 @@
 # Changelog
 
+## Unreleased
+
+### Performance
+
+- Atlas packing uses Skyline Bottom-Left plus a waste map, and eviction walks a per-mode O(1) LRU
+  instead of scanning every resident glyph.
+- Glyph instances write through typed-array views. Content commits skip the byte-for-byte equality
+  pass and reuse coordinator scratch batches.
+- Numeric fills skip PixiJS `Color` parsing. Occupied slots can patch x/y through `setPosition`.
+- Viewport queries use a hierarchical hash grid and fall back to the linear scan only when the
+  query would visit most residents.
+
 ## 1.1.0 - 2026-08-15
 
 ### Added
