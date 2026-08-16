@@ -306,6 +306,10 @@ The 2026-08-15 startup split moved the default bitmap adapter, HarfBuzz worker s
 raster provider behind their first-use async seams. `bun run benchmark:check` measured the core ESM
 entry at 47,995 bytes gzip before the split and 39,996 bytes after it, within the 40 KiB budget.
 
+The 1.1.0 artifacts meet these budgets on the reference fixture. The unstamped extreme program in
+[performance-plan.md](performance-plan.md) proposes tighter atlas, mutation, and storage targets
+after measured waves. Those proposals do not change this specification until a human accepts them.
+
 ## Correctness budgets
 
 1. WebGL and WebGPU pixel output must stay within published per-mode tolerances.
@@ -424,3 +428,4 @@ Version 1.0.0 requires:
 
 - The current legal state remains UNLICENSED.
 - Reference results from additional iOS and discrete-GPU hardware require access to those devices. The release report labels every measured hardware and browser combination explicitly.
+- The extreme performance program in [performance-plan.md](performance-plan.md) is unstamped research. It does not reopen the 1.0 budgets by itself.

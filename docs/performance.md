@@ -70,6 +70,23 @@ Atlas pages share an eight-texture draw bank. Page-alternating multilingual runs
 order while consuming one PixiJS local-uniform slot per bank, keeping WebGPU submission below its
 uniform-batch capacity.
 
+## Known cliffs
+
+The 1.1.0 suite meets the formal million-label frame and mutation budgets. Three facts still cap
+how far the current code can go:
+
+- `atlas-pressure` is legal today because the gate only checks the 4 MiB ceiling and eviction
+  activation. The same artifact records 638.50 ms frame p95 while packing 20,000 unique glyphs.
+- `dynamic-counters` sits at 16.40 ms frame p95, 0.27 ms under the 16.67 ms wall.
+- `million-full` draws a synthetic 8,000,000-instance mesh. It proves one instanced GPU
+  submission, not the live `TextLayer` commit, cull, and instance-build path.
+
+The next program is recorded in
+[`.agents/docs/performance-plan.md`](../.agents/docs/performance-plan.md): honest timers first,
+then Skyline atlas packing, typed instance writes, a hierarchical hash grid, compressed
+fill-only transforms, and an optional WebGPU compute cull. Published budgets stay until a
+human accepts tighter numbers.
+
 ## Application tuning
 
 - Reserve the expected label capacity.
