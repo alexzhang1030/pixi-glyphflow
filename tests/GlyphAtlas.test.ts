@@ -65,6 +65,32 @@ describe("GlyphAtlas", () => {
     atlas.destroy();
   });
 
+  test("evicts twenty thousand unique glyphs under a four mebibyte ceiling", () => {
+    const maxBytes = 4 * 1024 * 1024;
+    const atlas = new GlyphAtlas({ pageWidth: 1_024, pageHeight: 1_024, maxBytes });
+    const pixels = new Uint8Array(16 * 16).fill(255);
+    const started = performance.now();
+    for (let index = 0; index < 20_000; index += 1) {
+      expect(
+        atlas.stage(atlas.request(`glyph-${String(index)}`), {
+          mode: "alpha",
+          width: 16,
+          height: 16,
+          pixels,
+        }),
+      ).toBe(true);
+      if (index % 1_000 === 999) atlas.commitFrame();
+    }
+    atlas.commitFrame();
+    const elapsed = performance.now() - started;
+    expect(atlas.stats.allocatedBytes).toBeLessThanOrEqual(maxBytes);
+    expect(atlas.stats.evictions).toBeGreaterThan(0);
+    expect(atlas.stats.capacityFailures).toBe(0);
+    expect(elapsed).toBeLessThan(250);
+
+    atlas.destroy();
+  });
+
   test("reports capacity pressure while every eviction candidate is pinned", () => {
     const atlas = new GlyphAtlas({ pageWidth: 8, pageHeight: 8, maxBytes: 64 });
     stageAndCommit(atlas, "A", raster(8, 8, 1));

@@ -194,6 +194,27 @@ Replace the 0.0.1 object-per-label reference backend with a dense, batch-oriente
 - GitHub Release, tag, package metadata, npm provenance, and a clean external consumer agree on
   version 1.1.0.
 
+## Phase 12: Extreme performance program
+
+Research record: [`.agents/docs/performance-plan.md`](../.agents/docs/performance-plan.md).
+
+The 1.1.0 suite already meets the formal million-label frame budgets. The next program attacks the unbudgeted atlas-pressure cliff, the dynamic-counter wall, linear culling, duplicated transform storage, and the synthetic 8M-glyph probe. Public budgets stay until a human accepts tighter numbers.
+
+- Wave 0: live-layer full-visibility workload, split CPU/GPU timers, atlas-pressure frame budget.
+- Wave 1: Skyline atlas + O(1) LRU, typed instance writes, hierarchical hash grid, packed numeric fills.
+- Wave 2: compress palette/store/instance duplication after Wave 1 timers exist.
+- Wave 3: WebGPU compute cull and storage buffers; WebGL 2 keeps the CPU grid.
+- Wave 4: TinySDF / prebake / per-frame upload budget.
+- Wave 5: optional Slug outline mode, collision, SIMD, SharedArrayBuffer ring.
+
+### Checkpoint
+
+- Atlas-pressure frame p95 enters the 16.67 ms gate after Wave 1.
+- Dynamic-counter and camera workloads beat 1.1.0 by more than run-to-run variance.
+- Core gzip is still measured; the 40 KiB CI fail is deferred.
+- WebGL 2 remains inside current budgets when a WebGPU-only path is added.
+- Raw artifacts and the generated report are overwritten from isolated Chrome runs.
+
 ## Risks and mitigations
 
 | Risk                                     | Impact | Mitigation                                                                                       |

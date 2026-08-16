@@ -25,6 +25,17 @@ interface PendingGlyph {
   readonly pixels: Uint8Array;
 }
 
+interface LruNode {
+  readonly key: string;
+  prev: LruNode | undefined;
+  next: LruNode | undefined;
+}
+
+interface LruList {
+  head: LruNode | undefined;
+  tail: LruNode | undefined;
+}
+
 const DEFAULT_PAGE_SIZE = 1_024;
 const DEFAULT_MAX_BYTES = 64 * 1024 * 1024;
 
@@ -36,10 +47,15 @@ export class GlyphAtlas {
   readonly #entries = new Map<string, Readonly<AtlasEntry>>();
   readonly #pending = new Map<string, PendingGlyph>();
   readonly #requestGenerations = new Map<string, number>();
-  readonly #lastUsed = new Map<string, number>();
+  readonly #lruNodes = new Map<string, LruNode>();
+  readonly #lruByMode: Record<GlyphMode, LruList> = {
+    msdf: { head: undefined, tail: undefined },
+    sdf: { head: undefined, tail: undefined },
+    alpha: { head: undefined, tail: undefined },
+    color: { head: undefined, tail: undefined },
+  };
   readonly #pins = new Set<string>();
   readonly #evictedSinceCommit: string[] = [];
-  #clock = 0;
   #allocatedBytes = 0;
   #requests = 0;
   #stagedResults = 0;
@@ -124,7 +140,7 @@ export class GlyphAtlas {
         this.#releaseEntry(current);
       }
       this.#entries.set(pending.entry.key, pending.entry);
-      this.#touch(pending.entry.key);
+      this.#touch(pending.entry.key, pending.entry.mode);
       entries.push(pending.entry);
       uploads.push(Object.freeze({ entry: pending.entry, pixels: pending.pixels }));
     }
@@ -146,7 +162,7 @@ export class GlyphAtlas {
     this.#assertActive();
     const entry = this.#entries.get(key);
     if (entry !== undefined) {
-      this.#touch(key);
+      this.#touch(key, entry.mode);
     }
 
     return entry;
@@ -174,13 +190,23 @@ export class GlyphAtlas {
     assertKey(key);
     const size = this.#pins.size;
     this.#pins.add(key);
+    if (this.#pins.size !== size) {
+      this.#detachLru(key);
+    }
 
     return this.#pins.size !== size;
   }
 
   unpin(key: string): boolean {
     this.#assertActive();
-    return this.#pins.delete(key);
+    if (!this.#pins.delete(key)) {
+      return false;
+    }
+    const entry = this.#entries.get(key);
+    if (entry !== undefined) {
+      this.#touch(key, entry.mode);
+    }
+    return true;
   }
 
   get stats(): Readonly<GlyphAtlasStats> {
@@ -207,7 +233,11 @@ export class GlyphAtlas {
     this.#entries.clear();
     this.#pending.clear();
     this.#requestGenerations.clear();
-    this.#lastUsed.clear();
+    this.#lruNodes.clear();
+    this.#lruByMode.msdf = { head: undefined, tail: undefined };
+    this.#lruByMode.sdf = { head: undefined, tail: undefined };
+    this.#lruByMode.alpha = { head: undefined, tail: undefined };
+    this.#lruByMode.color = { head: undefined, tail: undefined };
     this.#pins.clear();
     this.#evictedSinceCommit.length = 0;
     this.#allocatedBytes = 0;
@@ -279,38 +309,24 @@ export class GlyphAtlas {
   }
 
   #evictOldest(mode: GlyphMode, protectedKey: string): boolean {
-    let candidate: string | undefined;
-    let candidateClock = Number.POSITIVE_INFINITY;
-    for (const [key, entry] of this.#entries) {
-      if (
-        key === protectedKey ||
-        entry.mode !== mode ||
-        this.#pins.has(key) ||
-        this.#pending.has(key)
-      ) {
-        continue;
+    let node = this.#lruByMode[mode].head;
+    while (node !== undefined) {
+      const key = node.key;
+      const next = node.next;
+      if (key !== protectedKey && !this.#pending.has(key) && !this.#pins.has(key)) {
+        const entry = this.#entries.get(key);
+        if (entry !== undefined && entry.mode === mode) {
+          this.#releaseEntry(entry);
+          this.#entries.delete(key);
+          this.#detachLru(key);
+          this.#evictedSinceCommit.push(key);
+          this.#evictions += 1;
+          return true;
+        }
       }
-      const clock = this.#lastUsed.get(key) ?? 0;
-      if (clock < candidateClock) {
-        candidate = key;
-        candidateClock = clock;
-      }
+      node = next;
     }
-    if (candidate === undefined) {
-      return false;
-    }
-
-    const entry = this.#entries.get(candidate);
-    if (entry === undefined) {
-      return false;
-    }
-    this.#releaseEntry(entry);
-    this.#entries.delete(candidate);
-    this.#lastUsed.delete(candidate);
-    this.#evictedSinceCommit.push(candidate);
-    this.#evictions += 1;
-
-    return true;
+    return false;
   }
 
   #releaseEntry(entry: AtlasEntry): void {
@@ -318,12 +334,64 @@ export class GlyphAtlas {
     if (page === undefined) {
       throw new Error(`Atlas page ${String(entry.page)} is unavailable`);
     }
+    this.#detachLru(entry.key);
     page.packer.release(entry);
   }
 
-  #touch(key: string): void {
-    this.#clock += 1;
-    this.#lastUsed.set(key, this.#clock);
+  #touch(key: string, mode?: GlyphMode): void {
+    const resolvedMode = mode ?? this.#entries.get(key)?.mode;
+    if (resolvedMode === undefined || this.#pins.has(key)) {
+      return;
+    }
+    const list = this.#lruByMode[resolvedMode];
+    const existing = this.#lruNodes.get(key);
+    if (existing !== undefined) {
+      if (existing === list.tail) {
+        return;
+      }
+      this.#unlink(list, existing);
+      this.#append(list, existing);
+      return;
+    }
+    const node: LruNode = { key, prev: undefined, next: undefined };
+    this.#lruNodes.set(key, node);
+    this.#append(list, node);
+  }
+
+  #detachLru(key: string): void {
+    const node = this.#lruNodes.get(key);
+    if (node === undefined) {
+      return;
+    }
+    const entry = this.#entries.get(key);
+    if (entry !== undefined) {
+      this.#unlink(this.#lruByMode[entry.mode], node);
+    } else {
+      for (const list of Object.values(this.#lruByMode)) {
+        if (list.head === node || node.prev !== undefined || node.next !== undefined) {
+          this.#unlink(list, node);
+          break;
+        }
+      }
+    }
+    this.#lruNodes.delete(key);
+  }
+
+  #unlink(list: LruList, node: LruNode): void {
+    if (node.prev !== undefined) node.prev.next = node.next;
+    else if (list.head === node) list.head = node.next;
+    if (node.next !== undefined) node.next.prev = node.prev;
+    else if (list.tail === node) list.tail = node.prev;
+    node.prev = undefined;
+    node.next = undefined;
+  }
+
+  #append(list: LruList, node: LruNode): void {
+    node.prev = list.tail;
+    node.next = undefined;
+    if (list.tail !== undefined) list.tail.next = node;
+    else list.head = node;
+    list.tail = node;
   }
 
   #assertActive(): void {

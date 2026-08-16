@@ -131,6 +131,12 @@ export class RenderCoordinator {
   readonly #runs = new Map<number, Readonly<PositionedRun>>();
   readonly #drawStates = new Map<number, Readonly<RenderDrawState>>();
   readonly #pendingGlyphs = new Map<string, Promise<void>>();
+  #batchPositions = new Float32Array(0);
+  #batchUvs = new Float32Array(0);
+  #batchPalette = new Uint32Array(0);
+  #batchPages = new Uint16Array(0);
+  #batchModes = new Uint8Array(0);
+  #batchScales = new Float32Array(0);
   #ticket = 0;
   #revisions = 0;
   #staleRevisions = 0;
@@ -220,7 +226,9 @@ export class RenderCoordinator {
         this.#runs.get(change.slot) === undefined;
       if (sourceChanged) {
         this.#runs.set(change.slot, run);
-        this.instances.set(change.slot, this.#buildInstances(change.slot, run, change.snapshot));
+        this.instances.set(change.slot, this.#buildInstances(change.slot, run, change.snapshot), {
+          skipEquality: true,
+        });
         this.#shapedLabels += 1;
       } else {
         this.#transformOnlyLabels += 1;
@@ -375,12 +383,13 @@ export class RenderCoordinator {
     snapshot: Readonly<RenderLabelSnapshot>,
   ): GlyphInstanceBatch {
     const count = run.glyphCount;
-    const positions = new Float32Array(count * 4);
-    const uvs = new Float32Array(count * 4);
-    const paletteIndices = new Uint32Array(count);
-    const pages = new Uint16Array(count);
-    const modes = new Uint8Array(count);
-    const rasterScales = new Float32Array(count);
+    this.#ensureBatchCapacity(count);
+    const positions = this.#batchPositions.subarray(0, count * 4);
+    const uvs = this.#batchUvs.subarray(0, count * 4);
+    const paletteIndices = this.#batchPalette.subarray(0, count);
+    const pages = this.#batchPages.subarray(0, count);
+    const modes = this.#batchModes.subarray(0, count);
+    const rasterScales = this.#batchScales.subarray(0, count);
     for (let index = 0; index < count; index += 1) {
       const mode = selectMode(run, index);
       const glyphText = resolveGlyphText(run, index);
@@ -410,6 +419,18 @@ export class RenderCoordinator {
     }
 
     return { positions, uvs, paletteIndices, pages, modes, rasterScales };
+  }
+
+  #ensureBatchCapacity(count: number): void {
+    if (this.#batchPalette.length >= count) return;
+    let capacity = this.#batchPalette.length === 0 ? 16 : this.#batchPalette.length;
+    while (capacity < count) capacity *= 2;
+    this.#batchPositions = new Float32Array(capacity * 4);
+    this.#batchUvs = new Float32Array(capacity * 4);
+    this.#batchPalette = new Uint32Array(capacity);
+    this.#batchPages = new Uint16Array(capacity);
+    this.#batchModes = new Uint8Array(capacity);
+    this.#batchScales = new Float32Array(capacity);
   }
 
   #result(

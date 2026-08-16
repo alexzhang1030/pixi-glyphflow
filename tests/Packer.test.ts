@@ -20,6 +20,19 @@ describe("Packer", () => {
     expect(packer.allocate(8, 8)).toEqual({ x: 0, y: 0, width: 8, height: 8 });
   });
 
+  test("packs a full page of equal tiles through the skyline then reuses holes", () => {
+    const packer = new Packer(64, 64);
+    const tiles: NonNullable<ReturnType<Packer["allocate"]>>[] = [];
+    for (let index = 0; index < 64; index += 1) {
+      const tile = packer.allocate(8, 8);
+      expect(tile).toBeDefined();
+      tiles.push(tile!);
+    }
+    expect(packer.allocate(8, 8)).toBeUndefined();
+    packer.release(tiles[0]!);
+    expect(packer.allocate(8, 8)).toEqual(tiles[0]);
+  });
+
   test("validates dimensions and rejects foreign or duplicate releases", () => {
     const packer = new Packer(8, 8);
     const rectangle = packer.allocate(4, 4)!;

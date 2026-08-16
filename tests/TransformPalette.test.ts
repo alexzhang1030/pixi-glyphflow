@@ -93,6 +93,36 @@ describe("TransformPalette", () => {
     palette.destroy();
   });
 
+  test("patches occupied x/y texels without rewriting the effect payload", () => {
+    const palette = new TransformPalette({ initialCapacity: 1, textureWidth: 4 });
+    palette.set(
+      0,
+      {
+        x: 10,
+        y: 20,
+        scaleX: 1,
+        scaleY: 1,
+        rotation: 0,
+        alpha: 1,
+        visible: true,
+        anchorX: 0,
+        anchorY: 0,
+        fill: 0x336699,
+      },
+      { width: 1, height: 1 },
+    );
+    palette.consumeDirty();
+
+    expect(palette.setPosition(0, 11, 22)).toBe(true);
+    expect(Array.from(palette.data.subarray(0, 2))).toEqual([11, 22]);
+    expect(palette.data[8]).toBeCloseTo(0.2);
+    expect(palette.consumeDirty()).toEqual([{ offset: 0, length: 16 }]);
+    expect(palette.setPosition(0, 11, 22)).toBe(false);
+    expect(palette.setPosition(4, 0, 0)).toBe(false);
+
+    palette.destroy();
+  });
+
   test("grows geometrically and hides removed labels through palette alpha", () => {
     const palette = new TransformPalette({ initialCapacity: 1, textureWidth: 4 });
     const before = palette.data.buffer;
