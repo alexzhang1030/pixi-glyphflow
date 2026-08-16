@@ -20,6 +20,7 @@ export class TransformPalette {
   readonly #textureWidth: number;
   readonly #maxCapacity: number;
   readonly #dirty = new DirtyRanges();
+  readonly #scratch = new Float32Array(FLOATS_PER_LABEL);
   #capacity: number;
   #data: Float32Array;
   #occupied: Uint8Array;
@@ -47,33 +48,37 @@ export class TransformPalette {
     validateInput(input, bounds);
     this.#ensureCapacity(slot + 1);
     const offset = slot * FLOATS_PER_LABEL;
+    const data = this.#data;
     const labelAlpha = Math.fround(input.visible ? input.alpha : 0);
     const fill = resolvePaint(input.fill, 0xffffff);
-    const stroke = resolveStroke(input.stroke);
-    const shadow = resolveShadow(input.dropShadow);
-    const next = [
-      input.x,
-      input.y,
-      input.scaleX,
-      input.scaleY,
-      Math.sin(input.rotation),
-      Math.cos(input.rotation),
-      input.anchorX * bounds.width,
-      input.anchorY * bounds.height,
-      fill.r,
-      fill.g,
-      fill.b,
-      packFillAlpha(fill.alpha, labelAlpha),
-      stroke.color,
-      packStroke(stroke.width, stroke.alpha, shadow.alpha),
-      shadow.color,
-      packShadow(shadow.x, shadow.y, shadow.blur, shadow.alpha),
-    ];
+    const hasEffects = input.stroke !== undefined || input.dropShadow !== undefined;
+    const stroke = hasEffects ? resolveStroke(input.stroke) : EMPTY_STROKE;
+    const shadow = hasEffects ? resolveShadow(input.dropShadow) : EMPTY_SHADOW;
+    const rotation = input.rotation;
+    const sin = rotation === 0 ? 0 : Math.fround(Math.sin(rotation));
+    const cos = rotation === 0 ? 1 : Math.fround(Math.cos(rotation));
+    const values = this.#scratch;
+    values[0] = Math.fround(input.x);
+    values[1] = Math.fround(input.y);
+    values[2] = Math.fround(input.scaleX);
+    values[3] = Math.fround(input.scaleY);
+    values[4] = sin;
+    values[5] = cos;
+    values[6] = Math.fround(input.anchorX * bounds.width);
+    values[7] = Math.fround(input.anchorY * bounds.height);
+    values[8] = Math.fround(fill.r);
+    values[9] = Math.fround(fill.g);
+    values[10] = Math.fround(fill.b);
+    values[11] = packFillAlpha(fill.alpha, labelAlpha);
+    values[12] = stroke.color;
+    values[13] = packStroke(stroke.width, stroke.alpha, shadow.alpha);
+    values[14] = shadow.color;
+    values[15] = packShadow(shadow.x, shadow.y, shadow.blur, shadow.alpha);
     let changed = this.#occupied[slot] !== 1;
     for (let index = 0; index < FLOATS_PER_LABEL; index += 1) {
-      const value = Math.fround(next[index] ?? 0);
-      if (this.#data[offset + index] !== value) {
-        this.#data[offset + index] = value;
+      const value = values[index] ?? 0;
+      if (data[offset + index] !== value) {
+        data[offset + index] = value;
         changed = true;
       }
     }
@@ -85,6 +90,29 @@ export class TransformPalette {
       this.#activeLabels += 1;
     }
     this.#dirty.record(slot * TRANSFORM_PALETTE_STRIDE, TRANSFORM_PALETTE_STRIDE);
+
+    return true;
+  }
+
+  /** Patch only the x/y texels of an occupied slot. */
+  setPosition(slot: number, x: number, y: number): boolean {
+    this.#assertActive();
+    assertSlot(slot);
+    if (!Number.isFinite(x) || !Number.isFinite(y)) {
+      throw new TypeError("x and y must be finite");
+    }
+    if (slot >= this.#capacity || this.#occupied[slot] !== 1) {
+      return false;
+    }
+    const offset = slot * FLOATS_PER_LABEL;
+    const nextX = Math.fround(x);
+    const nextY = Math.fround(y);
+    if (this.#data[offset] === nextX && this.#data[offset + 1] === nextY) {
+      return false;
+    }
+    this.#data[offset] = nextX;
+    this.#data[offset + 1] = nextY;
+    this.#dirty.record(slot * TRANSFORM_PALETTE_STRIDE, 16);
 
     return true;
   }
@@ -173,8 +201,31 @@ interface ResolvedPaint {
   readonly alpha: number;
 }
 
+const EMPTY_STROKE = Object.freeze({ color: 0, width: 0, alpha: 0 });
+const EMPTY_SHADOW = Object.freeze({ color: 0, x: 0, y: 0, blur: 0, alpha: 0 });
+
 function resolvePaint(input: unknown, fallback: number): ResolvedPaint {
-  let source = input;
+  if (typeof input === "number" && Number.isFinite(input)) {
+    const color = Math.max(0, Math.min(0xffffff, Math.trunc(input)));
+    return {
+      color,
+      r: ((color >> 16) & 0xff) / 255,
+      g: ((color >> 8) & 0xff) / 255,
+      b: (color & 0xff) / 255,
+      alpha: 1,
+    };
+  }
+  if (input === undefined || input === null) {
+    const color = fallback;
+    return {
+      color,
+      r: ((color >> 16) & 0xff) / 255,
+      g: ((color >> 8) & 0xff) / 255,
+      b: (color & 0xff) / 255,
+      alpha: 1,
+    };
+  }
+  let source: unknown = input;
   let alpha = 1;
   if (typeof input === "object" && input !== null) {
     const style = input as Readonly<{ color?: unknown; fill?: unknown; alpha?: unknown }>;

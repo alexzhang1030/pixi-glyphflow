@@ -27,6 +27,11 @@ const RASTER_SCALE_SHIFT = 18;
 const RASTER_SCALE_MAX = 0x1fff;
 const RASTER_SCALE_PRECISION = 64;
 
+export interface GlyphInstanceSetOptions {
+  /** Skip the byte-for-byte equality check when the caller already knows the run changed. */
+  readonly skipEquality?: boolean;
+}
+
 export class GlyphInstanceStore {
   readonly #minimumCapacity: number;
   readonly #maxCapacity: number;
@@ -37,7 +42,9 @@ export class GlyphInstanceStore {
   #highWater = 0;
   #activeInstances = 0;
   #buffer: ArrayBuffer;
-  #view: DataView;
+  #floats: Float32Array;
+  #uint16: Uint16Array;
+  #uint32: Uint32Array;
   #destroyed = false;
 
   constructor(options: GlyphInstanceStoreOptions = {}) {
@@ -52,7 +59,10 @@ export class GlyphInstanceStore {
     this.#maxCapacity = maxCapacity;
     this.#capacity = this.#minimumCapacity;
     this.#buffer = new ArrayBuffer(this.#capacity * GLYPH_INSTANCE_STRIDE);
-    this.#view = new DataView(this.#buffer);
+    const views = bindInstanceViews(this.#buffer);
+    this.#floats = views.floats;
+    this.#uint16 = views.uint16;
+    this.#uint32 = views.uint32;
   }
 
   get buffer(): ArrayBuffer {
@@ -60,7 +70,7 @@ export class GlyphInstanceStore {
     return this.#buffer;
   }
 
-  set(labelId: number, batch: GlyphInstanceBatch): boolean {
+  set(labelId: number, batch: GlyphInstanceBatch, options?: GlyphInstanceSetOptions): boolean {
     this.#assertActive();
     assertLabelId(labelId);
     const count = validateBatch(batch);
@@ -68,7 +78,12 @@ export class GlyphInstanceStore {
       return this.remove(labelId);
     }
     const current = this.#ranges.get(labelId);
-    if (current !== undefined && current.count === count && this.#matches(current, batch)) {
+    if (
+      current !== undefined &&
+      current.count === count &&
+      options?.skipEquality !== true &&
+      this.#matches(current, batch)
+    ) {
       return false;
     }
 
@@ -157,7 +172,10 @@ export class GlyphInstanceStore {
       offset += range.count;
     }
     this.#buffer = buffer;
-    this.#view = new DataView(buffer);
+    const views = bindInstanceViews(buffer);
+    this.#floats = views.floats;
+    this.#uint16 = views.uint16;
+    this.#uint32 = views.uint32;
     this.#capacity = afterCapacity;
     this.#highWater = offset;
     this.#free.length = 0;
@@ -197,7 +215,10 @@ export class GlyphInstanceStore {
     this.#free.length = 0;
     this.#dirty.clear();
     this.#buffer = new ArrayBuffer(0);
-    this.#view = new DataView(this.#buffer);
+    const views = bindInstanceViews(this.#buffer);
+    this.#floats = views.floats;
+    this.#uint16 = views.uint16;
+    this.#uint32 = views.uint32;
     this.#capacity = 0;
     this.#highWater = 0;
     this.#activeInstances = 0;
@@ -205,20 +226,24 @@ export class GlyphInstanceStore {
   }
 
   #matches(range: MutableInstanceRange, batch: GlyphInstanceBatch): boolean {
+    const floats = this.#floats;
+    const uint16 = this.#uint16;
+    const uint32 = this.#uint32;
     for (let index = 0; index < range.count; index += 1) {
-      const byteOffset = (range.offset + index) * GLYPH_INSTANCE_STRIDE;
+      const floatOffset = (range.offset + index) * 8;
       const inputOffset = index * 4;
+      const uvOffset = (range.offset + index) * 16 + 8;
       if (
-        this.#view.getFloat32(byteOffset, true) !== batch.positions[inputOffset] ||
-        this.#view.getFloat32(byteOffset + 4, true) !== batch.positions[inputOffset + 1] ||
-        this.#view.getFloat32(byteOffset + 8, true) !== batch.positions[inputOffset + 2] ||
-        this.#view.getFloat32(byteOffset + 12, true) !== batch.positions[inputOffset + 3] ||
-        this.#view.getUint16(byteOffset + 16, true) !== packUv(batch.uvs[inputOffset] ?? 0) ||
-        this.#view.getUint16(byteOffset + 18, true) !== packUv(batch.uvs[inputOffset + 1] ?? 0) ||
-        this.#view.getUint16(byteOffset + 20, true) !== packUv(batch.uvs[inputOffset + 2] ?? 0) ||
-        this.#view.getUint16(byteOffset + 22, true) !== packUv(batch.uvs[inputOffset + 3] ?? 0) ||
-        this.#view.getUint32(byteOffset + 24, true) !== batch.paletteIndices[index] ||
-        this.#view.getUint32(byteOffset + 28, true) !== metadata(batch, index)
+        floats[floatOffset] !== batch.positions[inputOffset] ||
+        floats[floatOffset + 1] !== batch.positions[inputOffset + 1] ||
+        floats[floatOffset + 2] !== batch.positions[inputOffset + 2] ||
+        floats[floatOffset + 3] !== batch.positions[inputOffset + 3] ||
+        uint16[uvOffset] !== packUv(batch.uvs[inputOffset] ?? 0) ||
+        uint16[uvOffset + 1] !== packUv(batch.uvs[inputOffset + 1] ?? 0) ||
+        uint16[uvOffset + 2] !== packUv(batch.uvs[inputOffset + 2] ?? 0) ||
+        uint16[uvOffset + 3] !== packUv(batch.uvs[inputOffset + 3] ?? 0) ||
+        uint32[floatOffset + 6] !== batch.paletteIndices[index] ||
+        uint32[floatOffset + 7] !== metadata(batch, index)
       ) {
         return false;
       }
@@ -228,25 +253,31 @@ export class GlyphInstanceStore {
   }
 
   #write(offset: number, batch: GlyphInstanceBatch): void {
-    for (let index = 0; index < batch.paletteIndices.length; index += 1) {
-      const byteOffset = (offset + index) * GLYPH_INSTANCE_STRIDE;
+    const floats = this.#floats;
+    const uint16 = this.#uint16;
+    const uint32 = this.#uint32;
+    const count = batch.paletteIndices.length;
+    for (let index = 0; index < count; index += 1) {
+      const floatOffset = (offset + index) * 8;
       const inputOffset = index * 4;
-      this.#view.setFloat32(byteOffset, batch.positions[inputOffset] ?? 0, true);
-      this.#view.setFloat32(byteOffset + 4, batch.positions[inputOffset + 1] ?? 0, true);
-      this.#view.setFloat32(byteOffset + 8, batch.positions[inputOffset + 2] ?? 0, true);
-      this.#view.setFloat32(byteOffset + 12, batch.positions[inputOffset + 3] ?? 0, true);
-      this.#view.setUint16(byteOffset + 16, packUv(batch.uvs[inputOffset] ?? 0), true);
-      this.#view.setUint16(byteOffset + 18, packUv(batch.uvs[inputOffset + 1] ?? 0), true);
-      this.#view.setUint16(byteOffset + 20, packUv(batch.uvs[inputOffset + 2] ?? 0), true);
-      this.#view.setUint16(byteOffset + 22, packUv(batch.uvs[inputOffset + 3] ?? 0), true);
-      this.#view.setUint32(byteOffset + 24, batch.paletteIndices[index] ?? 0, true);
-      this.#view.setUint32(byteOffset + 28, metadata(batch, index), true);
+      const uvOffset = (offset + index) * 16 + 8;
+      floats[floatOffset] = batch.positions[inputOffset] ?? 0;
+      floats[floatOffset + 1] = batch.positions[inputOffset + 1] ?? 0;
+      floats[floatOffset + 2] = batch.positions[inputOffset + 2] ?? 0;
+      floats[floatOffset + 3] = batch.positions[inputOffset + 3] ?? 0;
+      uint16[uvOffset] = packUv(batch.uvs[inputOffset] ?? 0);
+      uint16[uvOffset + 1] = packUv(batch.uvs[inputOffset + 1] ?? 0);
+      uint16[uvOffset + 2] = packUv(batch.uvs[inputOffset + 2] ?? 0);
+      uint16[uvOffset + 3] = packUv(batch.uvs[inputOffset + 3] ?? 0);
+      uint32[floatOffset + 6] = batch.paletteIndices[index] ?? 0;
+      uint32[floatOffset + 7] = metadata(batch, index);
     }
   }
 
   #clearMetadata(offset: number, count: number): void {
+    const uint32 = this.#uint32;
     for (let index = 0; index < count; index += 1) {
-      this.#view.setUint32((offset + index) * GLYPH_INSTANCE_STRIDE + 28, 0, true);
+      uint32[(offset + index) * 8 + 7] = 0;
     }
   }
 
@@ -314,7 +345,10 @@ export class GlyphInstanceStore {
     const buffer = new ArrayBuffer(capacity * GLYPH_INSTANCE_STRIDE);
     new Uint8Array(buffer).set(new Uint8Array(this.#buffer));
     this.#buffer = buffer;
-    this.#view = new DataView(buffer);
+    const views = bindInstanceViews(buffer);
+    this.#floats = views.floats;
+    this.#uint16 = views.uint16;
+    this.#uint32 = views.uint32;
     this.#capacity = capacity;
     this.#dirty.clear();
     if (this.#highWater > 0) {
@@ -411,6 +445,18 @@ function assertPositiveCapacity(name: string, value: number): void {
   if (!Number.isSafeInteger(value) || value <= 0) {
     throw new TypeError(`${name} must be a positive safe integer`);
   }
+}
+
+function bindInstanceViews(buffer: ArrayBuffer): {
+  readonly floats: Float32Array;
+  readonly uint16: Uint16Array;
+  readonly uint32: Uint32Array;
+} {
+  return {
+    floats: new Float32Array(buffer),
+    uint16: new Uint16Array(buffer),
+    uint32: new Uint32Array(buffer),
+  };
 }
 
 function nextPowerOfTwo(value: number): number {
