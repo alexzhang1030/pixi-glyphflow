@@ -8,6 +8,13 @@ import type {
 
 const DEFAULT_CAPACITY = 16;
 const DEFAULT_MAX_CAPACITY = 0x100_0000;
+const CELL_SIZES = Object.freeze([64, 256, 1024, 4096]);
+const LEVEL_SHIFT = 2 ** 50;
+const X_SHIFT = 2 ** 25;
+const COORD_BIAS = 2 ** 24;
+const COORD_MIN = -COORD_BIAS;
+const COORD_MAX = COORD_BIAS - 1;
+const LINEAR_CELL_FRACTION = 8;
 
 export class SpatialIndex {
   readonly #maxCapacity: number;
@@ -22,6 +29,10 @@ export class SpatialIndex {
   #order: Uint32Array;
   #occupied: Uint8Array;
   #visible: Uint8Array;
+  #cellKey: Float64Array;
+  #cellIndex: Int32Array;
+  readonly #cells = new Map<number, number[]>();
+  readonly #spill: number[] = [];
   #clock = 0;
   #queries = 0;
   #testedEntries = 0;
@@ -46,6 +57,8 @@ export class SpatialIndex {
     this.#order = new Uint32Array(this.#capacity);
     this.#occupied = new Uint8Array(this.#capacity);
     this.#visible = new Uint8Array(this.#capacity);
+    this.#cellKey = new Float64Array(this.#capacity);
+    this.#cellIndex = new Int32Array(this.#capacity).fill(-1);
   }
 
   get capacity(): number {
@@ -85,6 +98,7 @@ export class SpatialIndex {
       this.#order[slot] = this.#clock;
       this.#highWater = Math.max(this.#highWater, slot + 1);
     }
+    this.#rehash(slot);
   }
 
   /** Replace a validated, occupied entry without repeating public-boundary checks. @internal */
@@ -98,6 +112,7 @@ export class SpatialIndex {
     this.#maximumY[slot] = bounds.y + bounds.height;
     this.#zIndex[slot] = zIndex;
     this.#visible[slot] = Number(visible);
+    this.#rehash(slot);
   }
 
   setVisible(slot: number, visible: boolean): boolean {
@@ -146,6 +161,7 @@ export class SpatialIndex {
     this.#minimumY[slot] = (this.#minimumY[slot] ?? 0) + deltaY;
     this.#maximumX[slot] = (this.#maximumX[slot] ?? 0) + deltaX;
     this.#maximumY[slot] = (this.#maximumY[slot] ?? 0) + deltaY;
+    this.#rehash(slot);
 
     return true;
   }
@@ -154,6 +170,7 @@ export class SpatialIndex {
     this.#assertActive();
     assertSlot(slot);
     if (slot >= this.#highWater || this.#occupied[slot] !== 1) return false;
+    this.#unhash(slot);
     this.#occupied[slot] = 0;
     this.#visible[slot] = 0;
     this.#entries -= 1;
@@ -195,27 +212,8 @@ export class SpatialIndex {
     const minimumY = bounds.y - padding;
     const maximumX = bounds.x + bounds.width + padding;
     const maximumY = bounds.y + bounds.height + padding;
-    let count = 0;
-    let tested = 0;
-    for (let slot = 0; slot < this.#highWater; slot += 1) {
-      if (this.#occupied[slot] !== 1 || this.#visible[slot] !== 1) continue;
-      tested += 1;
-      if (
-        (this.#maximumX[slot] ?? 0) < minimumX ||
-        (this.#maximumY[slot] ?? 0) < minimumY ||
-        (this.#minimumX[slot] ?? 0) > maximumX ||
-        (this.#minimumY[slot] ?? 0) > maximumY
-      ) {
-        continue;
-      }
-      if (count >= output.length) {
-        throw new RangeError("Spatial query output capacity is smaller than the result set");
-      }
-      output[count] = slot;
-      count += 1;
-    }
+    const count = this.#queryBounds(minimumX, minimumY, maximumX, maximumY, output);
     this.#queries += 1;
-    this.#testedEntries += tested;
     this.#returnedEntries += count;
 
     return count;
@@ -248,15 +246,15 @@ export class SpatialIndex {
     let hit: number | undefined;
     let topZ = Number.NEGATIVE_INFINITY;
     let topOrder = 0;
-    for (let slot = 0; slot < this.#highWater; slot += 1) {
-      if (this.#occupied[slot] !== 1 || this.#visible[slot] !== 1) continue;
+    const visit = (slot: number): void => {
+      if (this.#occupied[slot] !== 1 || this.#visible[slot] !== 1) return;
       if (
         point.x < (this.#minimumX[slot] ?? 0) ||
         point.x > (this.#maximumX[slot] ?? 0) ||
         point.y < (this.#minimumY[slot] ?? 0) ||
         point.y > (this.#maximumY[slot] ?? 0)
       ) {
-        continue;
+        return;
       }
       const zIndex = this.#zIndex[slot] ?? 0;
       const order = this.#order[slot] ?? 0;
@@ -265,6 +263,11 @@ export class SpatialIndex {
         topZ = zIndex;
         topOrder = order;
       }
+    };
+    if (this.#shouldScanLinear(point.x, point.y, point.x, point.y)) {
+      for (let slot = 0; slot < this.#highWater; slot += 1) visit(slot);
+    } else {
+      this.#visitOverlapping(point.x, point.y, point.x, point.y, visit);
     }
     this.#hits += Number(hit !== undefined);
 
@@ -275,6 +278,10 @@ export class SpatialIndex {
     this.#assertActive();
     this.#occupied.fill(0, 0, this.#highWater);
     this.#visible.fill(0, 0, this.#highWater);
+    this.#cellKey.fill(0, 0, this.#highWater);
+    this.#cellIndex.fill(-1, 0, this.#highWater);
+    this.#cells.clear();
+    this.#spill.length = 0;
     this.#entries = 0;
     this.#highWater = 0;
   }
@@ -291,7 +298,9 @@ export class SpatialIndex {
         this.#zIndex.byteLength +
         this.#order.byteLength +
         this.#occupied.byteLength +
-        this.#visible.byteLength,
+        this.#visible.byteLength +
+        this.#cellKey.byteLength +
+        this.#cellIndex.byteLength,
       queries: this.#queries,
       testedEntries: this.#testedEntries,
       returnedEntries: this.#returnedEntries,
@@ -309,6 +318,10 @@ export class SpatialIndex {
     this.#order = new Uint32Array();
     this.#occupied = new Uint8Array();
     this.#visible = new Uint8Array();
+    this.#cellKey = new Float64Array();
+    this.#cellIndex = new Int32Array();
+    this.#cells.clear();
+    this.#spill.length = 0;
     this.#capacity = 0;
     this.#entries = 0;
     this.#highWater = 0;
@@ -331,7 +344,161 @@ export class SpatialIndex {
     this.#order = grow(this.#order, capacity);
     this.#occupied = grow(this.#occupied, capacity);
     this.#visible = grow(this.#visible, capacity);
+    this.#cellKey = grow(this.#cellKey, capacity);
+    this.#cellIndex = grow(this.#cellIndex, capacity);
     this.#capacity = capacity;
+  }
+
+  #queryBounds(
+    minimumX: number,
+    minimumY: number,
+    maximumX: number,
+    maximumY: number,
+    output: Uint32Array,
+  ): number {
+    let count = 0;
+    let tested = 0;
+    const visit = (slot: number): void => {
+      if (this.#occupied[slot] !== 1 || this.#visible[slot] !== 1) return;
+      tested += 1;
+      if (
+        (this.#maximumX[slot] ?? 0) < minimumX ||
+        (this.#maximumY[slot] ?? 0) < minimumY ||
+        (this.#minimumX[slot] ?? 0) > maximumX ||
+        (this.#minimumY[slot] ?? 0) > maximumY
+      ) {
+        return;
+      }
+      if (count >= output.length) {
+        throw new RangeError("Spatial query output capacity is smaller than the result set");
+      }
+      output[count] = slot;
+      count += 1;
+    };
+    if (this.#shouldScanLinear(minimumX, minimumY, maximumX, maximumY)) {
+      for (let slot = 0; slot < this.#highWater; slot += 1) visit(slot);
+    } else {
+      this.#visitOverlapping(minimumX, minimumY, maximumX, maximumY, visit);
+      if (count > 1) {
+        output.subarray(0, count).sort();
+      }
+    }
+    this.#testedEntries += tested;
+    return count;
+  }
+
+  #shouldScanLinear(
+    minimumX: number,
+    minimumY: number,
+    maximumX: number,
+    maximumY: number,
+  ): boolean {
+    if (this.#entries <= 64) return true;
+    let cells = this.#spill.length > 0 ? 1 : 0;
+    for (let level = 0; level < CELL_SIZES.length; level += 1) {
+      const size = CELL_SIZES[level] ?? 64;
+      const expand = size * 0.5;
+      const minCX = Math.floor((minimumX - expand) / size);
+      const maxCX = Math.floor((maximumX + expand) / size);
+      const minCY = Math.floor((minimumY - expand) / size);
+      const maxCY = Math.floor((maximumY + expand) / size);
+      cells += (maxCX - minCX + 1) * (maxCY - minCY + 1);
+    }
+    return cells * LINEAR_CELL_FRACTION > this.#entries;
+  }
+
+  #visitOverlapping(
+    minimumX: number,
+    minimumY: number,
+    maximumX: number,
+    maximumY: number,
+    visit: (slot: number) => void,
+  ): void {
+    for (let level = 0; level < CELL_SIZES.length; level += 1) {
+      const size = CELL_SIZES[level] ?? 64;
+      const expand = size * 0.5;
+      const minCX = Math.floor((minimumX - expand) / size);
+      const maxCX = Math.floor((maximumX + expand) / size);
+      const minCY = Math.floor((minimumY - expand) / size);
+      const maxCY = Math.floor((maximumY + expand) / size);
+      for (let cy = minCY; cy <= maxCY; cy += 1) {
+        for (let cx = minCX; cx <= maxCX; cx += 1) {
+          const packed = packCell(level, cx, cy);
+          if (packed === undefined) continue;
+          const bucket = this.#cells.get(packed);
+          if (bucket === undefined) continue;
+          for (const slot of bucket) visit(slot);
+        }
+      }
+    }
+    for (const slot of this.#spill) visit(slot);
+  }
+
+  #rehash(slot: number): void {
+    const next = this.#cellFor(slot);
+    const current = this.#cellKey[slot] ?? 0;
+    if (current === next && (this.#cellIndex[slot] ?? -1) >= 0) return;
+    this.#unhash(slot);
+    if (next === 0) {
+      this.#cellIndex[slot] = this.#spill.length;
+      this.#spill.push(slot);
+      this.#cellKey[slot] = 0;
+      return;
+    }
+    let bucket = this.#cells.get(next);
+    if (bucket === undefined) {
+      bucket = [];
+      this.#cells.set(next, bucket);
+    }
+    this.#cellIndex[slot] = bucket.length;
+    bucket.push(slot);
+    this.#cellKey[slot] = next;
+  }
+
+  #unhash(slot: number): void {
+    const index = this.#cellIndex[slot] ?? -1;
+    if (index < 0) return;
+    const key = this.#cellKey[slot] ?? 0;
+    this.#cellIndex[slot] = -1;
+    if (key === 0) {
+      const last = this.#spill.pop();
+      if (last === undefined) return;
+      if (last !== slot) {
+        this.#spill[index] = last;
+        this.#cellIndex[last] = index;
+      }
+      return;
+    }
+    const bucket = this.#cells.get(key);
+    if (bucket === undefined) return;
+    const last = bucket.pop();
+    if (last === undefined) return;
+    if (last !== slot) {
+      bucket[index] = last;
+      this.#cellIndex[last] = index;
+    }
+    if (bucket.length === 0) this.#cells.delete(key);
+    this.#cellKey[slot] = 0;
+  }
+
+  #cellFor(slot: number): number {
+    const width = (this.#maximumX[slot] ?? 0) - (this.#minimumX[slot] ?? 0);
+    const height = (this.#maximumY[slot] ?? 0) - (this.#minimumY[slot] ?? 0);
+    const size = Math.max(width, height);
+    let level = -1;
+    for (let index = 0; index < CELL_SIZES.length; index += 1) {
+      if (size <= (CELL_SIZES[index] ?? 0)) {
+        level = index;
+        break;
+      }
+    }
+    if (level < 0) return 0;
+    const cell = CELL_SIZES[level] ?? 64;
+    const centerX = ((this.#minimumX[slot] ?? 0) + (this.#maximumX[slot] ?? 0)) * 0.5;
+    const centerY = ((this.#minimumY[slot] ?? 0) + (this.#maximumY[slot] ?? 0)) * 0.5;
+    const cx = Math.floor(centerX / cell);
+    const cy = Math.floor(centerY / cell);
+    return packCell(level, cx, cy) ?? 0;
   }
 
   #assertActive(): void {
@@ -341,7 +508,7 @@ export class SpatialIndex {
   }
 }
 
-function grow<T extends Float32Array | Float64Array | Uint32Array | Uint8Array>(
+function grow<T extends Float32Array | Float64Array | Uint32Array | Int32Array | Uint8Array>(
   source: T,
   capacity: number,
 ): T {
@@ -352,7 +519,9 @@ function grow<T extends Float32Array | Float64Array | Uint32Array | Uint8Array>(
         ? new Float64Array(capacity)
         : source instanceof Uint32Array
           ? new Uint32Array(capacity)
-          : new Uint8Array(capacity)
+          : source instanceof Int32Array
+            ? new Int32Array(capacity).fill(-1)
+            : new Uint8Array(capacity)
   ) as T;
   target.set(source);
 
@@ -388,6 +557,13 @@ function assertCapacity(name: string, value: number): void {
   if (!Number.isSafeInteger(value) || value <= 0 || value > DEFAULT_MAX_CAPACITY) {
     throw new TypeError(`${name} must be an integer from 1 to ${String(DEFAULT_MAX_CAPACITY)}`);
   }
+}
+
+function packCell(level: number, cx: number, cy: number): number | undefined {
+  if (cx < COORD_MIN || cx > COORD_MAX || cy < COORD_MIN || cy > COORD_MAX) {
+    return undefined;
+  }
+  return (level + 1) * LEVEL_SHIFT + (cx + COORD_BIAS) * X_SHIFT + (cy + COORD_BIAS);
 }
 
 function nextPowerOfTwo(value: number): number {

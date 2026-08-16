@@ -59,6 +59,28 @@ describe("SpatialIndex", () => {
     index.destroy();
   });
 
+  test("queries a small viewport without scanning a large resident set", () => {
+    const index = new SpatialIndex({ initialCapacity: 128 });
+    const output = new Uint32Array(16);
+    for (let slot = 0; slot < 128; slot += 1) {
+      index.set(slot, {
+        x: (slot % 16) * 80,
+        y: Math.floor(slot / 16) * 80,
+        width: 10,
+        height: 10,
+      });
+    }
+
+    expect(index.query({ x: 0, y: 0, width: 20, height: 20 }, output)).toBe(1);
+    expect(output[0]).toBe(0);
+    expect(index.query({ x: 1_200, y: 560, width: 20, height: 20 }, output)).toBe(1);
+    expect(output[0]).toBe(127);
+    expect(index.hitTest({ x: 5, y: 5 })).toBe(0);
+    expect(index.stats.testedEntries).toBeLessThan(128 * 2);
+
+    index.destroy();
+  });
+
   test("validates output capacity and finite geometry transactionally", () => {
     const index = new SpatialIndex();
     index.set(0, { x: 0, y: 0, width: 1, height: 1 });
