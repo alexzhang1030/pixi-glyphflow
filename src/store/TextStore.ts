@@ -59,7 +59,7 @@ export class TextStore {
   #rotation: Uint16Array;
   #zIndex: Float32Array;
   #blendModes: Uint8Array;
-  #alpha: Uint8Array;
+  #alpha: Uint16Array;
   #anchorX: Uint16Array;
   #anchorY: Uint16Array;
   #texts: Array<string | undefined>;
@@ -91,7 +91,7 @@ export class TextStore {
     this.#rotation = new Uint16Array(this.#capacity);
     this.#zIndex = new Float32Array(this.#capacity);
     this.#blendModes = new Uint8Array(this.#capacity);
-    this.#alpha = new Uint8Array(this.#capacity);
+    this.#alpha = new Uint16Array(this.#capacity);
     this.#anchorX = new Uint16Array(this.#capacity);
     this.#anchorY = new Uint16Array(this.#capacity);
     this.#texts = Array.from({ length: this.#capacity }, () => undefined);
@@ -212,7 +212,7 @@ export class TextStore {
       rotation: readF16(this.#rotation, slot),
       zIndex: this.#zIndex[slot] ?? 0,
       blendMode: decodeBlendMode(this.#blendModes[slot] ?? 1),
-      alpha: readAlpha(this.#alpha, slot),
+      alpha: readF16(this.#alpha, slot),
       visible: this.#visible(slot),
       anchorX: readF16(this.#anchorX, slot),
       anchorY: readF16(this.#anchorY, slot),
@@ -275,7 +275,7 @@ export class TextStore {
       dirty |= TextDirty.Transform;
       transformKind |= FULL_TRANSFORM;
     }
-    if (patch.alpha !== undefined && writeAlpha(this.#alpha, slot, patch.alpha)) {
+    if (patch.alpha !== undefined && writeF16(this.#alpha, slot, patch.alpha)) {
       dirty |= TextDirty.Transform;
       transformKind |= FULL_TRANSFORM;
     }
@@ -627,7 +627,7 @@ export class TextStore {
     this.#rotation = new Uint16Array();
     this.#zIndex = new Float32Array();
     this.#blendModes = new Uint8Array();
-    this.#alpha = new Uint8Array();
+    this.#alpha = new Uint16Array();
     this.#anchorX = new Uint16Array();
     this.#anchorY = new Uint16Array();
     this.#texts = [];
@@ -685,7 +685,7 @@ export class TextStore {
     writeF16(this.#rotation, slot, label.rotation);
     this.#zIndex[slot] = label.zIndex;
     this.#blendModes[slot] = encodeBlendMode(label.blendMode);
-    writeAlpha(this.#alpha, slot, label.alpha);
+    writeF16(this.#alpha, slot, label.alpha);
     this.#setVisible(slot, label.visible);
     writeF16(this.#anchorX, slot, label.anchorX);
     writeF16(this.#anchorY, slot, label.anchorY);
@@ -871,17 +871,6 @@ function readF16(column: Uint16Array, slot: number): number {
 
 function writeF16(column: Uint16Array, slot: number, value: number): boolean {
   const packed = packF16(value);
-  if (column[slot] === packed) return false;
-  column[slot] = packed;
-  return true;
-}
-
-function readAlpha(column: Uint8Array, slot: number): number {
-  return (column[slot] ?? 0) / 255;
-}
-
-function writeAlpha(column: Uint8Array, slot: number, value: number): boolean {
-  const packed = Math.round(Math.min(1, Math.max(0, value)) * 255);
   if (column[slot] === packed) return false;
   column[slot] = packed;
   return true;

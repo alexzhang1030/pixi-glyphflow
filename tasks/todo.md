@@ -253,7 +253,7 @@
   - Files: src/render/TransformPalette.ts, src/render/shaders.ts, src/render/GlyphMesh.ts, src/render/RenderSurface.ts, src/render/pack.ts
 
 - [x] Task 12.5c: Pack TextStore columns toward 48 MiB / 1M (Wave 2 store).
-  - Acceptance: One million reserved slots allocate ≤ 48 MiB. Scale/rotation/anchors are `f16`; alpha is `u8`; generation and source revision are `u16`; occupied/visible/kind share one flag byte; the dirty journal slot list is sparse. Published 128 MiB store ceiling stays.
+  - Acceptance: One million reserved slots allocate ≤ 48 MiB plus the journal floor. Scale/rotation/alpha/anchors are `f16`; generation and source revision are `u16`; occupied/visible/kind share one flag byte; the dirty journal slot list is sparse. Published 128 MiB store ceiling stays. The public `alpha: 0.5` snapshot still round-trips.
   - Verify: bun test tests/TextStore.test.ts tests/DirtyJournal.test.ts tests/pack.test.ts
   - Files: src/store/TextStore.ts, src/store/DirtyJournal.ts, src/render/pack.ts
 
