@@ -13,6 +13,8 @@
   query would visit most residents.
 - The 40 KiB core gzip CI gate is deferred. `bun run benchmark:check` still measures the graph and
   does not fail that size.
+- Shared label styles intern to one frozen object. Packed x/y commits patch only the palette
+  position texels. Store and spatial z-index columns are `Float32`.
 
 ## 1.1.0 - 2026-08-15
 

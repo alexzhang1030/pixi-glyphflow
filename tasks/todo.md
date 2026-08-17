@@ -242,7 +242,12 @@
   - Verify: bun run build && bun run benchmark:check
   - Files: benchmarks/budgets.ts, docs/performance.md, .agents/docs/performance-plan.md
 
-- [ ] Task 12.5: Compress duplicated store, palette, and instance state (Wave 2).
+- [x] Task 12.5a: Intern shared styles and patch position-only palette texels (Wave 2 CPU).
+  - Acceptance: Equal styles share one frozen object; `updatePositions` and x/y-only patches set a position-only flag; the coordinator writes 16 palette bytes for that path; z-index columns are `Float32`. Published 32-byte instance and 64-byte transform ceilings stay.
+  - Verify: bun test tests/TextStore.test.ts tests/RenderCoordinator.test.ts tests/TextLayer.commit.test.ts tests/TransformPalette.test.ts
+  - Files: src/store/TextStore.ts, src/render/RenderCoordinator.ts, src/render/TransformPalette.ts, src/culling/SpatialIndex.ts, src/TextLayer.ts
+
+- [ ] Task 12.5: Compress duplicated store, palette, and instance state (Wave 2 GPU/storage).
   - Acceptance: Fill-only labels use ≤ 32-byte GPU transforms, live glyph instances use ≤ 24 bytes, and CPU store bytes at one million capacity stay ≤ 48 MiB after measured artifacts exist.
   - Verify: bun run benchmark:check
   - Files: src/store/TextStore.ts, src/render/TransformPalette.ts, src/render/GlyphInstanceStore.ts, src/render/shaders.ts, benchmarks/budgets.ts

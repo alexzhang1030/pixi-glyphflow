@@ -2,7 +2,7 @@
 
 Status: unstamped research and implementation program dated 2026-08-16.
 
-The current conclusion: Wave 1 is in the tree. Keep the 1.1.0 public contract and instanced MSDF/SDF/alpha/color path. Atlas packing is Skyline plus a waste map with per-mode O(1) LRU; instances write through typed arrays; numeric fills skip `Color`; spatial queries use a hierarchical hash grid. The 40 KiB core gzip CI gate is deferred — measure the graph, do not fail it, and do not slim or split Wave 1 just to fit. Published browser artifacts are still 1.1.0 — rerun the isolated Chrome suite on the reference M1 Pro before tightening frame budgets. Next: Wave 0 live-layer 8M measurement, then Wave 2 compression. Slug and Vello stay optional quality tracks.
+The current conclusion: Waves 1 and the first Wave 2 CPU slice are in the tree. Keep the 1.1.0 public contract and instanced MSDF/SDF/alpha/color path. Atlas packing is Skyline plus a waste map with per-mode O(1) LRU; instances write through typed arrays; numeric fills skip `Color`; spatial queries use a hierarchical hash grid; shared styles intern to one frozen object; position-only commits patch palette x/y texels; z-index is `Float32` in the store and spatial index. The 40 KiB core gzip CI gate is deferred. Published browser artifacts are still 1.1.0 — rerun the isolated Chrome suite on the reference M1 Pro before tightening frame budgets. Shader-stride compression, the 48 MiB store target, and Wave 0 live-layer 8M measurement are still open. Slug and Vello stay optional quality tracks.
 
 This record is the research ledger and delivery sequence. Published numbers stay in [`docs/performance.md`](../../docs/performance.md) and [`benchmarks/PERFORMANCE.md`](../../benchmarks/PERFORMANCE.md). The 1.0 specification still owns budgets until a human tightens them.
 
@@ -41,27 +41,27 @@ Storage on the same artifacts: 72 MiB CPU store, 64-byte transform records, 32-b
 
 These are code facts, not profiler folklore. Each item names the structure that has to change.
 
-### Atlas pack and evict are quadratic under pressure
+### Atlas pack and evict were quadratic under pressure
 
-`Packer` is a guillotine splitter: it walks every free rectangle, scores leftover area, then splits into two remnants and later merges with an O(n²) pairwise pass. Keys are string-concatenated. `GlyphAtlas.#evictOldest` walks every resident entry to find the lowest clock. Under a 4 MiB ceiling the atlas must evict thousands of times, and each eviction rescans the map and re-merges free rectangles.
+`Packer` is now Skyline Bottom-Left plus a waste map; rectangle keys are packed integers when the page is under 8192. `GlyphAtlas` evicts through a per-mode doubly-linked LRU. The 1.1.0 `atlas-pressure` artifact still measures the old guillotine and linear clock scan.
 
 That is why `atlas-pressure` spends seconds in setup and hundreds of milliseconds per batch. Jylänki’s survey treats guillotine as the simple/fast teaching algorithm, not the online font-atlas algorithm. Production font atlases use Skyline for online inserts (`stb_rect_pack`, FontStash, NanoVG) and MaxRects for offline prebakes.
 
-### Instance writes are scalar DataView traffic
+### Instance writes were scalar DataView traffic
 
-`GlyphInstanceStore.#write` and `#matches` issue per-field `DataView` loads and stores for every glyph. `#allocateRange` does a linear best-fit over the free list and `#mergeFreeRanges` sorts on every release. `#buildInstances` allocates six typed arrays per dirty label and builds string atlas keys in the inner glyph loop.
+`GlyphInstanceStore` now writes through `Float32Array` / `Uint16Array` / `Uint32Array` views. Content commits skip `#matches`. The coordinator reuses scratch batches. The free list is still a linear best-fit. String atlas keys still sit on the inner glyph loop.
 
 This is the likely core of `dynamic-counters` sitting at 16.40 ms. The 32-byte stride itself is fine. The way it is filled is not.
 
 ### Transforms are parsed and stored three times
 
-`TransformPalette.set` constructs a 16-float array, calls `Math.sin` / `Math.cos`, and routes fill/stroke/shadow through PixiJS `Color` on every write. The same x/y/scale/rotation/alpha/visible already live in `TextStore`. `SpatialIndex` stores a second copy as min/max bounds plus a `Float64Array` z-index.
+`TransformPalette.set` still writes a 64-byte texel. Numeric fills skip PixiJS `Color`, and position-only commits now call `setPosition` so a position storm dirties 16 bytes. The same x/y/scale/rotation/alpha/visible still live in `TextStore`. `SpatialIndex` still stores a second copy as min/max bounds; z-index is `Float32` in both the store and the index.
 
-A fill-only label does not need 64 bytes of effect payload. A position storm should patch two floats, not re-parse paint.
+A fill-only label still does not need 64 bytes of effect payload. That stride change waits for a shader contract and new artifacts.
 
-### Culling is a full-resident scan
+### Culling was a full-resident scan
 
-`SpatialIndex.query` and `hitTest` walk `#highWater` and test AABB overlap. There is no grid, hash, Morton order, or hierarchy. For 1,000,000 labels and a small viewport this does 1,000,000 tests to return tens of thousands of hits. It is cache-friendly SoA, which is why it still fits 16.67 ms, but it cannot get much faster without changing the algorithm.
+`SpatialIndex.query` and `hitTest` now walk a size-classed hash grid and fall back to the linear scan only when the query would visit most residents. The 1.1.0 artifacts still measure the linear path.
 
 ### The million-glyph GPU path is not the product path
 

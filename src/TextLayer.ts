@@ -96,6 +96,7 @@ export class TextLayer extends Container {
   #viewDirty = false;
   #visibilityDirty = true;
   #dirtyMasks: Uint8Array;
+  #positionOnly: Uint8Array;
   #dirtySlots: Uint32Array;
   #bulkSlots: Uint32Array;
   #dirtyLength = 0;
@@ -136,6 +137,7 @@ export class TextLayer extends Container {
     this.#cullingPadding = culling.padding;
     this.#viewportBounds = culling.bounds;
     this.#dirtyMasks = new Uint8Array(this.#store.capacity);
+    this.#positionOnly = new Uint8Array(this.#store.capacity);
     this.#dirtySlots = new Uint32Array(this.#store.capacity);
     this.#bulkSlots = new Uint32Array(this.#store.capacity);
     this.#visibleSlots = new Uint32Array(this.#store.capacity);
@@ -689,6 +691,7 @@ export class TextLayer extends Container {
     const dirty = hasLabelChanges
       ? this.#store.publishDirty((slot, mask) => {
           this.#dirtyMasks[slot] = mask;
+          this.#positionOnly[slot] = Number(this.#store.consumePositionOnly(slot));
           this.#dirtySlots[this.#dirtyLength] = slot;
           this.#dirtyLength += 1;
         })
@@ -990,6 +993,7 @@ export class TextLayer extends Container {
     const required = Math.max(this.#store.capacity, this.#spatial.capacity);
     if (this.#visibleSlots.length >= required) return;
     this.#dirtyMasks = growTypedArray(this.#dirtyMasks, required);
+    this.#positionOnly = growTypedArray(this.#positionOnly, required);
     this.#dirtySlots = growTypedArray(this.#dirtySlots, required);
     this.#visibleSlots = growTypedArray(this.#visibleSlots, required);
     this.#renderedEpochs = growTypedArray(this.#renderedEpochs, required);
@@ -1024,10 +1028,11 @@ export class TextLayer extends Container {
       const order = this.#spatial.orderOf(slot);
       if (order === undefined) throw new Error("Visible label order is unavailable");
       const trustedRun = this.#trustedRuns.get(snapshot.id);
+      const mask = wasRendered ? dirtyMask : ALL_DIRTY;
       changes.push({
         slot,
         labelId: snapshot.id,
-        mask: wasRendered ? dirtyMask : ALL_DIRTY,
+        mask,
         snapshot: toRenderSnapshot(
           snapshot,
           order,
@@ -1035,6 +1040,9 @@ export class TextLayer extends Container {
           this.#shaping.get(snapshot.id),
         ),
         ...(trustedRun === undefined ? {} : { trustedRun }),
+        ...(wasRendered && this.#positionOnly[slot] === 1 && mask === TextDirty.Transform
+          ? { positionOnly: true }
+          : {}),
       });
     }
     for (let index = 0; index < this.#renderedCount; index += 1) {
@@ -1054,7 +1062,10 @@ export class TextLayer extends Container {
   #clearDirtyMasks(): void {
     for (let index = 0; index < this.#dirtyLength; index += 1) {
       const slot = this.#dirtySlots[index];
-      if (slot !== undefined) this.#dirtyMasks[slot] = TextDirty.None;
+      if (slot !== undefined) {
+        this.#dirtyMasks[slot] = TextDirty.None;
+        this.#positionOnly[slot] = 0;
+      }
     }
     this.#dirtyLength = 0;
   }
