@@ -9,7 +9,8 @@ import {
 
 import { TextLayer } from "../../src";
 import type { TextId, TextLabelSpec, TextUpdate } from "../../src";
-import { GlyphAtlas, GlyphMesh } from "../../src/advanced";
+import { GlyphAtlas, GlyphMesh, TRANSFORM_PALETTE_STRIDE } from "../../src/advanced";
+import { packHalf2x16 } from "../../src/render/pack";
 import { bindViewport } from "../../src/viewport";
 import type {
   BrowserBenchmarkConfiguration,
@@ -20,7 +21,7 @@ import type { BrowserFixtureResult } from "./fixtures";
 
 const ACTIVE_ALPHA_METADATA = 0x8001_0000;
 const INSTANCE_STRIDE = 32;
-const TRANSFORM_STRIDE = 64;
+const TRANSFORM_STRIDE = TRANSFORM_PALETTE_STRIDE;
 const CHUNK_SIZE = 8_192;
 const DEFAULT_STYLE = Object.freeze({ fontFamily: "Arial", fontSize: 8, fill: 0xffffff });
 
@@ -537,22 +538,22 @@ function createStressMesh(
       ? (renderer as WebGLRenderer).gl.getParameter((renderer as WebGLRenderer).gl.MAX_TEXTURE_SIZE)
       : 4_096;
   const paletteWidth = Math.min(4_096, maximumTextureSize as number);
-  const paletteHeight = Math.ceil((labelCount * 4) / paletteWidth);
+  const paletteHeight = Math.ceil((labelCount * 2) / paletteWidth);
   if (paletteHeight > maximumTextureSize) {
     throw new RangeError("Transform palette exceeds the renderer texture-size limit");
   }
   const palette = new Float32Array(paletteWidth * paletteHeight * 4);
+  const bits = new Uint32Array(palette.buffer);
   for (let label = 0; label < labelCount; label += 1) {
-    const offset = label * 16;
+    const offset = label * 8;
     palette[offset] = (label % 1_000) * 1.28;
     palette[offset + 1] = (Math.floor(label / 1_000) % 1_000) * 0.8;
     palette[offset + 2] = 1;
     palette[offset + 3] = 1;
-    palette[offset + 5] = 1;
-    palette[offset + 8] = 1;
-    palette[offset + 9] = 1;
-    palette[offset + 10] = 1;
-    palette[offset + 11] = 65_535;
+    bits[offset + 4] = packHalf2x16(0, 1);
+    bits[offset + 5] = packHalf2x16(0, 0);
+    palette[offset + 6] = 0xffffff;
+    palette[offset + 7] = 65_535;
   }
   const instanceData = new ArrayBuffer(glyphCount * INSTANCE_STRIDE);
   const view = new DataView(instanceData);

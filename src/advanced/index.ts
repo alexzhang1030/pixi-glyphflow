@@ -10,7 +10,11 @@ export { RenderCoordinator } from "../render/RenderCoordinator";
 export { WebGLAdapter } from "../render/WebGLAdapter";
 export { WebGPUAdapter } from "../render/WebGPUAdapter";
 export { GLYPH_INSTANCE_STRIDE, GLYPH_TEXTURE_BANK_SIZE } from "../render/types";
-export { TRANSFORM_PALETTE_STRIDE, TransformPalette } from "../render/TransformPalette";
+export {
+  TRANSFORM_EFFECT_STRIDE,
+  TRANSFORM_PALETTE_STRIDE,
+  TransformPalette,
+} from "../render/TransformPalette";
 export type {
   AtlasCommit,
   AtlasEntry,

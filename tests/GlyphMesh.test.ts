@@ -97,6 +97,8 @@ describe("GlyphMesh", () => {
   test("keeps equivalent distance-field and color branches in paired shader sources", () => {
     expect(GLYPH_VERTEX_GLSL).toContain("aInstanceRect");
     expect(GLYPH_VERTEX_GLSL).toContain("uTransformTexture");
+    expect(GLYPH_VERTEX_GLSL).toContain("uEffectBase");
+    expect(GLYPH_VERTEX_GLSL).toContain("unpackHalf2x16");
     expect(GLYPH_VERTEX_GLSL).toContain("vRasterScale");
     expect(GLYPH_FRAGMENT_GLSL).toContain("median3");
     expect(GLYPH_FRAGMENT_GLSL).toContain("vRasterScale / vec2(textureSize");
@@ -104,6 +106,8 @@ describe("GlyphMesh", () => {
     expect(GLYPH_FRAGMENT_GLSL).toContain("vTextureSlot == 6u");
     expect(GLYPH_FRAGMENT_GLSL).toContain("vMode == 3u");
     expect(GLYPH_SHADER_WGSL).toContain("fn median3");
+    expect(GLYPH_SHADER_WGSL).toContain("uEffectBase");
+    expect(GLYPH_SHADER_WGSL).toContain("unpack2x16float");
     expect(GLYPH_SHADER_WGSL).toContain("textureLoad(uTransformTexture");
     expect(GLYPH_SHADER_WGSL).toContain("input.rasterScale / vec2<f32>(textureDimensions");
     expect(GLYPH_SHADER_WGSL).toContain("@group(2) @binding(7) var uTexture7");

@@ -75,8 +75,10 @@ the character-based MSDF generator. A bounded worker pool runs in parallel and s
 inside each worker so mutable font state remains isolated. Small distance fields rasterize at a
 48-pixel minimum and carry a physical-to-logical scale through atlas entries and packed instances.
 
-Each glyph instance uses 32 bytes. Each label transform palette record uses 64 bytes. Dirty-range
-adapters issue partial WebGL buffer updates or budgeted WebGPU queue writes.
+Each glyph instance uses 32 bytes. Each fill-only label transform uses 32 bytes (two
+`rgba32float` texels). Stroke and drop shadow occupy one extra texel after the core region when
+any label uses those effects. Dirty-range adapters issue partial WebGL buffer updates or
+budgeted WebGPU queue writes.
 
 ## Rendering
 

@@ -82,10 +82,11 @@ how far the current code can go:
 
 Wave 1 of that program is in source: Skyline atlas packing, per-mode O(1) LRU, typed instance
 writes, numeric fill packing, and a hierarchical hash grid. Wave 2 has started without changing
-published ceilings: shared styles intern, position-only commits patch 16 palette bytes, and
-z-index is `Float32`. The 40 KiB core gzip CI gate is deferred; the check still prints the graph
-size. Published browser artifacts remain 1.1.0 until the isolated Chrome suite is rerun on the
-reference fixture. The next program is recorded in
+published ceilings: shared styles intern, position-only commits patch 16 palette bytes,
+z-index is `Float32`, and fill-only GPU transforms use 32 bytes with a sparse effect tail. The
+40 KiB core gzip CI gate is deferred; the check still prints the graph size. Published browser
+artifacts remain 1.1.0 until the isolated Chrome suite is rerun on the reference fixture. The
+next program is recorded in
 [`.agents/docs/performance-plan.md`](../.agents/docs/performance-plan.md). Published frame and
 storage budgets stay until a human accepts new numbers.
 

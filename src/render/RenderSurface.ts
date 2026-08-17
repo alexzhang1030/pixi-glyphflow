@@ -184,7 +184,7 @@ export class RenderSurface {
       this.#paletteTexture = new Texture({ source: this.#paletteSource });
       this.#paletteInitialized = false;
       for (const surface of this.#meshes.values()) {
-        surface.mesh.setPaletteTexture(this.#paletteTexture, stats.textureWidth);
+        surface.mesh.setPaletteTexture(this.#paletteTexture, stats.textureWidth, stats.effectBase);
       }
       oldTexture.destroy(true);
     }
@@ -400,12 +400,13 @@ export class RenderSurface {
     if (primaryTexture === undefined) {
       throw new Error(`Atlas texture bank ${String(bank)} is unavailable`);
     }
-    const paletteWidth = this.#coordinator.transforms.stats.textureWidth;
+    const paletteStats = this.#coordinator.transforms.stats;
     const mesh = new GlyphMesh({
       texture: primaryTexture,
       textures,
       paletteTexture: this.#paletteTexture,
-      paletteWidth,
+      paletteWidth: paletteStats.textureWidth,
+      effectBase: paletteStats.effectBase,
       instanceData: data,
       instanceCount: count,
     });

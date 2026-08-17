@@ -30,6 +30,7 @@ export interface GlyphMeshOptions {
   readonly textures?: readonly Texture[];
   readonly paletteTexture: Texture;
   readonly paletteWidth: number;
+  readonly effectBase?: number;
   readonly instanceData: ArrayBuffer;
   readonly instanceCount: number;
   readonly shader?: Shader;
@@ -197,6 +198,7 @@ export class GlyphMesh extends Mesh<Geometry, Shader> {
           uTransformTexture: options.paletteTexture.source,
           glyphUniforms: {
             uPaletteWidth: { value: options.paletteWidth, type: "f32" },
+            uEffectBase: { value: options.effectBase ?? 0, type: "f32" },
           },
         },
       });
@@ -239,12 +241,16 @@ export class GlyphMesh extends Mesh<Geometry, Shader> {
     this.#ownedShader.resources.uSampler = bank[0].source.style;
   }
 
-  setPaletteTexture(texture: Texture, width: number): void {
+  setPaletteTexture(texture: Texture, width: number, effectBase = 0): void {
     if (!Number.isSafeInteger(width) || width <= 0) {
       throw new TypeError("palette width must be a positive safe integer");
     }
+    if (!Number.isFinite(effectBase) || effectBase < 0) {
+      throw new TypeError("effectBase must be a finite non-negative number");
+    }
     this.#ownedShader.resources.uTransformTexture = texture.source;
     this.#ownedShader.resources.glyphUniforms.uniforms.uPaletteWidth = width;
+    this.#ownedShader.resources.glyphUniforms.uniforms.uEffectBase = effectBase;
   }
 
   override destroy(): void {

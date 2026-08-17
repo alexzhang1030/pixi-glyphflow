@@ -129,4 +129,6 @@ export interface TransformPaletteStats {
   readonly textureWidth: number;
   readonly textureHeight: number;
   readonly pendingDirtyRanges: number;
+  readonly coreStride: number;
+  readonly effectBase: number;
 }
