@@ -70,9 +70,11 @@ ownership and revision stamps.
 ## Atlas and instances
 
 `GlyphAtlas` stages raster results and publishes a complete generation at a frame boundary. Visible
-glyphs pin entries. LRU eviction reclaims unpinned entries under a fixed allocation ceiling. Live
-path keys are packed integers (family intern, glyph id, size bucket, weight class, mode, revision).
-String keys remain valid for tests, prebuilt pages, and identities that cannot pack.
+glyphs pin entries. LRU eviction reclaims unpinned entries under a fixed allocation ceiling. Pages
+pack with Skyline Bottom-Left, a waste map for eviction holes, and a next-fit shelf when the next
+glyph matches the current row height. Live path keys are packed integers (family intern, glyph id,
+size bucket, weight class, mode, revision). String keys remain valid for tests, prebuilt pages, and
+identities that cannot pack.
 
 Binary-font rasterization consumes the exact HarfBuzz glyph ID. Direct cmap hits reuse the original
 font bytes; contextual, ligature, and language-localized glyphs receive a temporary cmap mapping for
