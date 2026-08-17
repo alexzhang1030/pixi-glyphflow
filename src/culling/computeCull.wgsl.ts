@@ -1,7 +1,7 @@
 import { CULL_WORKGROUP } from "./computeCull";
 
 /** Multi-pass stable compact: mark, workgroup scan, scan group sums, scatter, write indirect. */
-export const COMPUTE_CULL_WGSL = /* wgsl */ `
+export const COMPUTE_CULL_WGSL: string = /* wgsl */ `
 struct CullRecord {
   min_x: f32,
   min_y: f32,
