@@ -44,8 +44,9 @@ return `0` and preserve revision state. One following `commit()` publishes the c
 change through culling, hit testing, accessibility, and the active WebGL or WebGPU renderer.
 
 `TextLayerCullingOptions.computeCull` defaults to automatic. WebGPU compact uses a compute prefix-sum
-when a device exists; WebGL 2 and missing devices stay on the CPU hash grid. `stats.cullPath` reports
-`compute-cull` or `cpu-grid` for the path that actually ran.
+on the already-resident viewport set when a device exists; WebGL 2 and missing devices stay on the
+CPU hash grid. The CPU grid still chooses who is shaped and instanced. `stats.cullPath` reports
+`compute-cull` or `cpu-grid` for the draw path that actually ran.
 
 `TextGroupId` is an opaque identity created by `createGroup()`. Every call produces a distinct
 identity owned by its `TextLayer`. A label references one group through `TextLabelSpec.group` or a

@@ -2,6 +2,16 @@ import { GLYPH_INSTANCE_STRIDE } from "../render/types";
 import type { BoundsData } from "./types";
 
 export type CullPath = "cpu-grid" | "compute-cull";
+export type CullResidency = "viewport" | "all";
+
+/**
+ * Who is shaped and instanced. The million-label product keeps the CPU viewport set. Compute cull
+ * must not switch this to the full world — the instance store caps at 16,777,216 glyphs
+ * (`0x100_0000`), and 1,000,000 multilingual labels overflow it.
+ */
+export function cullResidency(cullingEnabled: boolean, hasViewportBounds: boolean): CullResidency {
+  return cullingEnabled && hasViewportBounds ? "viewport" : "all";
+}
 
 export const CULL_RECORD_STRIDE = 32;
 export const CULL_WORKGROUP = 256;

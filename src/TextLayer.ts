@@ -7,6 +7,7 @@ import {
 } from "pixi.js";
 
 import {
+  cullResidency,
   packCullRecords,
   viewportFromBounds,
   type CullPath,
@@ -733,10 +734,7 @@ export class TextLayer extends Container {
     this.#viewDirty = false;
     this.#refreshComputeCull();
     const spatialStart = performance.now();
-    const cameraOnly = !hasLabelChanges && this.#computeCullActive;
-    if (cameraOnly) {
-      this.#visibleCountStale = true;
-    } else if (this.#cullingEnabled || this.#visibilityDirty) {
+    if (this.#cullingEnabled || this.#visibilityDirty) {
       this.#visibleCount = this.#queryVisible();
       this.#visibilityDirty = false;
       this.#visibleCountStale = false;
@@ -1072,11 +1070,12 @@ export class TextLayer extends Container {
   }
 
   #queryVisible(): number {
-    if (this.#computeCullActive) {
-      return this.#spatial.queryAll(this.#visibleSlots);
-    }
-    if (this.#cullingEnabled && this.#viewportBounds !== undefined) {
-      return this.#spatial.query(this.#viewportBounds, this.#visibleSlots, this.#cullingPadding);
+    const bounds = this.#viewportBounds;
+    if (
+      cullResidency(this.#cullingEnabled, bounds !== undefined) === "viewport" &&
+      bounds !== undefined
+    ) {
+      return this.#spatial.query(bounds, this.#visibleSlots, this.#cullingPadding);
     }
 
     return this.#spatial.queryAll(this.#visibleSlots);

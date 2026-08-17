@@ -18,8 +18,8 @@ Packed identities are family intern + glyph id + size bucket + weight class + mo
 
 ## Compute cull packs after spatial writes and does not use Pixi `drawIndexed`
 
-WebGPU compact keeps every effectively-visible label in the coordinator (`queryAll`) and tests the viewport on the GPU. Pack cull records after `spatial.set` so position commits do not upload stale AABBs. Pixi `GpuEncoderSystem.draw` issues `drawIndexed`, not `drawIndexedIndirect`; the compute pass writes indirect args and a shared encoder hook rebinds instance attributes to the compact buffer for tracked `GlyphMesh` geometries. Multi-bank compact meshes stay on the CPU draw path. Do not atomic-append visible text; prefix-sum then scatter preserves z then insertion order.
+Pack cull records after `spatial.set` so position commits do not upload stale AABBs. Pixi `GpuEncoderSystem.draw` issues `drawIndexed`, not `drawIndexedIndirect`; the compute pass writes indirect args and a shared encoder hook rebinds instance attributes to the compact buffer for tracked `GlyphMesh` geometries. Multi-bank compact meshes stay on the CPU draw path. Do not atomic-append visible text; prefix-sum then scatter preserves z then insertion order.
 
-## Compute-cull residency is not a CPU viewport set
+## Compute cull must not `queryAll` the million-label world
 
-When `stats.cullPath` is `compute-cull`, offscreen labels stay uploaded. `visibleLabelCount` on `stats` may walk the hash grid lazily for diagnostics; camera-only `commit` must not. WebGL 2 and `culling.computeCull: false` stay on `cpu-grid` add/remove. Do not treat coordinator `glyphCount` as the on-screen set on the compute path.
+`GlyphInstanceStore` caps at 16,777,216 glyphs. The documentation site keeps 1,000,000 multilingual labels; uploading every resident overflows that ceiling and the demo dies with `Renderer setup failed`. The CPU hash grid still selects who is shaped and instanced. GPU compact only sees that viewport working set. Do not skip the grid walk on camera frames, and do not treat `cullPath === "compute-cull"` as permission to keep offscreen labels in the coordinator.

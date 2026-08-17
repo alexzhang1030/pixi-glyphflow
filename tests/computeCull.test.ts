@@ -4,11 +4,18 @@ import {
   aabbVisible,
   compactVisibleInstances,
   createIndirectArgs,
+  cullResidency,
   packCullRecords,
 } from "../src/culling/computeCull";
 import { GLYPH_INSTANCE_STRIDE } from "../src/render/types";
 
 describe("compute cull host reference", () => {
+  test("keeps million-label residency on the CPU viewport set", () => {
+    expect(cullResidency(true, true)).toBe("viewport");
+    expect(cullResidency(true, false)).toBe("all");
+    expect(cullResidency(false, true)).toBe("all");
+  });
+
   test("keeps axis-aligned overlap and rejects separated boxes", () => {
     const viewport = { x: 0, y: 0, width: 100, height: 100, padding: 10 };
     expect(aabbVisible(90, 90, 110, 110, viewport)).toBe(true);

@@ -105,8 +105,9 @@ minimum texture-unit budget and the WebGPU minimum sampled-texture limit.
 
 `SpatialIndex` keeps dense bounds, visibility, z order, and stable insertion order. Query output uses
 caller-owned typed arrays. WebGL 2 and missing devices query the CPU hash grid each camera frame.
-WebGPU with `culling.computeCull` keeps effectively-visible labels resident and compacts the visible
-instances on the GPU in z then insertion order. `ViewportBinding` converts pixi-viewport camera
+WebGPU with `culling.computeCull` still uses the CPU hash grid to choose who is shaped and instanced,
+then compacts that working set on the GPU in z then insertion order. The full world must not enter
+the instance store — it caps at 16,777,216 glyphs. `ViewportBinding` converts pixi-viewport camera
 corners through the layer transform, coalesces the current input burst, updates culling bounds, and
 publishes visibility work.
 
