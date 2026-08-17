@@ -1,4 +1,5 @@
 import { DirtyRanges } from "./DirtyRanges";
+import { packF16 } from "./pack";
 import {
   GLYPH_INSTANCE_STRIDE,
   type DirtyByteRange,
@@ -26,6 +27,11 @@ const ACTIVE_BIT = 0x8000_0000;
 const RASTER_SCALE_SHIFT = 18;
 const RASTER_SCALE_MAX = 0x1fff;
 const RASTER_SCALE_PRECISION = 64;
+const UINT16_PER_INSTANCE = GLYPH_INSTANCE_STRIDE / Uint16Array.BYTES_PER_ELEMENT;
+const UINT32_PER_INSTANCE = GLYPH_INSTANCE_STRIDE / Uint32Array.BYTES_PER_ELEMENT;
+const UV_U16 = 4;
+const PALETTE_U32 = 4;
+const METADATA_U32 = 5;
 
 export interface GlyphInstanceSetOptions {
   /** Skip the byte-for-byte equality check when the caller already knows the run changed. */
@@ -42,7 +48,6 @@ export class GlyphInstanceStore {
   #highWater = 0;
   #activeInstances = 0;
   #buffer: ArrayBuffer;
-  #floats: Float32Array;
   #uint16: Uint16Array;
   #uint32: Uint32Array;
   #destroyed = false;
@@ -60,7 +65,6 @@ export class GlyphInstanceStore {
     this.#capacity = this.#minimumCapacity;
     this.#buffer = new ArrayBuffer(this.#capacity * GLYPH_INSTANCE_STRIDE);
     const views = bindInstanceViews(this.#buffer);
-    this.#floats = views.floats;
     this.#uint16 = views.uint16;
     this.#uint32 = views.uint32;
   }
@@ -173,7 +177,6 @@ export class GlyphInstanceStore {
     }
     this.#buffer = buffer;
     const views = bindInstanceViews(buffer);
-    this.#floats = views.floats;
     this.#uint16 = views.uint16;
     this.#uint32 = views.uint32;
     this.#capacity = afterCapacity;
@@ -216,7 +219,6 @@ export class GlyphInstanceStore {
     this.#dirty.clear();
     this.#buffer = new ArrayBuffer(0);
     const views = bindInstanceViews(this.#buffer);
-    this.#floats = views.floats;
     this.#uint16 = views.uint16;
     this.#uint32 = views.uint32;
     this.#capacity = 0;
@@ -226,24 +228,23 @@ export class GlyphInstanceStore {
   }
 
   #matches(range: MutableInstanceRange, batch: GlyphInstanceBatch): boolean {
-    const floats = this.#floats;
     const uint16 = this.#uint16;
     const uint32 = this.#uint32;
     for (let index = 0; index < range.count; index += 1) {
-      const floatOffset = (range.offset + index) * 8;
+      const u16 = (range.offset + index) * UINT16_PER_INSTANCE;
+      const u32 = (range.offset + index) * UINT32_PER_INSTANCE;
       const inputOffset = index * 4;
-      const uvOffset = (range.offset + index) * 16 + 8;
       if (
-        floats[floatOffset] !== batch.positions[inputOffset] ||
-        floats[floatOffset + 1] !== batch.positions[inputOffset + 1] ||
-        floats[floatOffset + 2] !== batch.positions[inputOffset + 2] ||
-        floats[floatOffset + 3] !== batch.positions[inputOffset + 3] ||
-        uint16[uvOffset] !== packUv(batch.uvs[inputOffset] ?? 0) ||
-        uint16[uvOffset + 1] !== packUv(batch.uvs[inputOffset + 1] ?? 0) ||
-        uint16[uvOffset + 2] !== packUv(batch.uvs[inputOffset + 2] ?? 0) ||
-        uint16[uvOffset + 3] !== packUv(batch.uvs[inputOffset + 3] ?? 0) ||
-        uint32[floatOffset + 6] !== batch.paletteIndices[index] ||
-        uint32[floatOffset + 7] !== metadata(batch, index)
+        uint16[u16] !== packF16(batch.positions[inputOffset] ?? 0) ||
+        uint16[u16 + 1] !== packF16(batch.positions[inputOffset + 1] ?? 0) ||
+        uint16[u16 + 2] !== packF16(batch.positions[inputOffset + 2] ?? 0) ||
+        uint16[u16 + 3] !== packF16(batch.positions[inputOffset + 3] ?? 0) ||
+        uint16[u16 + UV_U16] !== packUv(batch.uvs[inputOffset] ?? 0) ||
+        uint16[u16 + UV_U16 + 1] !== packUv(batch.uvs[inputOffset + 1] ?? 0) ||
+        uint16[u16 + UV_U16 + 2] !== packUv(batch.uvs[inputOffset + 2] ?? 0) ||
+        uint16[u16 + UV_U16 + 3] !== packUv(batch.uvs[inputOffset + 3] ?? 0) ||
+        uint32[u32 + PALETTE_U32] !== batch.paletteIndices[index] ||
+        uint32[u32 + METADATA_U32] !== metadata(batch, index)
       ) {
         return false;
       }
@@ -253,31 +254,30 @@ export class GlyphInstanceStore {
   }
 
   #write(offset: number, batch: GlyphInstanceBatch): void {
-    const floats = this.#floats;
     const uint16 = this.#uint16;
     const uint32 = this.#uint32;
     const count = batch.paletteIndices.length;
     for (let index = 0; index < count; index += 1) {
-      const floatOffset = (offset + index) * 8;
+      const u16 = (offset + index) * UINT16_PER_INSTANCE;
+      const u32 = (offset + index) * UINT32_PER_INSTANCE;
       const inputOffset = index * 4;
-      const uvOffset = (offset + index) * 16 + 8;
-      floats[floatOffset] = batch.positions[inputOffset] ?? 0;
-      floats[floatOffset + 1] = batch.positions[inputOffset + 1] ?? 0;
-      floats[floatOffset + 2] = batch.positions[inputOffset + 2] ?? 0;
-      floats[floatOffset + 3] = batch.positions[inputOffset + 3] ?? 0;
-      uint16[uvOffset] = packUv(batch.uvs[inputOffset] ?? 0);
-      uint16[uvOffset + 1] = packUv(batch.uvs[inputOffset + 1] ?? 0);
-      uint16[uvOffset + 2] = packUv(batch.uvs[inputOffset + 2] ?? 0);
-      uint16[uvOffset + 3] = packUv(batch.uvs[inputOffset + 3] ?? 0);
-      uint32[floatOffset + 6] = batch.paletteIndices[index] ?? 0;
-      uint32[floatOffset + 7] = metadata(batch, index);
+      uint16[u16] = packF16(batch.positions[inputOffset] ?? 0);
+      uint16[u16 + 1] = packF16(batch.positions[inputOffset + 1] ?? 0);
+      uint16[u16 + 2] = packF16(batch.positions[inputOffset + 2] ?? 0);
+      uint16[u16 + 3] = packF16(batch.positions[inputOffset + 3] ?? 0);
+      uint16[u16 + UV_U16] = packUv(batch.uvs[inputOffset] ?? 0);
+      uint16[u16 + UV_U16 + 1] = packUv(batch.uvs[inputOffset + 1] ?? 0);
+      uint16[u16 + UV_U16 + 2] = packUv(batch.uvs[inputOffset + 2] ?? 0);
+      uint16[u16 + UV_U16 + 3] = packUv(batch.uvs[inputOffset + 3] ?? 0);
+      uint32[u32 + PALETTE_U32] = batch.paletteIndices[index] ?? 0;
+      uint32[u32 + METADATA_U32] = metadata(batch, index);
     }
   }
 
   #clearMetadata(offset: number, count: number): void {
     const uint32 = this.#uint32;
     for (let index = 0; index < count; index += 1) {
-      uint32[(offset + index) * 8 + 7] = 0;
+      uint32[(offset + index) * UINT32_PER_INSTANCE + METADATA_U32] = 0;
     }
   }
 
@@ -346,7 +346,6 @@ export class GlyphInstanceStore {
     new Uint8Array(buffer).set(new Uint8Array(this.#buffer));
     this.#buffer = buffer;
     const views = bindInstanceViews(buffer);
-    this.#floats = views.floats;
     this.#uint16 = views.uint16;
     this.#uint32 = views.uint32;
     this.#capacity = capacity;
@@ -448,12 +447,10 @@ function assertPositiveCapacity(name: string, value: number): void {
 }
 
 function bindInstanceViews(buffer: ArrayBuffer): {
-  readonly floats: Float32Array;
   readonly uint16: Uint16Array;
   readonly uint32: Uint32Array;
 } {
   return {
-    floats: new Float32Array(buffer),
     uint16: new Uint16Array(buffer),
     uint32: new Uint32Array(buffer),
   };

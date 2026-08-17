@@ -8,6 +8,7 @@ import {
   type RenderChange,
   type TextLayoutInput,
 } from "../src/advanced";
+import { unpackF16 } from "../src/render/pack";
 
 const CONTENT = 1;
 const TRANSFORM = 2;
@@ -133,12 +134,12 @@ describe("RenderCoordinator", () => {
 
     const view = new DataView(coordinator.instances.buffer);
     expect([
-      view.getFloat32(0, true),
-      view.getFloat32(4, true),
-      view.getFloat32(8, true),
-      view.getFloat32(12, true),
+      unpackF16(view.getUint16(0, true)),
+      unpackF16(view.getUint16(2, true)),
+      unpackF16(view.getUint16(4, true)),
+      unpackF16(view.getUint16(6, true)),
     ]).toEqual([1, -9, 8, 16]);
-    expect(((view.getUint32(28, true) >>> 18) & 0x1fff) / 64).toBe(3);
+    expect(((view.getUint32(20, true) >>> 18) & 0x1fff) / 64).toBe(3);
 
     coordinator.destroy();
     registry.destroy();

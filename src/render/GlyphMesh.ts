@@ -63,8 +63,10 @@ export class GlyphMesh extends Mesh<Geometry, Shader> {
       attributes: {
         aVertex: { buffer: vertexBuffer, format: "float32x2" },
         aInstanceRect: {
+          // Four f16s in 8 bytes. Bind as uint32x2 so WebGL 2 (ANGLE/CI Chrome)
+          // does not need HALF_FLOAT vertex attribs; shaders unpack the bits.
           buffer: instanceBuffer,
-          format: "float32x4",
+          format: "uint32x2",
           stride: GLYPH_INSTANCE_STRIDE,
           offset: 0,
           instance: true,
@@ -73,21 +75,21 @@ export class GlyphMesh extends Mesh<Geometry, Shader> {
           buffer: instanceBuffer,
           format: "unorm16x4",
           stride: GLYPH_INSTANCE_STRIDE,
-          offset: 16,
+          offset: 8,
           instance: true,
         },
         aPaletteIndex: {
           buffer: instanceBuffer,
           format: "uint32",
           stride: GLYPH_INSTANCE_STRIDE,
-          offset: 24,
+          offset: 16,
           instance: true,
         },
         aMetadata: {
           buffer: instanceBuffer,
           format: "uint32",
           stride: GLYPH_INSTANCE_STRIDE,
-          offset: 28,
+          offset: 20,
           instance: true,
         },
       },

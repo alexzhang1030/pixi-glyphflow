@@ -246,7 +246,7 @@ export class RenderSurface {
       if (range === undefined) continue;
       for (let index = 0; index < range.count; index += 1) {
         const sourceIndex = range.offset + index;
-        const metadata = view.getUint32(sourceIndex * GLYPH_INSTANCE_STRIDE + 28, true);
+        const metadata = view.getUint32(sourceIndex * GLYPH_INSTANCE_STRIDE + 20, true);
         if ((metadata & ACTIVE_BIT) === 0) {
           throw new Error(`Inactive glyph found in label range ${String(state.slot)}`);
         }

@@ -9,8 +9,13 @@ import {
 
 import { TextLayer } from "../../src";
 import type { TextId, TextLabelSpec, TextUpdate } from "../../src";
-import { GlyphAtlas, GlyphMesh, TRANSFORM_PALETTE_STRIDE } from "../../src/advanced";
-import { packHalf2x16 } from "../../src/render/pack";
+import {
+  GlyphAtlas,
+  GlyphMesh,
+  GLYPH_INSTANCE_STRIDE,
+  TRANSFORM_PALETTE_STRIDE,
+} from "../../src/advanced";
+import { packF16, packHalf2x16 } from "../../src/render/pack";
 import { bindViewport } from "../../src/viewport";
 import type {
   BrowserBenchmarkConfiguration,
@@ -20,7 +25,7 @@ import type {
 import type { BrowserFixtureResult } from "./fixtures";
 
 const ACTIVE_ALPHA_METADATA = 0x8001_0000;
-const INSTANCE_STRIDE = 32;
+const INSTANCE_STRIDE = GLYPH_INSTANCE_STRIDE;
 const TRANSFORM_STRIDE = TRANSFORM_PALETTE_STRIDE;
 const CHUNK_SIZE = 8_192;
 const DEFAULT_STYLE = Object.freeze({ fontFamily: "Arial", fontSize: 8, fill: 0xffffff });
@@ -559,16 +564,16 @@ function createStressMesh(
   const view = new DataView(instanceData);
   for (let glyph = 0; glyph < glyphCount; glyph += 1) {
     const offset = glyph * INSTANCE_STRIDE;
-    view.setFloat32(offset, (glyph % 8) * 0.12, true);
-    view.setFloat32(offset + 4, 0, true);
-    view.setFloat32(offset + 8, 0.12, true);
-    view.setFloat32(offset + 12, 0.7, true);
-    view.setUint16(offset + 16, 0, true);
-    view.setUint16(offset + 18, 0, true);
-    view.setUint16(offset + 20, 65_535, true);
-    view.setUint16(offset + 22, 65_535, true);
-    view.setUint32(offset + 24, Math.floor(glyph / 8), true);
-    view.setUint32(offset + 28, ACTIVE_ALPHA_METADATA, true);
+    view.setUint16(offset, packF16((glyph % 8) * 0.12), true);
+    view.setUint16(offset + 2, packF16(0), true);
+    view.setUint16(offset + 4, packF16(0.12), true);
+    view.setUint16(offset + 6, packF16(0.7), true);
+    view.setUint16(offset + 8, 0, true);
+    view.setUint16(offset + 10, 0, true);
+    view.setUint16(offset + 12, 65_535, true);
+    view.setUint16(offset + 14, 65_535, true);
+    view.setUint32(offset + 16, Math.floor(glyph / 8), true);
+    view.setUint32(offset + 20, ACTIVE_ALPHA_METADATA, true);
   }
   const atlasSource = new BufferImageSource({
     resource: new Uint8Array([255]),

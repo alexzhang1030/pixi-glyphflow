@@ -2,12 +2,16 @@ import { describe, expect, test } from "bun:test";
 
 import {
   GLYPH_INSTANCE_STRIDE,
+  GLYPH_INSTANCE_STRIDE_CEILING,
   GlyphInstanceStore,
   type GlyphInstanceBatch,
 } from "../src/advanced";
+import { unpackF16 } from "../src/render/pack";
 
 describe("GlyphInstanceStore", () => {
-  test("packs each glyph into 32 bytes and preserves a reserved buffer across updates", () => {
+  test("packs each glyph into 24 bytes and preserves a reserved buffer across updates", () => {
+    expect(GLYPH_INSTANCE_STRIDE).toBe(24);
+    expect(GLYPH_INSTANCE_STRIDE_CEILING).toBe(32);
     const store = new GlyphInstanceStore({ initialCapacity: 8 });
     const buffer = store.buffer;
     const first = batch(2, 10);
@@ -36,7 +40,7 @@ describe("GlyphInstanceStore", () => {
     expect(store.consumeDirty()).toEqual([]);
     expect(store.set(100, batch(2, 20))).toBe(true);
     expect(store.buffer).toBe(buffer);
-    expect(store.consumeDirty()).toEqual([{ offset: 0, length: 64 }]);
+    expect(store.consumeDirty()).toEqual([{ offset: 0, length: 48 }]);
 
     store.destroy();
   });
@@ -59,7 +63,7 @@ describe("GlyphInstanceStore", () => {
     expect(result).toMatchObject({ beforeCapacity: 8, afterCapacity: 4 });
     expect(store.getRange(2)?.offset).toBe(0);
     expect(store.getRange(3)?.offset).toBe(3);
-    expect(store.consumeDirty()).toEqual([{ offset: 0, length: 128 }]);
+    expect(store.consumeDirty()).toEqual([{ offset: 0, length: 96 }]);
 
     store.destroy();
   });
@@ -101,17 +105,17 @@ function readInstance(
   index: number,
 ): Readonly<Record<string, number | boolean>> {
   const view = new DataView(buffer, index * GLYPH_INSTANCE_STRIDE, GLYPH_INSTANCE_STRIDE);
-  const metadata = view.getUint32(28, true);
+  const metadata = view.getUint32(20, true);
   return {
-    x: view.getFloat32(0, true),
-    y: view.getFloat32(4, true),
-    width: view.getFloat32(8, true),
-    height: view.getFloat32(12, true),
-    u0: view.getUint16(16, true),
-    v0: view.getUint16(18, true),
-    u1: view.getUint16(20, true),
-    v1: view.getUint16(22, true),
-    paletteIndex: view.getUint32(24, true),
+    x: unpackF16(view.getUint16(0, true)),
+    y: unpackF16(view.getUint16(2, true)),
+    width: unpackF16(view.getUint16(4, true)),
+    height: unpackF16(view.getUint16(6, true)),
+    u0: view.getUint16(8, true),
+    v0: view.getUint16(10, true),
+    u1: view.getUint16(12, true),
+    v1: view.getUint16(14, true),
+    paletteIndex: view.getUint32(16, true),
     page: metadata & 0xffff,
     mode: (metadata >>> 16) & 0x3,
     rasterScale: ((metadata >>> 18) & 0x1fff) / 64,

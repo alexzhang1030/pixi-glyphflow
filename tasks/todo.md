@@ -257,10 +257,15 @@
   - Verify: bun test tests/TextStore.test.ts tests/DirtyJournal.test.ts tests/pack.test.ts
   - Files: src/store/TextStore.ts, src/store/DirtyJournal.ts, src/render/pack.ts
 
-- [ ] Task 12.5: Compress remaining live instance state (Wave 2 GPU).
-  - Acceptance: Live glyph instances use ≤ 24 bytes after measured artifacts exist. Published 32-byte instance ceiling stays.
+- [x] Task 12.5d: Pack live glyph instances into 24 bytes (Wave 2 GPU).
+  - Acceptance: Each instance is 24 bytes (four `f16` rect components, `unorm16x4` UVs, palette index, metadata). The mesh binds the rect as `uint32x2`; shaders unpack with `unpackHalf2x16` / `unpack2x16float`. Published 32-byte ceiling stays.
+  - Verify: bun test tests/GlyphInstanceStore.test.ts tests/GlyphMesh.test.ts tests/RenderCoordinator.test.ts
+  - Files: src/render/types.ts, src/render/GlyphInstanceStore.ts, src/render/GlyphMesh.ts, src/render/RenderSurface.ts
+
+- [ ] Task 12.5: Remaining Wave 2 follow-through after measured artifacts.
+  - Acceptance: Published instance, transform, and store ceilings may tighten once M1 Pro Chrome artifacts exist. Wave 0 live-layer 8M measurement is still open.
   - Verify: bun run benchmark:check
-  - Files: src/render/GlyphInstanceStore.ts, src/render/shaders.ts, src/render/GlyphMesh.ts, benchmarks/budgets.ts
+  - Files: benchmarks/budgets.ts, docs/performance.md
 
 - [ ] Task 12.6: Add a WebGPU compute cull adapter (Wave 3).
   - Acceptance: Camera-only WebGPU frames compact visible instances on the GPU with stable z/insertion order; WebGL 2 keeps the CPU grid and current budgets; diagnostics name the active cull path.

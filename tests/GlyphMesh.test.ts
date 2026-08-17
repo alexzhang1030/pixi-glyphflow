@@ -72,20 +72,20 @@ describe("GlyphMesh", () => {
 
     expect(mesh.geometry.instanceCount).toBe(2);
     expect(mesh.geometry.getAttribute("aInstanceRect")).toMatchObject({
-      format: "float32x4",
-      stride: 32,
+      format: "uint32x2",
+      stride: 24,
       offset: 0,
       instance: true,
     });
     expect(mesh.geometry.getAttribute("aInstanceUv")).toMatchObject({
       format: "unorm16x4",
-      stride: 32,
-      offset: 16,
+      stride: 24,
+      offset: 8,
       instance: true,
     });
     expect(mesh.shader?.compatibleRenderers).toBe(2);
 
-    const replacement = new ArrayBuffer(32 * 4);
+    const replacement = new ArrayBuffer(24 * 4);
     mesh.updateInstances(replacement, 4);
     expect(mesh.geometry.instanceCount).toBe(4);
     expect(mesh.instanceBuffer.data.buffer).toBe(replacement);
@@ -95,7 +95,10 @@ describe("GlyphMesh", () => {
   });
 
   test("keeps equivalent distance-field and color branches in paired shader sources", () => {
-    expect(GLYPH_VERTEX_GLSL).toContain("aInstanceRect");
+    expect(GLYPH_VERTEX_GLSL).toContain("uvec2 aInstanceRect");
+    expect(GLYPH_VERTEX_GLSL).toContain("unpackHalf2x16(aInstanceRect");
+    expect(GLYPH_SHADER_WGSL).toContain("aInstanceRect: vec2<u32>");
+    expect(GLYPH_SHADER_WGSL).toContain("unpack2x16float(aInstanceRect");
     expect(GLYPH_VERTEX_GLSL).toContain("uTransformTexture");
     expect(GLYPH_VERTEX_GLSL).toContain("uEffectBase");
     expect(GLYPH_VERTEX_GLSL).toContain("unpackHalf2x16");

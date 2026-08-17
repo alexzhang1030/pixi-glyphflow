@@ -9,7 +9,11 @@ export { GlyphMesh } from "../render/GlyphMesh";
 export { RenderCoordinator } from "../render/RenderCoordinator";
 export { WebGLAdapter } from "../render/WebGLAdapter";
 export { WebGPUAdapter } from "../render/WebGPUAdapter";
-export { GLYPH_INSTANCE_STRIDE, GLYPH_TEXTURE_BANK_SIZE } from "../render/types";
+export {
+  GLYPH_INSTANCE_STRIDE,
+  GLYPH_INSTANCE_STRIDE_CEILING,
+  GLYPH_TEXTURE_BANK_SIZE,
+} from "../render/types";
 export {
   TRANSFORM_EFFECT_STRIDE,
   TRANSFORM_PALETTE_STRIDE,
