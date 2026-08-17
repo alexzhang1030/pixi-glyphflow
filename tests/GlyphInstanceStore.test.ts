@@ -81,6 +81,22 @@ describe("GlyphInstanceStore", () => {
 
     store.destroy();
   });
+
+  test("reuses a leftover hole from a larger power-of-two range", () => {
+    const store = new GlyphInstanceStore({ initialCapacity: 16 });
+    store.set(1, batch(8, 1));
+    store.set(2, batch(2, 2));
+    expect(store.getRange(1)).toEqual({ offset: 0, count: 8, capacity: 8 });
+    expect(store.getRange(2)).toEqual({ offset: 8, count: 2, capacity: 2 });
+    store.remove(1);
+    expect(store.set(3, batch(2, 3))).toBe(true);
+    expect(store.getRange(3)?.offset).toBe(0);
+    expect(store.set(4, batch(4, 4))).toBe(true);
+    expect(store.getRange(4)?.offset).toBe(2);
+    expect(store.stats.freeInstances).toBe(2);
+
+    store.destroy();
+  });
 });
 
 function batch(count: number, seed: number): GlyphInstanceBatch {

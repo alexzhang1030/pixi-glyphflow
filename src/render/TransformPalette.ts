@@ -1,6 +1,11 @@
 import { Color } from "pixi.js";
 
-import { DirtyRanges } from "./DirtyRanges";
+import {
+  DIRTY_ACCEPTED_GAP,
+  DIRTY_MAX_RANGES,
+  DIRTY_WHOLE_BUFFER_BPS,
+  DirtyRanges,
+} from "./DirtyRanges";
 import { packHalf2x16 } from "./pack";
 import type {
   DirtyByteRange,
@@ -167,7 +172,12 @@ export class TransformPalette {
 
   consumeDirty(): readonly Readonly<DirtyByteRange>[] {
     this.#assertActive();
-    return this.#dirty.publish();
+    return this.#dirty.publish({
+      acceptedGap: DIRTY_ACCEPTED_GAP,
+      maxRanges: DIRTY_MAX_RANGES,
+      liveBytes: this.#data.byteLength,
+      wholeBufferBps: DIRTY_WHOLE_BUFFER_BPS,
+    });
   }
 
   get stats(): Readonly<TransformPaletteStats> {

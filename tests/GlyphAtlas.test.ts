@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 
-import { GlyphAtlas, type GlyphRaster } from "../src/advanced";
+import { GlyphAtlas, type GlyphCacheKey, type GlyphRaster } from "../src/advanced";
 
 describe("GlyphAtlas", () => {
   test("publishes staged glyphs at frame boundaries and rejects stale generations", () => {
@@ -91,6 +91,21 @@ describe("GlyphAtlas", () => {
     atlas.destroy();
   });
 
+  test("accepts packed numeric keys beside diagnostic strings", () => {
+    const atlas = new GlyphAtlas({ pageWidth: 8, pageHeight: 8, maxBytes: 64 });
+    stageAndCommit(atlas, 42, raster(4, 4, 1));
+
+    expect(atlas.get(42)).toMatchObject({ key: 42, page: 0, width: 4, height: 4 });
+    expect(atlas.pin(42)).toBe(true);
+    expect(atlas.stage(atlas.request("glyph"), raster(4, 8, 2))).toBe(true);
+    atlas.commitFrame();
+    expect(atlas.get(42)).toBeDefined();
+    expect(atlas.get("glyph")).toBeDefined();
+    expect(() => atlas.request(-1)).toThrow(TypeError);
+
+    atlas.destroy();
+  });
+
   test("reports capacity pressure while every eviction candidate is pinned", () => {
     const atlas = new GlyphAtlas({ pageWidth: 8, pageHeight: 8, maxBytes: 64 });
     stageAndCommit(atlas, "A", raster(8, 8, 1));
@@ -114,7 +129,7 @@ function raster(width: number, height: number, value: number): GlyphRaster {
   };
 }
 
-function stageAndCommit(atlas: GlyphAtlas, key: string, value: GlyphRaster): void {
+function stageAndCommit(atlas: GlyphAtlas, key: GlyphCacheKey, value: GlyphRaster): void {
   expect(atlas.stage(atlas.request(key), value)).toBe(true);
   atlas.commitFrame();
 }

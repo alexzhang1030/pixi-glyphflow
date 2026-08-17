@@ -1,5 +1,6 @@
 export { SpatialIndex } from "../culling/SpatialIndex";
 export { GlyphAtlas } from "../atlas/GlyphAtlas";
+export { resolveGlyphIdentity, unpackGlyphIdentity } from "../atlas/glyphIdentity";
 export { PrebuiltGlyphProvider } from "../atlas/PrebuiltGlyphProvider";
 export { RasterGlyphProvider } from "../atlas/RasterGlyphProvider";
 export { LayoutEngine } from "../layout/LayoutEngine";
@@ -26,6 +27,7 @@ export type {
   AtlasUpload,
   GlyphAtlasOptions,
   GlyphAtlasStats,
+  GlyphCacheKey,
   GlyphMode,
   GlyphMetrics,
   GlyphRaster,

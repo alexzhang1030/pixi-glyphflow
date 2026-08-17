@@ -6,6 +6,7 @@ import type {
   AtlasUpload,
   GlyphAtlasOptions,
   GlyphAtlasStats,
+  GlyphCacheKey,
   GlyphMode,
   GlyphRaster,
   GlyphRequest,
@@ -26,7 +27,7 @@ interface PendingGlyph {
 }
 
 interface LruNode {
-  readonly key: string;
+  readonly key: GlyphCacheKey;
   prev: LruNode | undefined;
   next: LruNode | undefined;
 }
@@ -44,18 +45,18 @@ export class GlyphAtlas {
   readonly #pageHeight: number;
   readonly #maxBytes: number;
   readonly #pages: AtlasPage[] = [];
-  readonly #entries = new Map<string, Readonly<AtlasEntry>>();
-  readonly #pending = new Map<string, PendingGlyph>();
-  readonly #requestGenerations = new Map<string, number>();
-  readonly #lruNodes = new Map<string, LruNode>();
+  readonly #entries = new Map<GlyphCacheKey, Readonly<AtlasEntry>>();
+  readonly #pending = new Map<GlyphCacheKey, PendingGlyph>();
+  readonly #requestGenerations = new Map<GlyphCacheKey, number>();
+  readonly #lruNodes = new Map<GlyphCacheKey, LruNode>();
   readonly #lruByMode: Record<GlyphMode, LruList> = {
     msdf: { head: undefined, tail: undefined },
     sdf: { head: undefined, tail: undefined },
     alpha: { head: undefined, tail: undefined },
     color: { head: undefined, tail: undefined },
   };
-  readonly #pins = new Set<string>();
-  readonly #evictedSinceCommit: string[] = [];
+  readonly #pins = new Set<GlyphCacheKey>();
+  readonly #evictedSinceCommit: GlyphCacheKey[] = [];
   #allocatedBytes = 0;
   #requests = 0;
   #stagedResults = 0;
@@ -74,12 +75,12 @@ export class GlyphAtlas {
     assertPositiveInteger("maxBytes", this.#maxBytes);
   }
 
-  request(key: string): Readonly<GlyphRequest> {
+  request(key: GlyphCacheKey): Readonly<GlyphRequest> {
     this.#assertActive();
     assertKey(key);
     const previous = this.#requestGenerations.get(key) ?? 0;
     if (previous === Number.MAX_SAFE_INTEGER) {
-      throw new RangeError(`Glyph request generation exhausted: ${key}`);
+      throw new RangeError(`Glyph request generation exhausted: ${String(key)}`);
     }
     const generation = previous + 1;
     this.#requestGenerations.set(key, generation);
@@ -158,7 +159,7 @@ export class GlyphAtlas {
     });
   }
 
-  get(key: string): Readonly<AtlasEntry> | undefined {
+  get(key: GlyphCacheKey): Readonly<AtlasEntry> | undefined {
     this.#assertActive();
     const entry = this.#entries.get(key);
     if (entry !== undefined) {
@@ -185,7 +186,7 @@ export class GlyphAtlas {
     });
   }
 
-  pin(key: string): boolean {
+  pin(key: GlyphCacheKey): boolean {
     this.#assertActive();
     assertKey(key);
     const size = this.#pins.size;
@@ -197,7 +198,7 @@ export class GlyphAtlas {
     return this.#pins.size !== size;
   }
 
-  unpin(key: string): boolean {
+  unpin(key: GlyphCacheKey): boolean {
     this.#assertActive();
     if (!this.#pins.delete(key)) {
       return false;
@@ -248,7 +249,7 @@ export class GlyphAtlas {
     mode: GlyphMode,
     width: number,
     height: number,
-    protectedKey: string,
+    protectedKey: GlyphCacheKey,
   ): { readonly page: AtlasPage; readonly rectangle: Readonly<PackedRectangle> } | undefined {
     let placement = this.#tryPages(mode, width, height);
     if (placement !== undefined) {
@@ -308,7 +309,7 @@ export class GlyphAtlas {
     return page;
   }
 
-  #evictOldest(mode: GlyphMode, protectedKey: string): boolean {
+  #evictOldest(mode: GlyphMode, protectedKey: GlyphCacheKey): boolean {
     let node = this.#lruByMode[mode].head;
     while (node !== undefined) {
       const key = node.key;
@@ -338,7 +339,7 @@ export class GlyphAtlas {
     page.packer.release(entry);
   }
 
-  #touch(key: string, mode?: GlyphMode): void {
+  #touch(key: GlyphCacheKey, mode?: GlyphMode): void {
     const resolvedMode = mode ?? this.#entries.get(key)?.mode;
     if (resolvedMode === undefined || this.#pins.has(key)) {
       return;
@@ -358,7 +359,7 @@ export class GlyphAtlas {
     this.#append(list, node);
   }
 
-  #detachLru(key: string): void {
+  #detachLru(key: GlyphCacheKey): void {
     const node = this.#lruNodes.get(key);
     if (node === undefined) {
       return;
@@ -447,9 +448,15 @@ function assertMetrics(metrics: NonNullable<GlyphRaster["metrics"]>): void {
   }
 }
 
-function assertKey(key: string): void {
+function assertKey(key: GlyphCacheKey): void {
+  if (typeof key === "number") {
+    if (!Number.isSafeInteger(key) || key < 0) {
+      throw new TypeError("Glyph key must be a non-empty string or a non-negative safe integer");
+    }
+    return;
+  }
   if (typeof key !== "string" || key.length === 0) {
-    throw new TypeError("Glyph key must be a non-empty string");
+    throw new TypeError("Glyph key must be a non-empty string or a non-negative safe integer");
   }
 }
 

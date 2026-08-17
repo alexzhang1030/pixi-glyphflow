@@ -70,7 +70,9 @@ ownership and revision stamps.
 ## Atlas and instances
 
 `GlyphAtlas` stages raster results and publishes a complete generation at a frame boundary. Visible
-glyphs pin entries. LRU eviction reclaims unpinned entries under a fixed allocation ceiling.
+glyphs pin entries. LRU eviction reclaims unpinned entries under a fixed allocation ceiling. Live
+path keys are packed integers (family intern, glyph id, size bucket, weight class, mode, revision).
+String keys remain valid for tests, prebuilt pages, and identities that cannot pack.
 
 Binary-font rasterization consumes the exact HarfBuzz glyph ID. Direct cmap hits reuse the original
 font bytes; contextual, ligature, and language-localized glyphs receive a temporary cmap mapping for
@@ -83,8 +85,10 @@ Each live glyph instance uses 24 bytes (four `f16` local-rect components bound a
 `unpack2x16float`. The published instance ceiling stays 32 bytes until new artifacts exist. Each
 fill-only label transform uses 32 bytes (two
 `rgba32float` texels). Stroke and drop shadow occupy one extra texel after the core region when
-any label uses those effects. Dirty-range adapters issue partial WebGL buffer updates or
-budgeted WebGPU queue writes.
+any label uses those effects. The instance free list is a power-of-two segregated first-fit.
+Dirty-range adapters coalesce a 256-byte accepted gap, collapse after eight ranges, and promote to
+the live span when dirty bytes reach 75% of that span. They then issue partial WebGL buffer updates
+or budgeted WebGPU queue writes.
 
 ## Rendering
 

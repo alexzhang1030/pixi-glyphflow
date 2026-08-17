@@ -1,4 +1,9 @@
-import { DirtyRanges } from "./DirtyRanges";
+import {
+  DIRTY_ACCEPTED_GAP,
+  DIRTY_MAX_RANGES,
+  DIRTY_WHOLE_BUFFER_BPS,
+  DirtyRanges,
+} from "./DirtyRanges";
 import { packF16 } from "./pack";
 import {
   GLYPH_INSTANCE_STRIDE,
@@ -42,7 +47,7 @@ export class GlyphInstanceStore {
   readonly #minimumCapacity: number;
   readonly #maxCapacity: number;
   readonly #ranges = new Map<number, MutableInstanceRange>();
-  readonly #free: FreeRange[] = [];
+  readonly #free = new InstanceFreeList();
   readonly #dirty = new DirtyRanges();
   #capacity: number;
   #highWater = 0;
@@ -150,7 +155,12 @@ export class GlyphInstanceStore {
 
   consumeDirty(): readonly Readonly<DirtyByteRange>[] {
     this.#assertActive();
-    return this.#dirty.publish();
+    return this.#dirty.publish({
+      acceptedGap: DIRTY_ACCEPTED_GAP,
+      maxRanges: DIRTY_MAX_RANGES,
+      liveBytes: this.#highWater * GLYPH_INSTANCE_STRIDE,
+      wholeBufferBps: DIRTY_WHOLE_BUFFER_BPS,
+    });
   }
 
   compact(): Readonly<GlyphInstanceCompactionResult> {
@@ -181,9 +191,9 @@ export class GlyphInstanceStore {
     this.#uint32 = views.uint32;
     this.#capacity = afterCapacity;
     this.#highWater = offset;
-    this.#free.length = 0;
+    this.#free.clear();
     if (offset < afterCapacity) {
-      this.#free.push({ offset, capacity: afterCapacity - offset });
+      this.#free.insert(offset, afterCapacity - offset);
     }
     this.#dirty.clear();
     if (afterCapacity > 0) {
@@ -206,7 +216,7 @@ export class GlyphInstanceStore {
       activeInstances: this.#activeInstances,
       capacity: this.#capacity,
       highWater: this.#highWater,
-      freeInstances: this.#free.reduce((sum, range) => sum + range.capacity, 0),
+      freeInstances: this.#free.totalCapacity(),
       allocatedBytes: this.#buffer.byteLength,
       pendingDirtyRanges: this.#dirty.pendingRanges,
     });
@@ -215,7 +225,7 @@ export class GlyphInstanceStore {
   destroy(): void {
     if (this.#destroyed) return;
     this.#ranges.clear();
-    this.#free.length = 0;
+    this.#free.clear();
     this.#dirty.clear();
     this.#buffer = new ArrayBuffer(0);
     const views = bindInstanceViews(this.#buffer);
@@ -282,26 +292,9 @@ export class GlyphInstanceStore {
   }
 
   #allocateRange(capacity: number): MutableInstanceRange {
-    let selectedIndex = -1;
-    let selectedCapacity = Number.POSITIVE_INFINITY;
-    for (let index = 0; index < this.#free.length; index += 1) {
-      const free = this.#free[index];
-      if (free !== undefined && free.capacity >= capacity && free.capacity < selectedCapacity) {
-        selectedIndex = index;
-        selectedCapacity = free.capacity;
-      }
-    }
-    if (selectedIndex >= 0) {
-      const free = this.#free[selectedIndex];
-      if (free === undefined) throw new Error("Instance free-list invariant failed");
-      const range = { offset: free.offset, count: 0, capacity };
-      if (free.capacity === capacity) {
-        this.#free.splice(selectedIndex, 1);
-      } else {
-        free.offset += capacity;
-        free.capacity -= capacity;
-      }
-      return range;
+    const taken = this.#free.take(capacity);
+    if (taken !== undefined) {
+      return { offset: taken.offset, count: 0, capacity };
     }
 
     const required = this.#highWater + capacity;
@@ -312,26 +305,7 @@ export class GlyphInstanceStore {
   }
 
   #releaseRange(range: GlyphInstanceRange): void {
-    this.#free.push({ offset: range.offset, capacity: range.capacity });
-    this.#mergeFreeRanges();
-  }
-
-  #mergeFreeRanges(): void {
-    this.#free.sort((left, right) => left.offset - right.offset);
-    for (let index = 1; index < this.#free.length;) {
-      const previous = this.#free[index - 1];
-      const current = this.#free[index];
-      if (
-        previous !== undefined &&
-        current !== undefined &&
-        previous.offset + previous.capacity === current.offset
-      ) {
-        previous.capacity += current.capacity;
-        this.#free.splice(index, 1);
-      } else {
-        index += 1;
-      }
-    }
+    this.#free.insert(range.offset, range.capacity);
   }
 
   #ensureCapacity(required: number): void {
@@ -360,6 +334,87 @@ export class GlyphInstanceStore {
       throw new Error("GlyphInstanceStore has been destroyed");
     }
   }
+}
+
+const MAX_FREE_CLASS = 24;
+
+class InstanceFreeList {
+  readonly #buckets: FreeRange[][] = Array.from({ length: MAX_FREE_CLASS + 1 }, () => []);
+  readonly #byOffset = new Map<number, FreeRange>();
+  readonly #byEnd = new Map<number, FreeRange>();
+
+  clear(): void {
+    for (const bucket of this.#buckets) bucket.length = 0;
+    this.#byOffset.clear();
+    this.#byEnd.clear();
+  }
+
+  totalCapacity(): number {
+    let sum = 0;
+    for (const range of this.#byOffset.values()) sum += range.capacity;
+    return sum;
+  }
+
+  insert(offset: number, capacity: number): void {
+    if (capacity <= 0) return;
+    let start = offset;
+    let size = capacity;
+    const previous = this.#byEnd.get(start);
+    if (previous !== undefined) {
+      this.#detach(previous);
+      start = previous.offset;
+      size += previous.capacity;
+    }
+    const next = this.#byOffset.get(start + size);
+    if (next !== undefined) {
+      this.#detach(next);
+      size += next.capacity;
+    }
+    const range: FreeRange = { offset: start, capacity: size };
+    this.#byOffset.set(start, range);
+    this.#byEnd.set(start + size, range);
+    this.#bucket(size).push(range);
+  }
+
+  take(need: number): { offset: number; capacity: number } | undefined {
+    const startClass = sizeClass(need);
+    for (let klass = startClass; klass <= MAX_FREE_CLASS; klass += 1) {
+      const bucket = this.#buckets[klass];
+      if (bucket === undefined) continue;
+      for (let index = 0; index < bucket.length; index += 1) {
+        const range = bucket[index];
+        if (range !== undefined && range.capacity >= need) {
+          this.#detach(range);
+          if (range.capacity > need) {
+            this.insert(range.offset + need, range.capacity - need);
+          }
+          return { offset: range.offset, capacity: need };
+        }
+      }
+    }
+    return undefined;
+  }
+
+  #detach(range: FreeRange): void {
+    this.#byOffset.delete(range.offset);
+    this.#byEnd.delete(range.offset + range.capacity);
+    const bucket = this.#bucket(range.capacity);
+    const index = bucket.indexOf(range);
+    if (index >= 0) bucket.splice(index, 1);
+  }
+
+  #bucket(capacity: number): FreeRange[] {
+    const klass = sizeClass(capacity);
+    const bucket = this.#buckets[klass];
+    if (bucket === undefined) {
+      throw new RangeError(`Instance free-list size class ${String(klass)} is out of range`);
+    }
+    return bucket;
+  }
+}
+
+function sizeClass(value: number): number {
+  return 31 - Math.clz32(value);
 }
 
 function validateBatch(batch: GlyphInstanceBatch): number {

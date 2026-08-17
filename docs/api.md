@@ -136,7 +136,8 @@ diagnostic types.
 These primitives support custom renderer pipelines that preserve the package storage and shader
 contracts. `GLYPH_TEXTURE_BANK_SIZE` is `8`; `GlyphMeshOptions.textures` accepts consecutive atlas
 pages beginning with `texture`, and `setTextures()` updates that bank while retaining the primary
-texture used by PixiJS blend-state selection.
+texture used by PixiJS blend-state selection. `GlyphAtlas` keys are `string | number`; the live
+coordinator path packs numeric identities and still accepts diagnostic strings.
 
 `TextLayerOptions.rendering.rasterizerOptions` configures the default `RasterGlyphProvider`.
 `generatorConcurrency` controls the lazy MSDF worker pool. `distanceFieldMinFontSize` controls the

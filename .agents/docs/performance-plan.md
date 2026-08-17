@@ -2,7 +2,7 @@
 
 Status: unstamped research and implementation program dated 2026-08-16.
 
-The current conclusion: Waves 0–2 are in the tree. Keep the 1.1.0 public contract and instanced MSDF/SDF/alpha/color path. Atlas packing is Skyline plus a waste map with per-mode O(1) LRU; instances write through typed arrays; numeric fills skip `Color`; spatial queries use a hierarchical hash grid; shared styles intern to one frozen object; position-only commits patch palette x/y texels; z-index is `Float32` in the store and spatial index; fill-only GPU transforms use two `rgba32float` texels (32 bytes) and stroke/shadow live in a sparse tail after the core region; the CPU store packs scale/rotation/alpha/anchors as `f16`, generations and source revisions as `u16`, and occupied/visible/kind into one flag byte, and the dirty journal keeps a sparse slot list; live glyph instances use 24 bytes (four `f16` local-rect components, bound as `uint32x2` and unpacked in the shader). Wave 0 adds `million-live` (coordinator mesh, not `createStressMesh`), splits rendering frames into CPU / upload / GPU completion, and records layout, instance-write, palette-write, spatial, and upload timers on `TextLayer.stats`. The 40 KiB core gzip and `atlas-pressure` frame CI gates stay deferred — do not fail the 1.1.0 638 ms artifact. Published browser artifacts are still 1.1.0; `million-live` has no reference artifact yet. Slug and Vello stay optional quality tracks.
+The current conclusion: Waves 0–2 are in the tree. Keep the 1.1.0 public contract and instanced MSDF/SDF/alpha/color path. Atlas packing is Skyline plus a waste map with per-mode O(1) LRU; instances write through typed arrays; numeric fills skip `Color`; spatial queries use a hierarchical hash grid; shared styles intern to one frozen object; position-only commits patch palette x/y texels; z-index is `Float32` in the store and spatial index; fill-only GPU transforms use two `rgba32float` texels (32 bytes) and stroke/shadow live in a sparse tail after the core region; the CPU store packs scale/rotation/alpha/anchors as `f16`, generations and source revisions as `u16`, and occupied/visible/kind into one flag byte, and the dirty journal keeps a sparse slot list; live glyph instances use 24 bytes (four `f16` local-rect components, bound as `uint32x2` and unpacked in the shader). Live atlas keys pack to 52-bit integers; the instance free list is power-of-two segregated; dirty uploads merge a 256-byte gap, collapse after 8 ranges, and promote when dirty bytes reach 75% of the live span. Wave 0 adds `million-live` (coordinator mesh, not `createStressMesh`), splits rendering frames into CPU / upload / GPU completion, and records layout, instance-write, palette-write, spatial, and upload timers on `TextLayer.stats`. The 40 KiB core gzip and `atlas-pressure` frame CI gates stay deferred — do not fail the 1.1.0 638 ms artifact. Published browser artifacts are still 1.1.0; `million-live` has no reference artifact yet. Slug and Vello stay optional quality tracks.
 
 This record is the research ledger and delivery sequence. Published numbers stay in [`docs/performance.md`](../../docs/performance.md) and [`benchmarks/PERFORMANCE.md`](../../benchmarks/PERFORMANCE.md). The 1.0 specification still owns budgets until a human tightens them.
 
@@ -49,7 +49,7 @@ That is why `atlas-pressure` spends seconds in setup and hundreds of millisecond
 
 ### Instance writes were scalar DataView traffic
 
-`GlyphInstanceStore` now writes through `Float32Array` / `Uint16Array` / `Uint32Array` views. Content commits skip `#matches`. The coordinator reuses scratch batches. The free list is still a linear best-fit. String atlas keys still sit on the inner glyph loop.
+`GlyphInstanceStore` now writes through `Float32Array` / `Uint16Array` / `Uint32Array` views. Content commits skip `#matches`. The coordinator reuses scratch batches. The free list is a power-of-two segregated first-fit with adjacent merge. Live atlas keys are packed integers; string keys remain for tests, prebuilt pages, and identities that cannot pack.
 
 This is the likely core of `dynamic-counters` sitting at 16.40 ms. Live instances now use a 24-byte stride (four `f16` local-rect components). Bind the rect as `uint32x2` and unpack with `unpackHalf2x16` / `unpack2x16float`; CI Chrome/ANGLE drew 0 pixels with a `float16x4` vertex format. The published 32-byte ceiling stays until new artifacts exist.
 
@@ -69,7 +69,7 @@ The published 128 MiB store and 64-byte transform ceilings stay until new M1 Pro
 
 ### String maps sit on every hot cache
 
-Atlas entries, pins, LRU clocks, pending rasters, layout runs, and draw states are `Map<string, …>` or `Map<number, object>`. Interned numeric glyph keys and slot-indexed arrays remove hash and GC traffic from the 100,000-mutation path.
+Atlas entries, pins, LRU clocks, and pending rasters accept `string | number`. The coordinator intern packs family, glyph id, size bucket, weight class, mode, and font revision so the inner glyph loop does not build strings. Layout runs and some draw states still use string maps.
 
 ## Research map
 
@@ -115,6 +115,7 @@ Each row is a technique this package can steal, adapt, or reject. URLs are durab
 | Vello (formerly piet-gpu), [linebender/vello](https://github.com/linebender/vello); Pathfinder; Forma | Compute-centric 2D, prefix sums, sparse strips | Ideas for huge outline glyphs and clip | Replacing PixiJS Mesh with a compute renderer |
 | Flutter Impeller typography | Row-packed glyph atlas, integer boxes | Integer UV packing, row shelves | Skia/Impeller as a peer |
 | Skia / Chrome text | Huge complexity, subpixel, hinting | Measurement honesty, cache hierarchy | Document-editor scope |
+| [pmndrs/glyph](https://github.com/pmndrs/glyph) ([dirty-range upload research](https://github.com/pmndrs/glyph/blob/main/docs/planning/dirty-range-upload-research.md)) | Portable font bake + Wasm shape/layout; Three.js host; numeric glyph identities; policy-costed dirty uploads | Packed atlas keys; power-of-two free-list buckets; merge gap 256 B, max 8 ranges, promote at 75% of live bytes | Rust/Wasm layout engine; required GLB/`PMNDRS_font`; React/Three `Text` API; document edits; KTX2/Basis; Slug as the million-label default |
 
 ### Data-oriented packing
 
@@ -146,13 +147,13 @@ Highest leverage. No shader contract change. No new peer dependency.
 
 **Atlas.** Replace guillotine with Skyline Bottom-Left plus a waste map for holes left by eviction. Keep page size and byte ceiling. Replace string rectangle keys with packed integer keys. Replace `#evictOldest` with a doubly-linked LRU (unpin moves to tail, evict pops head). Shelf-pack equal-height 16×16 / MSDF cells when the incoming size matches the current row.
 
-**Instances.** Write instances through `Float32Array` / `Uint32Array` views over the same `ArrayBuffer`. Skip `#matches` when the dirty journal already says content changed. Bucket the free list by power-of-two size so allocate is O(1). Reuse per-thread scratch batches in `RenderCoordinator` instead of allocating six arrays per label.
+**Instances.** Write instances through `Float32Array` / `Uint32Array` views over the same `ArrayBuffer`. Skip `#matches` when the dirty journal already says content changed. Bucket the free list by power-of-two size so allocate is O(1). Reuse per-thread scratch batches in `RenderCoordinator` instead of allocating six arrays per label. Dirty publishes use the pmndrs/glyph cost model (256-byte gap, 8-range cap, 75% whole-buffer promote).
 
 **Transforms.** Add a packed numeric fill path that does not construct PixiJS `Color`. Add `writePositions(slots, xy)` that patches only the x/y texels. Precompute sin/cos only when rotation is dirty.
 
 **Spatial.** Replace the linear scan with a two-level hierarchical hash grid: fine cells for ordinary labels, coarse cells for large or rotated bounds. One slot occupies one cell; queries expand by half a cell, matching Unreal’s 2D grid. Keep SoA bounds for the exact test. Store z-index as `Int32` unless a fixture proves it needs float.
 
-**Keys.** Intern atlas and shape keys to numeric ids (`familyId`, `glyphId`, `sizeBucket`, `mode`). Keep the string form only for diagnostics.
+**Keys.** Intern atlas keys to numeric ids (`familyId`, `glyphId`, `sizeBucket`, `weight`, `mode`, `revision`). Keep the string form for diagnostics, prebuilt pages, and identities that cannot pack. Shape-plan keys are still strings.
 
 Primary targets, versus 1.1.0 artifacts:
 

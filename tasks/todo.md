@@ -262,6 +262,11 @@
   - Verify: bun test tests/GlyphInstanceStore.test.ts tests/GlyphMesh.test.ts tests/RenderCoordinator.test.ts
   - Files: src/render/types.ts, src/render/GlyphInstanceStore.ts, src/render/GlyphMesh.ts, src/render/RenderSurface.ts
 
+- [x] Task 12.9: Steal hot-path techniques from pmndrs/glyph (Wave 1 leftovers).
+  - Acceptance: Live atlas keys are packed integers with a string fallback; `GlyphInstanceStore` allocates from power-of-two free-list buckets; dirty publishes merge a 256-byte gap, collapse after 8 ranges, and promote at 75% of live bytes. Public `TextLayer` contract and published 32/64/128 ceilings stay. No new WASM, GLB, or `glyphMode`.
+  - Verify: bun test tests/glyphIdentity.test.ts tests/GlyphAtlas.test.ts tests/GlyphInstanceStore.test.ts tests/DirtyRanges.test.ts tests/RenderCoordinator.test.ts
+  - Files: src/atlas/glyphIdentity.ts, src/atlas/GlyphAtlas.ts, src/render/RenderCoordinator.ts, src/render/GlyphInstanceStore.ts, src/render/DirtyRanges.ts, src/render/TransformPalette.ts
+
 - [ ] Task 12.5: Remaining Wave 2 follow-through after measured artifacts.
   - Acceptance: Published instance, transform, and store ceilings may tighten once M1 Pro Chrome artifacts exist. `million-live` still needs a reference artifact before a live-path frame budget.
   - Verify: bun run benchmark:check
