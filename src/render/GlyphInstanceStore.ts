@@ -1,5 +1,5 @@
-import { packF16 } from "./pack";
 import { DirtyRanges } from "./DirtyRanges";
+import { packF16 } from "./pack";
 import {
   GLYPH_INSTANCE_STRIDE,
   type DirtyByteRange,
