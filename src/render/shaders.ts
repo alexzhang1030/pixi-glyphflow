@@ -2,7 +2,7 @@ export const GLYPH_VERTEX_GLSL = /* glsl */ `
 #version 300 es
 
 in vec2 aVertex;
-in vec4 aInstanceRect;
+in uvec2 aInstanceRect;
 in vec4 aInstanceUv;
 in uint aPaletteIndex;
 in uint aMetadata;
@@ -41,13 +41,14 @@ vec3 unpackRgb(float packed) {
 }
 
 void main(void) {
+    vec4 instanceRect = vec4(unpackHalf2x16(aInstanceRect.x), unpackHalf2x16(aInstanceRect.y));
     bool isActive = (aMetadata & 0x80000000u) != 0u;
     uint paletteBase = aPaletteIndex * 2u;
     vec4 transform0 = paletteTexel(paletteBase);
     vec4 transform1 = paletteTexel(paletteBase + 1u);
     vec2 rotation = unpackHalf2x16(floatBitsToUint(transform1.x));
     vec2 anchor = unpackHalf2x16(floatBitsToUint(transform1.y));
-    vec2 localPosition = (aInstanceRect.xy + aVertex * aInstanceRect.zw - anchor)
+    vec2 localPosition = (instanceRect.xy + aVertex * instanceRect.zw - anchor)
         * transform0.zw;
     vec2 rotatedPosition = vec2(
         localPosition.x * rotation.y - localPosition.y * rotation.x,
@@ -273,11 +274,12 @@ fn paletteIndex(linear: u32, width: u32) -> vec2<i32> {
 @vertex
 fn mainVertex(
     @location(0) aVertex: vec2<f32>,
-    @location(1) aInstanceRect: vec4<f32>,
+    @location(1) aInstanceRect: vec2<u32>,
     @location(2) aInstanceUv: vec4<f32>,
     @location(3) aPaletteIndex: u32,
     @location(4) aMetadata: u32,
 ) -> VertexOutput {
+    let instanceRect = vec4<f32>(unpack2x16float(aInstanceRect.x), unpack2x16float(aInstanceRect.y));
     let isActive = (aMetadata & 0x80000000u) != 0u;
     let paletteWidth = u32(glyphUniforms.uPaletteWidth);
     let paletteBase = aPaletteIndex * 2u;
@@ -295,7 +297,7 @@ fn mainVertex(
         ),
         (aux & 65536u) != 0u,
     );
-    var localPosition = (aInstanceRect.xy + aVertex * aInstanceRect.zw - anchor)
+    var localPosition = (instanceRect.xy + aVertex * instanceRect.zw - anchor)
         * transform0.zw;
     localPosition = vec2<f32>(
         localPosition.x * rotation.y - localPosition.y * rotation.x,

@@ -21,8 +21,9 @@
   revisions as `u16`, and occupied/visible/kind into one flag byte. The dirty journal no longer
   reserves a full-capacity slot list. One million reserved slots stay within 48 MiB plus the
   journal floor. The published 128 MiB ceiling stays until new artifacts exist.
-- Live glyph instances pack the local rectangle as `float16x4` and occupy 24 bytes. The published
-  32-byte ceiling stays until new artifacts exist.
+- Live glyph instances pack the local rectangle as four `f16` values and occupy 24 bytes. The mesh
+  binds that field as `uint32x2` and shaders unpack it, so WebGL 2 does not need `HALF_FLOAT`
+  instance attributes. The published 32-byte ceiling stays until new artifacts exist.
 
 ## 1.1.0 - 2026-08-15
 

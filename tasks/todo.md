@@ -258,7 +258,7 @@
   - Files: src/store/TextStore.ts, src/store/DirtyJournal.ts, src/render/pack.ts
 
 - [x] Task 12.5d: Pack live glyph instances into 24 bytes (Wave 2 GPU).
-  - Acceptance: Each instance is 24 bytes (`float16x4` rect, `unorm16x4` UVs, palette index, metadata). Shaders still read `vec4` rects through the vertex format. Published 32-byte ceiling stays.
+  - Acceptance: Each instance is 24 bytes (four `f16` rect components, `unorm16x4` UVs, palette index, metadata). The mesh binds the rect as `uint32x2`; shaders unpack with `unpackHalf2x16` / `unpack2x16float`. Published 32-byte ceiling stays.
   - Verify: bun test tests/GlyphInstanceStore.test.ts tests/GlyphMesh.test.ts tests/RenderCoordinator.test.ts
   - Files: src/render/types.ts, src/render/GlyphInstanceStore.ts, src/render/GlyphMesh.ts, src/render/RenderSurface.ts
 
