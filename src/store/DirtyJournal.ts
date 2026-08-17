@@ -1,6 +1,7 @@
 import { TextDirty, type TextDirtyMask } from "./types";
 
 const ALL_DIRTY = TextDirty.Content | TextDirty.Transform | TextDirty.Style;
+const SLOT_LIST_FLOOR = 16;
 
 export interface PendingDirty {
   readonly labels: number;
@@ -26,7 +27,7 @@ export class DirtyJournal {
     assertCapacity(initialCapacity);
     this.#capacity = nextPowerOfTwo(initialCapacity);
     this.#masks = new Uint8Array(this.#capacity);
-    this.#slots = new Uint32Array(this.#capacity);
+    this.#slots = new Uint32Array(SLOT_LIST_FLOOR);
   }
 
   get capacity(): number {
@@ -65,11 +66,8 @@ export class DirtyJournal {
     }
 
     const masks = new Uint8Array(capacity);
-    masks.set(this.#masks.subarray(0, capacity));
-    const slots = new Uint32Array(capacity);
-    slots.set(this.#slots.subarray(0, this.#length));
+    masks.set(this.#masks.subarray(0, Math.min(this.#masks.length, capacity)));
     this.#masks = masks;
-    this.#slots = slots;
     this.#capacity = capacity;
   }
 
@@ -87,6 +85,7 @@ export class DirtyJournal {
     this.reserve(slot + 1);
     const previous = this.#masks[slot] ?? TextDirty.None;
     if (previous === TextDirty.None) {
+      this.#ensureSlotList(this.#length + 1);
       this.#slots[this.#length] = slot;
       this.#length += 1;
     }
@@ -121,6 +120,9 @@ export class DirtyJournal {
     });
     this.#length = 0;
     this.#aggregateMask = TextDirty.None;
+    if (this.#slots.length > SLOT_LIST_FLOOR) {
+      this.#slots = new Uint32Array(SLOT_LIST_FLOOR);
+    }
 
     return published;
   }
@@ -131,6 +133,15 @@ export class DirtyJournal {
     this.#aggregateMask = TextDirty.None;
     this.#masks = new Uint8Array();
     this.#slots = new Uint32Array();
+  }
+
+  #ensureSlotList(required: number): void {
+    if (required <= this.#slots.length) return;
+    let capacity = Math.max(SLOT_LIST_FLOOR, this.#slots.length);
+    while (capacity < required) capacity *= 2;
+    const slots = new Uint32Array(capacity);
+    slots.set(this.#slots.subarray(0, this.#length));
+    this.#slots = slots;
   }
 
   #highestPendingSlot(): number {

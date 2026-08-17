@@ -35,11 +35,14 @@ applications keep independent resources.
 ## Dense state
 
 `TextStore` stores numeric fields in typed-array columns and text/style references in parallel
-arrays. A `TextId` encodes a store namespace, generation, and slot. Free slots receive a fresh
+arrays. Position and z-index stay `Float32`. Scale, rotation, alpha, and anchors are binary16.
+Generation and source revision are `u16`. Occupied, visible, and the position-only kind share one
+flag byte. A `TextId` encodes a store namespace, generation, and slot. Free slots receive a fresh
 generation before reuse.
 
-`DirtyJournal` coalesces content, transform, and style domains per slot. A commit publishes one
-monotonic label revision. Camera-only commits preserve that revision.
+`DirtyJournal` coalesces content, transform, and style domains per slot. The dirty-slot list grows
+with the pending wave and releases on publish. A commit publishes one monotonic label revision.
+Camera-only commits preserve that revision.
 
 ## Layout and shaping
 

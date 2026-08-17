@@ -252,10 +252,15 @@
   - Verify: bun test tests/TransformPalette.test.ts tests/RenderCoordinator.test.ts tests/GlyphMesh.test.ts tests/pack.test.ts
   - Files: src/render/TransformPalette.ts, src/render/shaders.ts, src/render/GlyphMesh.ts, src/render/RenderSurface.ts, src/render/pack.ts
 
-- [ ] Task 12.5: Compress remaining store and instance state (Wave 2 GPU/storage).
-  - Acceptance: Live glyph instances use ≤ 24 bytes, and CPU store bytes at one million capacity stay ≤ 48 MiB after measured artifacts exist. Published 32-byte instance ceiling stays.
+- [x] Task 12.5c: Pack TextStore columns toward 48 MiB / 1M (Wave 2 store).
+  - Acceptance: One million reserved slots allocate ≤ 48 MiB plus the journal floor. Scale/rotation/alpha/anchors are `f16`; generation and source revision are `u16`; occupied/visible/kind share one flag byte; the dirty journal slot list is sparse. Published 128 MiB store ceiling stays. The public `alpha: 0.5` snapshot still round-trips.
+  - Verify: bun test tests/TextStore.test.ts tests/DirtyJournal.test.ts tests/pack.test.ts
+  - Files: src/store/TextStore.ts, src/store/DirtyJournal.ts, src/render/pack.ts
+
+- [ ] Task 12.5: Compress remaining live instance state (Wave 2 GPU).
+  - Acceptance: Live glyph instances use ≤ 24 bytes after measured artifacts exist. Published 32-byte instance ceiling stays.
   - Verify: bun run benchmark:check
-  - Files: src/store/TextStore.ts, src/render/GlyphInstanceStore.ts, src/render/shaders.ts, benchmarks/budgets.ts
+  - Files: src/render/GlyphInstanceStore.ts, src/render/shaders.ts, src/render/GlyphMesh.ts, benchmarks/budgets.ts
 
 - [ ] Task 12.6: Add a WebGPU compute cull adapter (Wave 3).
   - Acceptance: Camera-only WebGPU frames compact visible instances on the GPU with stable z/insertion order; WebGL 2 keeps the CPU grid and current budgets; diagnostics name the active cull path.

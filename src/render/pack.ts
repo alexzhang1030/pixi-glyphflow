@@ -20,6 +20,14 @@ export function bitsFromFloat(value: number): number {
   return U32[0] ?? 0;
 }
 
+export function packF16(value: number): number {
+  return f16Bits(value);
+}
+
+export function unpackF16(bits: number): number {
+  return f16FromBits(bits & 0xffff);
+}
+
 function f16Bits(value: number): number {
   if (!Number.isFinite(value)) {
     return value < 0 ? 0xfc00 : 0x7c00;

@@ -17,6 +17,10 @@
   position texels. Store and spatial z-index columns are `Float32`.
 - Fill-only GPU transforms pack into 32 bytes. Stroke and drop shadow live in a sparse texel
   after the core palette region. The published 64-byte ceiling stays until new artifacts exist.
+- The CPU store packs scale, rotation, alpha, and anchors as binary16, generations and source
+  revisions as `u16`, and occupied/visible/kind into one flag byte. The dirty journal no longer
+  reserves a full-capacity slot list. One million reserved slots stay within 48 MiB plus the
+  journal floor. The published 128 MiB ceiling stays until new artifacts exist.
 
 ## 1.1.0 - 2026-08-15
 
