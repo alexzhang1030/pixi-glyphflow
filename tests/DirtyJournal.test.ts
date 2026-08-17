@@ -36,7 +36,10 @@ describe("DirtyJournal", () => {
     journal.reserve(1_000);
     journal.record(999, TextDirty.Transform);
     expect(journal.capacity).toBe(1_024);
-    expect(journal.allocatedBytes).toBeGreaterThan(0);
+    expect(journal.allocatedBytes).toBe(1_024 + 16 * 4);
+    journal.reserve(1_000_000);
+    expect(journal.capacity).toBe(1_048_576);
+    expect(journal.allocatedBytes).toBe(1_048_576 + 16 * 4);
 
     journal.dispose();
     expect(journal.capacity).toBe(0);

@@ -180,6 +180,16 @@ describe("TextStore", () => {
     store.dispose();
   });
 
+  test("keeps one million reserved slots within 48 MiB", () => {
+    const store = new TextStore({ initialCapacity: 1_000_000 });
+    expect(store.capacity).toBe(1_048_576);
+    expect(store.stats.allocatedBytes).toBeLessThanOrEqual(48 * 1024 * 1024);
+    expect(store.update(store.create(label({ scaleX: 1, rotation: 0.25 })), { scaleX: 1 })).toBe(
+      TextDirty.None,
+    );
+    store.dispose();
+  });
+
   test("validates construction and mutation inputs", () => {
     expect(() => new TextStore({ initialCapacity: 0 })).toThrow(TypeError);
 
