@@ -1,6 +1,7 @@
 import { BitmapText, Container, HTMLText, Text, type Application } from "pixi.js";
 
 import { TextLayer, type TextLabelSpec } from "../../src";
+import { TRANSFORM_PALETTE_STRIDE } from "../../src/advanced";
 import type {
   BrowserBenchmarkCounters,
   BrowserBenchmarkFixture,
@@ -131,7 +132,7 @@ async function createGlyphflowFixture(
       drawCalls: stats.drawCalls,
       allocatedStoreBytes: stats.allocatedStoreBytes,
       instanceBytes: stats.glyphCount * 32,
-      transformBytes: stats.capacity * 64,
+      transformBytes: stats.capacity * TRANSFORM_PALETTE_STRIDE,
       labelRevision: Number(stats.revision),
       shapedLabels: stats.shapedLabels,
       transformOnlyLabels: stats.transformOnlyLabels,

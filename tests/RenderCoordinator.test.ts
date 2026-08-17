@@ -86,7 +86,7 @@ describe("RenderCoordinator", () => {
     expect({ layoutCalls, rasterCalls }).toEqual({ layoutCalls: 1, rasterCalls: 2 });
     expect(coordinator.instances.consumeDirty()).toEqual([]);
     expect(new Uint8Array(coordinator.instances.buffer)).toEqual(instanceBytes);
-    expect(coordinator.transforms.consumeDirty()).toEqual([{ offset: 0, length: 64 }]);
+    expect(coordinator.transforms.consumeDirty()).toEqual([{ offset: 0, length: 32 }]);
 
     const shifted = await coordinator.commit(3, [
       { slot: 0, mask: TRANSFORM, snapshot: label(1, 104, 208), positionOnly: true },

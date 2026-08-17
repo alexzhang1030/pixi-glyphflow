@@ -247,10 +247,15 @@
   - Verify: bun test tests/TextStore.test.ts tests/RenderCoordinator.test.ts tests/TextLayer.commit.test.ts tests/TransformPalette.test.ts
   - Files: src/store/TextStore.ts, src/render/RenderCoordinator.ts, src/render/TransformPalette.ts, src/culling/SpatialIndex.ts, src/TextLayer.ts
 
-- [ ] Task 12.5: Compress duplicated store, palette, and instance state (Wave 2 GPU/storage).
-  - Acceptance: Fill-only labels use ≤ 32-byte GPU transforms, live glyph instances use ≤ 24 bytes, and CPU store bytes at one million capacity stay ≤ 48 MiB after measured artifacts exist.
+- [x] Task 12.5b: Pack fill-only GPU transforms into 32 bytes (Wave 2 palette).
+  - Acceptance: Fill-only records use two `rgba32float` texels; stroke/shadow allocate one extra texel after `capacity * 2`; shaders read `uEffectBase`; position-only patches still dirty 16 bytes. Published 64-byte transform ceiling stays.
+  - Verify: bun test tests/TransformPalette.test.ts tests/RenderCoordinator.test.ts tests/GlyphMesh.test.ts tests/pack.test.ts
+  - Files: src/render/TransformPalette.ts, src/render/shaders.ts, src/render/GlyphMesh.ts, src/render/RenderSurface.ts, src/render/pack.ts
+
+- [ ] Task 12.5: Compress remaining store and instance state (Wave 2 GPU/storage).
+  - Acceptance: Live glyph instances use ≤ 24 bytes, and CPU store bytes at one million capacity stay ≤ 48 MiB after measured artifacts exist. Published 32-byte instance ceiling stays.
   - Verify: bun run benchmark:check
-  - Files: src/store/TextStore.ts, src/render/TransformPalette.ts, src/render/GlyphInstanceStore.ts, src/render/shaders.ts, benchmarks/budgets.ts
+  - Files: src/store/TextStore.ts, src/render/GlyphInstanceStore.ts, src/render/shaders.ts, benchmarks/budgets.ts
 
 - [ ] Task 12.6: Add a WebGPU compute cull adapter (Wave 3).
   - Acceptance: Camera-only WebGPU frames compact visible instances on the GPU with stable z/insertion order; WebGL 2 keeps the CPU grid and current budgets; diagnostics name the active cull path.

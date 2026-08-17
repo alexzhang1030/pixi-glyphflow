@@ -202,8 +202,9 @@ The 1.1.0 suite already meets the formal million-label frame budgets. The next p
 
 - Wave 0: live-layer full-visibility workload, split CPU/GPU timers, atlas-pressure frame budget.
 - Wave 1: Skyline atlas + O(1) LRU, typed instance writes, hierarchical hash grid, packed numeric fills.
-- Wave 2: intern shared styles, position-only palette patches, and `Float32` z-index are in
-  source. Shader-stride and 48 MiB store compression still wait for measured artifacts.
+- Wave 2: intern shared styles, position-only palette patches, `Float32` z-index, and 32-byte
+  fill-only GPU transforms are in source. Live 24-byte instances and the 48 MiB store target
+  still wait for measured artifacts.
 - Wave 3: WebGPU compute cull and storage buffers; WebGL 2 keeps the CPU grid.
 - Wave 4: TinySDF / prebake / per-frame upload budget.
 - Wave 5: optional Slug outline mode, collision, SIMD, SharedArrayBuffer ring.

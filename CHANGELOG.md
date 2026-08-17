@@ -15,6 +15,8 @@
   does not fail that size.
 - Shared label styles intern to one frozen object. Packed x/y commits patch only the palette
   position texels. Store and spatial z-index columns are `Float32`.
+- Fill-only GPU transforms pack into 32 bytes. Stroke and drop shadow live in a sparse texel
+  after the core palette region. The published 64-byte ceiling stays until new artifacts exist.
 
 ## 1.1.0 - 2026-08-15
 

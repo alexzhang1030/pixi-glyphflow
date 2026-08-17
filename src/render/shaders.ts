@@ -15,6 +15,7 @@ uniform vec4 uColor;
 uniform float uRound;
 uniform sampler2D uTransformTexture;
 uniform float uPaletteWidth;
+uniform float uEffectBase;
 
 out vec2 vUv;
 out vec4 vWorldColor;
@@ -30,17 +31,27 @@ vec4 paletteTexel(uint index) {
     return texelFetch(uTransformTexture, ivec2(int(index % width), int(index / width)), 0);
 }
 
+vec3 unpackRgb(float packed) {
+    uint value = uint(round(packed));
+    return vec3(
+        float((value >> 16u) & 255u),
+        float((value >> 8u) & 255u),
+        float(value & 255u)
+    ) / 255.0;
+}
+
 void main(void) {
     bool isActive = (aMetadata & 0x80000000u) != 0u;
-    uint paletteBase = aPaletteIndex * 4u;
+    uint paletteBase = aPaletteIndex * 2u;
     vec4 transform0 = paletteTexel(paletteBase);
     vec4 transform1 = paletteTexel(paletteBase + 1u);
-    vec4 paletteColor = paletteTexel(paletteBase + 2u);
-    vec2 localPosition = (aInstanceRect.xy + aVertex * aInstanceRect.zw - transform1.zw)
+    vec2 rotation = unpackHalf2x16(floatBitsToUint(transform1.x));
+    vec2 anchor = unpackHalf2x16(floatBitsToUint(transform1.y));
+    vec2 localPosition = (aInstanceRect.xy + aVertex * aInstanceRect.zw - anchor)
         * transform0.zw;
     vec2 rotatedPosition = vec2(
-        localPosition.x * transform1.y - localPosition.y * transform1.x,
-        localPosition.x * transform1.x + localPosition.y * transform1.y
+        localPosition.x * rotation.y - localPosition.y * rotation.x,
+        localPosition.x * rotation.x + localPosition.y * rotation.y
     );
     localPosition = rotatedPosition + transform0.xy;
     vec3 projected = uProjectionMatrix * uWorldTransformMatrix * uTransformMatrix
@@ -49,9 +60,12 @@ void main(void) {
     vUv = mix(aInstanceUv.xy, aInstanceUv.zw, aVertex);
     vWorldColor = uWorldColorAlpha * uColor;
     vMode = (aMetadata >> 16u) & 3u;
-    vEffects = paletteTexel(paletteBase + 3u);
+    uint aux = uint(round(transform1.w));
+    vEffects = (aux & 65536u) != 0u
+        ? paletteTexel(uint(uEffectBase) + aPaletteIndex)
+        : vec4(0.0);
     vUvBounds = aInstanceUv;
-    vFill = paletteColor;
+    vFill = vec4(unpackRgb(transform1.z), transform1.w);
     vRasterScale = max(float((aMetadata >> 18u) & 8191u) / 64.0, 1.0);
     vTextureSlot = aMetadata & 7u;
 }
@@ -235,6 +249,7 @@ struct LocalUniforms {
 
 struct GlyphUniforms {
     uPaletteWidth: f32,
+    uEffectBase: f32,
 };
 
 @group(2) @binding(10) var<uniform> glyphUniforms: GlyphUniforms;
@@ -265,16 +280,26 @@ fn mainVertex(
 ) -> VertexOutput {
     let isActive = (aMetadata & 0x80000000u) != 0u;
     let paletteWidth = u32(glyphUniforms.uPaletteWidth);
-    let paletteBase = aPaletteIndex * 4u;
+    let paletteBase = aPaletteIndex * 2u;
     let transform0 = textureLoad(uTransformTexture, paletteIndex(paletteBase, paletteWidth), 0);
     let transform1 = textureLoad(uTransformTexture, paletteIndex(paletteBase + 1u, paletteWidth), 0);
-    let paletteColor = textureLoad(uTransformTexture, paletteIndex(paletteBase + 2u, paletteWidth), 0);
-    let effects = textureLoad(uTransformTexture, paletteIndex(paletteBase + 3u, paletteWidth), 0);
-    var localPosition = (aInstanceRect.xy + aVertex * aInstanceRect.zw - transform1.zw)
+    let rotation = unpack2x16float(bitcast<u32>(transform1.x));
+    let anchor = unpack2x16float(bitcast<u32>(transform1.y));
+    let aux = u32(round(transform1.w));
+    let effects = select(
+        vec4<f32>(0.0),
+        textureLoad(
+            uTransformTexture,
+            paletteIndex(u32(glyphUniforms.uEffectBase) + aPaletteIndex, paletteWidth),
+            0,
+        ),
+        (aux & 65536u) != 0u,
+    );
+    var localPosition = (aInstanceRect.xy + aVertex * aInstanceRect.zw - anchor)
         * transform0.zw;
     localPosition = vec2<f32>(
-        localPosition.x * transform1.y - localPosition.y * transform1.x,
-        localPosition.x * transform1.x + localPosition.y * transform1.y,
+        localPosition.x * rotation.y - localPosition.y * rotation.x,
+        localPosition.x * rotation.x + localPosition.y * rotation.y,
     ) + transform0.xy;
     let projected = globalUniforms.uProjectionMatrix
         * globalUniforms.uWorldTransformMatrix
@@ -291,7 +316,7 @@ fn mainVertex(
         (aMetadata >> 16u) & 3u,
         effects,
         aInstanceUv,
-        paletteColor,
+        vec4<f32>(unpackRgb(transform1.z), transform1.w),
         max(f32((aMetadata >> 18u) & 8191u) / 64.0, 1.0),
         aMetadata & 7u,
     );

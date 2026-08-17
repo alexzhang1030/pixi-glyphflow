@@ -1,6 +1,7 @@
 import { Color } from "pixi.js";
 
 import { DirtyRanges } from "./DirtyRanges";
+import { packHalf2x16 } from "./pack";
 import type {
   DirtyByteRange,
   TransformPaletteInput,
@@ -9,9 +10,14 @@ import type {
   TransformRunBounds,
 } from "./types";
 
-export const TRANSFORM_PALETTE_STRIDE = 64;
+/** Fill-only GPU record: two rgba32float texels. See `.agents/docs/performance-plan.md`. */
+export const TRANSFORM_PALETTE_STRIDE = 32;
+/** Stroke/shadow texel stored after the core region when any label uses effects. */
+export const TRANSFORM_EFFECT_STRIDE = 16;
 const FLOATS_PER_LABEL = TRANSFORM_PALETTE_STRIDE / Float32Array.BYTES_PER_ELEMENT;
-const TEXELS_PER_LABEL = 4;
+const FLOATS_PER_EFFECT = TRANSFORM_EFFECT_STRIDE / Float32Array.BYTES_PER_ELEMENT;
+const CORE_TEXELS_PER_LABEL = 2;
+const EFFECT_FLAG = 65_536;
 const DEFAULT_CAPACITY = 1_024;
 const DEFAULT_TEXTURE_WIDTH = 1_024;
 const DEFAULT_MAX_CAPACITY = 0x100_0000;
@@ -21,9 +27,11 @@ export class TransformPalette {
   readonly #maxCapacity: number;
   readonly #dirty = new DirtyRanges();
   readonly #scratch = new Float32Array(FLOATS_PER_LABEL);
+  readonly #scratchBits = new Uint32Array(this.#scratch.buffer);
   #capacity: number;
   #data: Float32Array;
   #occupied: Uint8Array;
+  #effectsEnabled = false;
   #activeLabels = 0;
   #destroyed = false;
 
@@ -46,40 +54,53 @@ export class TransformPalette {
     this.#assertActive();
     assertSlot(slot);
     validateInput(input, bounds);
+    const hasEffects = input.stroke !== undefined || input.dropShadow !== undefined;
+    if (hasEffects) this.#enableEffects();
     this.#ensureCapacity(slot + 1);
     const offset = slot * FLOATS_PER_LABEL;
     const data = this.#data;
     const labelAlpha = Math.fround(input.visible ? input.alpha : 0);
     const fill = resolvePaint(input.fill, 0xffffff);
-    const hasEffects = input.stroke !== undefined || input.dropShadow !== undefined;
     const stroke = hasEffects ? resolveStroke(input.stroke) : EMPTY_STROKE;
     const shadow = hasEffects ? resolveShadow(input.dropShadow) : EMPTY_SHADOW;
     const rotation = input.rotation;
     const sin = rotation === 0 ? 0 : Math.fround(Math.sin(rotation));
     const cos = rotation === 0 ? 1 : Math.fround(Math.cos(rotation));
     const values = this.#scratch;
+    const bits = this.#scratchBits;
     values[0] = Math.fround(input.x);
     values[1] = Math.fround(input.y);
     values[2] = Math.fround(input.scaleX);
     values[3] = Math.fround(input.scaleY);
-    values[4] = sin;
-    values[5] = cos;
-    values[6] = Math.fround(input.anchorX * bounds.width);
-    values[7] = Math.fround(input.anchorY * bounds.height);
-    values[8] = Math.fround(fill.r);
-    values[9] = Math.fround(fill.g);
-    values[10] = Math.fround(fill.b);
-    values[11] = packFillAlpha(fill.alpha, labelAlpha);
-    values[12] = stroke.color;
-    values[13] = packStroke(stroke.width, stroke.alpha, shadow.alpha);
-    values[14] = shadow.color;
-    values[15] = packShadow(shadow.x, shadow.y, shadow.blur, shadow.alpha);
+    bits[4] = packHalf2x16(sin, cos);
+    bits[5] = packHalf2x16(
+      Math.fround(input.anchorX * bounds.width),
+      Math.fround(input.anchorY * bounds.height),
+    );
+    values[6] = fill.color;
+    values[7] = packFillAlpha(fill.alpha, labelAlpha) + (hasEffects ? EFFECT_FLAG : 0);
     let changed = this.#occupied[slot] !== 1;
     for (let index = 0; index < FLOATS_PER_LABEL; index += 1) {
       const value = values[index] ?? 0;
       if (data[offset + index] !== value) {
         data[offset + index] = value;
         changed = true;
+      }
+    }
+    if (this.#effectsEnabled) {
+      const effectOffset = this.#effectOffset(slot);
+      const next = [
+        hasEffects ? stroke.color : 0,
+        hasEffects ? packStroke(stroke.width, stroke.alpha, shadow.alpha) : 0,
+        hasEffects ? shadow.color : 0,
+        hasEffects ? packShadow(shadow.x, shadow.y, shadow.blur, shadow.alpha) : 0,
+      ];
+      for (let index = 0; index < FLOATS_PER_EFFECT; index += 1) {
+        const value = next[index] ?? 0;
+        if (data[effectOffset + index] !== value) {
+          data[effectOffset + index] = value;
+          changed = true;
+        }
       }
     }
     if (!changed) {
@@ -90,6 +111,9 @@ export class TransformPalette {
       this.#activeLabels += 1;
     }
     this.#dirty.record(slot * TRANSFORM_PALETTE_STRIDE, TRANSFORM_PALETTE_STRIDE);
+    if (this.#effectsEnabled) {
+      this.#dirty.record(this.#effectByteOffset(slot), TRANSFORM_EFFECT_STRIDE);
+    }
 
     return true;
   }
@@ -125,8 +149,13 @@ export class TransformPalette {
     }
     this.#occupied[slot] = 0;
     this.#activeLabels -= 1;
-    this.#data[slot * FLOATS_PER_LABEL + 11] = 0;
+    this.#data[slot * FLOATS_PER_LABEL + 7] = 0;
     this.#dirty.record(slot * TRANSFORM_PALETTE_STRIDE, TRANSFORM_PALETTE_STRIDE);
+    if (this.#effectsEnabled) {
+      const effectOffset = this.#effectOffset(slot);
+      this.#data.fill(0, effectOffset, effectOffset + FLOATS_PER_EFFECT);
+      this.#dirty.record(this.#effectByteOffset(slot), TRANSFORM_EFFECT_STRIDE);
+    }
 
     return true;
   }
@@ -147,8 +176,10 @@ export class TransformPalette {
       activeLabels: this.#activeLabels,
       allocatedBytes: this.#data.byteLength + this.#occupied.byteLength,
       textureWidth: this.#textureWidth,
-      textureHeight: Math.ceil((this.#capacity * TEXELS_PER_LABEL) / this.#textureWidth),
+      textureHeight: Math.ceil(this.#texelCount(this.#capacity) / this.#textureWidth),
       pendingDirtyRanges: this.#dirty.pendingRanges,
+      coreStride: TRANSFORM_PALETTE_STRIDE,
+      effectBase: this.#effectsEnabled ? this.#capacity * CORE_TEXELS_PER_LABEL : 0,
     });
   }
 
@@ -159,7 +190,18 @@ export class TransformPalette {
     this.#dirty.clear();
     this.#capacity = 0;
     this.#activeLabels = 0;
+    this.#effectsEnabled = false;
     this.#destroyed = true;
+  }
+
+  #enableEffects(): void {
+    if (this.#effectsEnabled) return;
+    this.#effectsEnabled = true;
+    const data = this.#allocateData(this.#capacity);
+    data.set(this.#data.subarray(0, this.#capacity * FLOATS_PER_LABEL));
+    this.#data = data;
+    this.#dirty.clear();
+    this.#dirty.record(0, data.byteLength);
   }
 
   #ensureCapacity(required: number): void {
@@ -172,6 +214,13 @@ export class TransformPalette {
     capacity = Math.min(capacity, this.#maxCapacity);
     const data = this.#allocateData(capacity);
     data.set(this.#data.subarray(0, this.#capacity * FLOATS_PER_LABEL));
+    if (this.#effectsEnabled) {
+      const previous = this.#data.subarray(
+        this.#capacity * FLOATS_PER_LABEL,
+        this.#capacity * FLOATS_PER_LABEL + this.#capacity * FLOATS_PER_EFFECT,
+      );
+      data.set(previous, capacity * FLOATS_PER_LABEL);
+    }
     const occupied = new Uint8Array(capacity);
     occupied.set(this.#occupied);
     this.#data = data;
@@ -182,8 +231,20 @@ export class TransformPalette {
   }
 
   #allocateData(capacity: number): Float32Array {
-    const textureHeight = Math.ceil((capacity * TEXELS_PER_LABEL) / this.#textureWidth);
+    const textureHeight = Math.ceil(this.#texelCount(capacity) / this.#textureWidth);
     return new Float32Array(this.#textureWidth * textureHeight * 4);
+  }
+
+  #texelCount(capacity: number): number {
+    return capacity * CORE_TEXELS_PER_LABEL + (this.#effectsEnabled ? capacity : 0);
+  }
+
+  #effectOffset(slot: number): number {
+    return this.#capacity * FLOATS_PER_LABEL + slot * FLOATS_PER_EFFECT;
+  }
+
+  #effectByteOffset(slot: number): number {
+    return this.#effectOffset(slot) * Float32Array.BYTES_PER_ELEMENT;
   }
 
   #assertActive(): void {

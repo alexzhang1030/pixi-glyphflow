@@ -2,7 +2,7 @@
 
 Status: unstamped research and implementation program dated 2026-08-16.
 
-The current conclusion: Waves 1 and the first Wave 2 CPU slice are in the tree. Keep the 1.1.0 public contract and instanced MSDF/SDF/alpha/color path. Atlas packing is Skyline plus a waste map with per-mode O(1) LRU; instances write through typed arrays; numeric fills skip `Color`; spatial queries use a hierarchical hash grid; shared styles intern to one frozen object; position-only commits patch palette x/y texels; z-index is `Float32` in the store and spatial index. The 40 KiB core gzip CI gate is deferred. Published browser artifacts are still 1.1.0 — rerun the isolated Chrome suite on the reference M1 Pro before tightening frame budgets. Shader-stride compression, the 48 MiB store target, and Wave 0 live-layer 8M measurement are still open. Slug and Vello stay optional quality tracks.
+The current conclusion: Waves 1 and the first two Wave 2 slices are in the tree. Keep the 1.1.0 public contract and instanced MSDF/SDF/alpha/color path. Atlas packing is Skyline plus a waste map with per-mode O(1) LRU; instances write through typed arrays; numeric fills skip `Color`; spatial queries use a hierarchical hash grid; shared styles intern to one frozen object; position-only commits patch palette x/y texels; z-index is `Float32` in the store and spatial index; fill-only GPU transforms use two `rgba32float` texels (32 bytes) and stroke/shadow live in a sparse tail after the core region. The 40 KiB core gzip CI gate is deferred. Published browser artifacts are still 1.1.0 — rerun the isolated Chrome suite on the reference M1 Pro before tightening frame budgets. Live instance 24-byte stride, the 48 MiB store target, and Wave 0 live-layer 8M measurement are still open. Slug and Vello stay optional quality tracks.
 
 This record is the research ledger and delivery sequence. Published numbers stay in [`docs/performance.md`](../../docs/performance.md) and [`benchmarks/PERFORMANCE.md`](../../benchmarks/PERFORMANCE.md). The 1.0 specification still owns budgets until a human tightens them.
 
@@ -14,7 +14,7 @@ Version 1.1.0 already meets the formal million-label frame and mutation budgets 
 2. Dynamic text is at the wall. `dynamic-counters` records 16.40 ms frame p95 and 15.70 ms mutation p95 against a 16.67 ms limit.
 3. Camera-only frames still walk every resident label. `SpatialIndex.query` is a dense linear scan. Viewport workloads stay inside budget (5.40–7.60 ms p95) but leave little room for denser worlds, rotated cameras, or slower devices.
 4. The 8,000,000-glyph “full visibility” frame number is a synthetic `GlyphMesh`, not the live `TextLayer` commit, cull, and instance-build path. Treat 0.10 ms p95 as GPU submission evidence, not product-path evidence.
-5. CPU and GPU store the same transform three times: `TextStore` columns, `SpatialIndex` bounds, and a 64-byte `TransformPalette` texel. One million labels already spend 64 MiB on the palette alone.
+5. CPU and GPU store the same transform three times: `TextStore` columns, `SpatialIndex` bounds, and a GPU palette texel. Fill-only labels now use 32 bytes on the GPU; one million labels still spend the same x/y/scale/rotation/alpha in the CPU store. The 1.1.0 artifacts still report 64-byte records.
 
 Extreme here means: keep 1,000,000 resident labels and 8,000,000 visible glyphs, then make atlas pressure, dynamic counters, and camera motion cheap enough that the 16.67 ms budget is headroom rather than a cliff. Do not replace the product with a document renderer, a compute-only 2D engine, or an outline-only GPU path.
 
@@ -55,9 +55,9 @@ This is the likely core of `dynamic-counters` sitting at 16.40 ms. The 32-byte s
 
 ### Transforms are parsed and stored three times
 
-`TransformPalette.set` still writes a 64-byte texel. Numeric fills skip PixiJS `Color`, and position-only commits now call `setPosition` so a position storm dirties 16 bytes. The same x/y/scale/rotation/alpha/visible still live in `TextStore`. `SpatialIndex` still stores a second copy as min/max bounds; z-index is `Float32` in both the store and the index.
+`TransformPalette.set` writes a 32-byte fill-only core (xy, scale, packed half2 rotation, packed half2 anchors, packed RGB, packed alphas plus an effect flag). Stroke and drop shadow occupy one extra texel after `capacity * 2`, allocated only when any label first uses those effects. Numeric fills skip PixiJS `Color`, and position-only commits call `setPosition` so a position storm dirties 16 bytes. The same x/y/scale/rotation/alpha/visible still live in `TextStore`. `SpatialIndex` still stores a second copy as min/max bounds; z-index is `Float32` in both the store and the index.
 
-A fill-only label still does not need 64 bytes of effect payload. That stride change waits for a shader contract and new artifacts.
+The published 64-byte transform ceiling stays until new M1 Pro Chrome artifacts exist. Do not fail CI on 32 bytes yet.
 
 ### Culling was a full-resident scan
 
