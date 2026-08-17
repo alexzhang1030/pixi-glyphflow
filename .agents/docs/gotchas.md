@@ -15,3 +15,11 @@ Packed identities are family intern + glyph id + size bucket + weight class + mo
 ## Do not fail CI on the 1.1.0 atlas-pressure frame
 
 `atlas-pressure` frame p95 is 638.50 ms in the published 1.1.0 artifact. Wave 1 changed the packer in source, but the committed artifact is still the old run. Measure the frame p95; do not add a 16.67 ms fail gate against that file. Same rule as the deferred 40 KiB gzip check.
+
+## Compute cull packs after spatial writes and does not use Pixi `drawIndexed`
+
+WebGPU compact keeps every effectively-visible label in the coordinator (`queryAll`) and tests the viewport on the GPU. Pack cull records after `spatial.set` so position commits do not upload stale AABBs. Pixi `GpuEncoderSystem.draw` issues `drawIndexed`, not `drawIndexedIndirect`; the compute pass writes indirect args and a shared encoder hook rebinds instance attributes to the compact buffer for tracked `GlyphMesh` geometries. Multi-bank compact meshes stay on the CPU draw path. Do not atomic-append visible text; prefix-sum then scatter preserves z then insertion order.
+
+## Compute-cull residency is not a CPU viewport set
+
+When `stats.cullPath` is `compute-cull`, offscreen labels stay uploaded. `visibleLabelCount` on `stats` may walk the hash grid lazily for diagnostics; camera-only `commit` must not. WebGL 2 and `culling.computeCull: false` stay on `cpu-grid` add/remove. Do not treat coordinator `glyphCount` as the on-screen set on the compute path.

@@ -43,6 +43,10 @@ validation before state publication.
 return `0` and preserve revision state. One following `commit()` publishes the complete visibility
 change through culling, hit testing, accessibility, and the active WebGL or WebGPU renderer.
 
+`TextLayerCullingOptions.computeCull` defaults to automatic. WebGPU compact uses a compute prefix-sum
+when a device exists; WebGL 2 and missing devices stay on the CPU hash grid. `stats.cullPath` reports
+`compute-cull` or `cpu-grid` for the path that actually ran.
+
 `TextGroupId` is an opaque identity created by `createGroup()`. Every call produces a distinct
 identity owned by its `TextLayer`. A label references one group through `TextLabelSpec.group` or a
 patch. `group: null` clears membership. Effective visibility is the conjunction of label-local and

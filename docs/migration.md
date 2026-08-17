@@ -47,8 +47,9 @@ explicit.
 ## Diagnostics
 
 Use `stats.backend === "glyphflow-core"`. Capacity and memory fields support operational alerts.
-`visibleLabelCount`, `cullingQueries`, `drawCalls`, `submittedGlyphs`, and upload byte fields support
-camera and rendering telemetry.
+`visibleLabelCount`, `cullingQueries`, `cullPath`, `drawCalls`, `submittedGlyphs`, and upload byte
+fields support camera and rendering telemetry. `cullPath` is `compute-cull` on WebGPU when compute
+compact is active and `cpu-grid` on WebGL 2.
 
 ## Viewport scenes
 

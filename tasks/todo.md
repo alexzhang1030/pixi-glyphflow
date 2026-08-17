@@ -277,10 +277,10 @@
   - Verify: bun run benchmark:check
   - Files: benchmarks/budgets.ts, docs/performance.md
 
-- [ ] Task 12.6: Add a WebGPU compute cull adapter (Wave 3).
+- [x] Task 12.6: Add a WebGPU compute cull adapter (Wave 3).
   - Acceptance: Camera-only WebGPU frames compact visible instances on the GPU with stable z/insertion order; WebGL 2 keeps the CPU grid and current budgets; diagnostics name the active cull path.
   - Verify: bun run test:browser -- glyph-rendering && bun run test:browser -- viewport-integration
-  - Files: src/render/WebGPUAdapter.ts, src/render/RenderSurface.ts, src/culling
+  - Files: src/culling/computeCull.ts, src/culling/computeCull.wgsl.ts, src/render/ComputeCullPass.ts, src/render/RenderSurface.ts, src/TextLayer.ts
 
 - [ ] Task 12.7: Add hybrid glyph generation and upload budgets (Wave 4).
   - Acceptance: Local TinySDF or prebaked pages serve the common set; dynamic MSDF remains the long tail; atlas uploads respect a per-frame byte budget without growing the core gzip entry.

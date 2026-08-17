@@ -55,15 +55,48 @@ describe("TextLayer culling and hit bounds", () => {
 
     expect(Number(await layer.commit())).toBe(1);
     expect(layouts).toBe(1);
-    expect(layer.stats).toMatchObject({ visibleLabelCount: 1, culledLabelCount: 1, glyphCount: 1 });
+    expect(layer.stats).toMatchObject({
+      visibleLabelCount: 1,
+      culledLabelCount: 1,
+      glyphCount: 1,
+      cullPath: "cpu-grid",
+    });
     expect(layer.hitTest({ x: 12, y: 12 })).toBe(first);
     expect(layer.getBoundsFor(second)).toMatchObject({ x: 1_000, y: 10 });
 
     layer.setViewportBounds({ x: 950, y: 0, width: 100, height: 100 });
     expect(Number(await layer.commit())).toBe(1);
     expect(layouts).toBe(2);
-    expect(layer.stats).toMatchObject({ visibleLabelCount: 1, culledLabelCount: 1, glyphCount: 1 });
+    expect(layer.stats).toMatchObject({
+      visibleLabelCount: 1,
+      culledLabelCount: 1,
+      glyphCount: 1,
+      cullPath: "cpu-grid",
+    });
     expect(layer.hitTest({ x: 1_002, y: 12 })).toBe(second);
+
+    layer.destroy();
+  });
+
+  test("keeps the CPU hash grid when compute cull is disabled or no WebGPU device exists", async () => {
+    const layer = new TextLayer({
+      renderer: {} as Renderer,
+      culling: {
+        enabled: true,
+        computeCull: false,
+        bounds: { x: 0, y: 0, width: 100, height: 100 },
+      },
+      rendering: false,
+    });
+    layer.create({ text: "A", x: 10, y: 10, style: { fontSize: 16 } });
+    layer.create({ text: "B", x: 1_000, y: 10, style: { fontSize: 16 } });
+    await layer.commit();
+
+    expect(layer.stats).toMatchObject({
+      visibleLabelCount: 1,
+      culledLabelCount: 1,
+      cullPath: "cpu-grid",
+    });
 
     layer.destroy();
   });

@@ -9,6 +9,8 @@ import {
 } from "pixi.js";
 
 import type { AtlasCommit, AtlasPageInfo, GlyphMode } from "../atlas/types";
+import { CULL_RECORD_STRIDE, type CullPath, type CullViewport } from "../culling/computeCull";
+import { ComputeCullPass } from "./ComputeCullPass";
 import { GlyphMesh } from "./GlyphMesh";
 import type { RenderCommitResult, RenderCoordinator } from "./RenderCoordinator";
 import { GLYPH_INSTANCE_STRIDE, GLYPH_TEXTURE_BANK_SIZE, type DirtyByteRange } from "./types";
@@ -49,6 +51,7 @@ interface DrawSegment {
 
 export interface RenderSurfaceStats {
   readonly adapter: "webgl" | "webgpu" | "unknown";
+  readonly cullPath: CullPath;
   readonly meshes: number;
   readonly atlasTextures: number;
   readonly submittedGlyphs: number;
@@ -79,15 +82,65 @@ export class RenderSurface {
   #transformWrites = 0;
   #pageRebuilds = 0;
   #lastUploadMs = 0;
+  #cullPass: ComputeCullPass | undefined;
+  #cullPath: CullPath = "cpu-grid";
+  readonly #computeCullRequested: boolean;
   #destroyed = false;
 
-  constructor(renderer: Renderer, owner: Container, coordinator: RenderCoordinator) {
+  constructor(
+    renderer: Renderer,
+    owner: Container,
+    coordinator: RenderCoordinator,
+    options: { readonly computeCull?: boolean } = {},
+  ) {
     this.#renderer = renderer;
     this.#owner = owner;
     this.#coordinator = coordinator;
+    this.#computeCullRequested = options.computeCull !== false;
     this.#paletteData = coordinator.transforms.data;
     this.#paletteSource = createPaletteSource(coordinator);
     this.#paletteTexture = new Texture({ source: this.#paletteSource });
+    this.ensureComputeCull();
+  }
+
+  get cullPath(): CullPath {
+    return this.#cullPath;
+  }
+
+  ensureComputeCull(): boolean {
+    if (this.#cullPath === "compute-cull" && this.#cullPass?.ready === true) return true;
+    if (!this.#computeCullRequested || !isWebGPURenderer(this.#renderer)) return false;
+    const pass = this.#cullPass ?? new ComputeCullPass(this.#renderer);
+    if (!pass.initialize()) return false;
+    this.#cullPass = pass;
+    this.#cullPath = "compute-cull";
+    return true;
+  }
+
+  dispatchComputeCull(records: ArrayBuffer | undefined, viewport: CullViewport): void {
+    this.#assertActive();
+    if (!this.ensureComputeCull()) return;
+    const pass = this.#cullPass;
+    const mesh = this.#meshes.get(0);
+    if (
+      pass === undefined ||
+      !pass.ready ||
+      mesh === undefined ||
+      this.#meshes.size !== 1 ||
+      mesh.compact
+    ) {
+      return;
+    }
+    const instances = this.#coordinator.instances.buffer;
+    if (records !== undefined) {
+      const recordCount = records.byteLength / CULL_RECORD_STRIDE;
+      pass.ensureCapacity(Math.max(1, recordCount), Math.max(24, instances.byteLength));
+      pass.uploadRecords(records, recordCount);
+      pass.uploadInstances(instances);
+    } else {
+      pass.ensureCapacity(1, Math.max(24, instances.byteLength));
+    }
+    pass.dispatch(viewport);
   }
 
   apply(result: Readonly<RenderCommitResult>): void {
@@ -106,6 +159,7 @@ export class RenderSurface {
   get stats(): Readonly<RenderSurfaceStats> {
     return Object.freeze({
       adapter: rendererKind(this.#renderer),
+      cullPath: this.#cullPath,
       meshes: this.#meshes.size,
       atlasTextures: this.#pages.size,
       submittedGlyphs: this.#submittedGlyphs,
@@ -128,6 +182,9 @@ export class RenderSurface {
     this.#meshes.clear();
     for (const page of this.#pages.values()) page.texture.destroy(true);
     this.#pages.clear();
+    this.#cullPass?.destroy();
+    this.#cullPass = undefined;
+    this.#cullPath = "cpu-grid";
     this.#paletteTexture.destroy(true);
     this.#paletteData = new Float32Array();
     this.#submittedGlyphs = 0;
@@ -428,6 +485,7 @@ export class RenderSurface {
       initialized: false,
     };
     this.#meshes.set(key, surface);
+    if (key === 0 && !compact) this.#cullPass?.trackGeometry(mesh.geometry);
 
     return surface;
   }
@@ -459,6 +517,7 @@ export class RenderSurface {
   }
 
   #destroyMesh(key: number, surface: SurfaceMesh): void {
+    this.#cullPass?.untrackGeometry(surface.mesh.geometry);
     surface.mesh.removeFromParent();
     surface.mesh.destroy();
     this.#meshes.delete(key);

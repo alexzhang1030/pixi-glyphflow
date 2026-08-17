@@ -1,5 +1,6 @@
 export { FontRegistry } from "./FontRegistry";
 export { TextLayer } from "./TextLayer";
+export type { CullPath } from "./culling/computeCull";
 export type {
   TextGroupId,
   TextId,

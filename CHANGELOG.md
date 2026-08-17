@@ -35,6 +35,10 @@
 - Equal-height atlas cells pack along a next-fit shelf when they match the current row. Skyline
   still places the first cell of a new row and mixed sizes. Eviction holes still go through the
   waste map. Published `atlas-pressure` frame ceilings stay.
+- Wave 3 compute cull: WebGPU camera-only frames compact visible instances on the GPU with a
+  prefix-sum scatter so z then insertion order stays stable. WebGL 2 keeps the CPU hash grid.
+  `stats.cullPath` reports `compute-cull` or `cpu-grid`. Storage-buffer palettes, texture arrays,
+  and published budget changes stay out of this slice.
 
 ## 1.1.0 - 2026-08-15
 

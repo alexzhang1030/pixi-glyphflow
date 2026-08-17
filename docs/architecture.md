@@ -104,12 +104,15 @@ minimum texture-unit budget and the WebGPU minimum sampled-texture limit.
 ## Culling and camera integration
 
 `SpatialIndex` keeps dense bounds, visibility, z order, and stable insertion order. Query output uses
-caller-owned typed arrays. `ViewportBinding` converts pixi-viewport camera corners through the layer
-transform, coalesces the current input burst, updates culling bounds, and publishes visibility work.
+caller-owned typed arrays. WebGL 2 and missing devices query the CPU hash grid each camera frame.
+WebGPU with `culling.computeCull` keeps effectively-visible labels resident and compacts the visible
+instances on the GPU in z then insertion order. `ViewportBinding` converts pixi-viewport camera
+corners through the layer transform, coalesces the current input burst, updates culling bounds, and
+publishes visibility work.
 
 ## Diagnostics
 
 `TextLayer.stats` allocates one immutable snapshot at read time. It reports CPU capacity, dirty
-domains, revisions, shaping, visible labels, spatial queries, renderer backend, draw calls, glyphs,
-pending glyphs, upload bytes, and last-commit layout, instance-write, palette-write, spatial, and
-upload milliseconds.
+domains, revisions, shaping, visible labels, spatial queries, renderer backend, `cullPath`, draw
+calls, glyphs, pending glyphs, upload bytes, and last-commit layout, instance-write, palette-write,
+spatial, and upload milliseconds.

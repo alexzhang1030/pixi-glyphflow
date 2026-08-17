@@ -6,6 +6,12 @@ import {
   type TextStyleOptions,
 } from "pixi.js";
 
+import {
+  packCullRecords,
+  viewportFromBounds,
+  type CullPath,
+  type CullRecordInput,
+} from "./culling/computeCull";
 import { SpatialIndex } from "./culling/SpatialIndex";
 import type { BoundsData, MutableBoundsData, PointLike } from "./culling/types";
 import { FontRegistry } from "./FontRegistry";
@@ -97,6 +103,9 @@ export class TextLayer extends Container {
   #lastCommitPromise: Promise<TextRevision> = Promise.resolve(0 as TextRevision);
   readonly #cullingEnabled: boolean;
   readonly #cullingPadding: number;
+  readonly #computeCullRequested: boolean;
+  #computeCullActive = false;
+  #visibleCountStale = false;
   #viewportBounds: Readonly<BoundsData> | undefined;
   #viewDirty = false;
   #visibilityDirty = true;
@@ -140,6 +149,7 @@ export class TextLayer extends Container {
     this.#spatial = new SpatialIndex({ initialCapacity: this.#store.capacity });
     this.#cullingEnabled = culling.enabled;
     this.#cullingPadding = culling.padding;
+    this.#computeCullRequested = culling.computeCull;
     this.#viewportBounds = culling.bounds;
     this.#dirtyMasks = new Uint8Array(this.#store.capacity);
     this.#positionOnly = new Uint8Array(this.#store.capacity);
@@ -721,10 +731,15 @@ export class TextLayer extends Container {
     this.#lastCommitTransformLabels = dirty.transform;
     this.#lastCommitStyleLabels = dirty.style;
     this.#viewDirty = false;
+    this.#refreshComputeCull();
     const spatialStart = performance.now();
-    if (this.#cullingEnabled || this.#visibilityDirty) {
+    const cameraOnly = !hasLabelChanges && this.#computeCullActive;
+    if (cameraOnly) {
+      this.#visibleCountStale = true;
+    } else if (this.#cullingEnabled || this.#visibilityDirty) {
       this.#visibleCount = this.#queryVisible();
       this.#visibilityDirty = false;
+      this.#visibleCountStale = false;
     }
     this.#lastSpatialUpdateMs = performance.now() - spatialStart;
     this.#lastLayoutMs = 0;
@@ -734,7 +749,7 @@ export class TextLayer extends Container {
     const changes = coordinator === undefined ? [] : this.#buildRenderChanges();
     this.#clearDirtyMasks();
 
-    if (coordinator === undefined || changes.length === 0) {
+    if (coordinator === undefined || (changes.length === 0 && !this.#computeCullActive)) {
       this.#lastCommitDurationMs = performance.now() - start;
       this.#lastCommitPromise = this.#renderTail.then(() => {
         this.emit(TEXT_LAYER_COMMIT_EVENT, revision);
@@ -749,11 +764,12 @@ export class TextLayer extends Container {
     this.#renderSequence += 1;
     const renderSequence = this.#renderSequence;
     const renderWork = this.#renderTail.then(async () => {
-      const result = await coordinator.commit(renderSequence, changes);
+      const result =
+        changes.length === 0 ? undefined : await coordinator.commit(renderSequence, changes);
       this.#lastLayoutMs = coordinator.stats.lastLayoutMs;
       this.#lastInstanceWriteMs = coordinator.stats.lastInstanceWriteMs;
       this.#lastPaletteWriteMs = coordinator.stats.lastPaletteWriteMs;
-      surface?.apply(result);
+      if (result !== undefined) surface?.apply(result);
       this.#lastUploadMs = surface?.stats.lastUploadMs ?? 0;
       const spatialWriteStart = performance.now();
       for (const change of changes) {
@@ -777,6 +793,14 @@ export class TextLayer extends Container {
         );
       }
       this.#lastSpatialUpdateMs += performance.now() - spatialWriteStart;
+      if (this.#computeCullActive) {
+        surface?.dispatchComputeCull(
+          result === undefined ? undefined : this.#packCullRecords(),
+          this.#viewportBounds === undefined
+            ? { x: -1e9, y: -1e9, width: 2e9, height: 2e9, padding: 0 }
+            : viewportFromBounds(this.#viewportBounds, this.#cullingPadding),
+        );
+      }
     });
     this.#renderTail = renderWork.then(
       () => undefined,
@@ -823,6 +847,7 @@ export class TextLayer extends Container {
     this.#renderCoordinator?.destroy();
     this.#renderCoordinator = undefined;
     this.#renderer = undefined;
+    this.#computeCullActive = false;
     this.#resetRenderedSet();
     this.#renderTail = Promise.resolve();
     this.#lastCommitPromise = Promise.resolve(this.#revision as TextRevision);
@@ -830,6 +855,14 @@ export class TextLayer extends Container {
 
   /** Read an immutable diagnostics snapshot. */
   get stats(): Readonly<TextLayerStats> {
+    if (this.#visibleCountStale && this.#cullingEnabled && this.#viewportBounds !== undefined) {
+      this.#visibleCount = this.#spatial.query(
+        this.#viewportBounds,
+        this.#visibleSlots,
+        this.#cullingPadding,
+      );
+      this.#visibleCountStale = false;
+    }
     const store = this.#store.stats;
     const pendingDirty = this.#store.pendingDirty;
     const render = this.#renderCoordinator?.stats;
@@ -871,6 +904,7 @@ export class TextLayer extends Container {
       spatialIndexBytes: spatial.allocatedBytes,
       cullingQueries: spatial.queries,
       rendererAdapter: this.#renderer === undefined ? "detached" : (surface?.adapter ?? "unknown"),
+      cullPath: this.#resolveCullPath(),
       drawCalls: surface?.meshes ?? 0,
       submittedGlyphs: surface?.submittedGlyphs ?? 0,
       atlasTextureCount: surface?.atlasTextures ?? 0,
@@ -974,8 +1008,18 @@ export class TextLayer extends Container {
       registry: this.fonts,
     });
     if (this.#renderer !== undefined && ("gl" in this.#renderer || "gpu" in this.#renderer)) {
-      this.#renderSurface = new RenderSurface(this.#renderer, this, this.#renderCoordinator);
+      this.#renderSurface = new RenderSurface(this.#renderer, this, this.#renderCoordinator, {
+        computeCull: this.#computeCullRequested,
+      });
     }
+    this.#refreshComputeCull();
+  }
+
+  #refreshComputeCull(): void {
+    this.#computeCullActive =
+      this.#cullingEnabled &&
+      this.#computeCullRequested &&
+      (this.#renderSurface?.ensureComputeCull() ?? false);
   }
 
   #indexLabel(
@@ -1028,11 +1072,38 @@ export class TextLayer extends Container {
   }
 
   #queryVisible(): number {
+    if (this.#computeCullActive) {
+      return this.#spatial.queryAll(this.#visibleSlots);
+    }
     if (this.#cullingEnabled && this.#viewportBounds !== undefined) {
       return this.#spatial.query(this.#viewportBounds, this.#visibleSlots, this.#cullingPadding);
     }
 
     return this.#spatial.queryAll(this.#visibleSlots);
+  }
+
+  #packCullRecords(): ArrayBuffer {
+    const coordinator = this.#renderCoordinator;
+    if (coordinator === undefined) return new ArrayBuffer(0);
+    const records: CullRecordInput[] = [];
+    const bounds = { x: 0, y: 0, width: 0, height: 0 };
+    const states = [...coordinator.getDrawStates()].sort(
+      (left, right) => left.zIndex - right.zIndex || left.order - right.order,
+    );
+    for (const state of states) {
+      const range = coordinator.instances.getRange(state.slot);
+      const box = this.#spatial.get(state.slot, bounds);
+      if (range === undefined || box === undefined) continue;
+      records.push({
+        minX: box.x,
+        minY: box.y,
+        maxX: box.x + box.width,
+        maxY: box.y + box.height,
+        instanceOffset: range.offset,
+        instanceCount: range.count,
+      });
+    }
+    return packCullRecords(records);
   }
 
   #buildRenderChanges(): LayerRenderChange[] {
@@ -1101,6 +1172,10 @@ export class TextLayer extends Container {
     this.#renderedEpochs.fill(0);
     this.#renderedCount = 0;
     this.#renderEpoch = 0;
+  }
+
+  #resolveCullPath(): CullPath {
+    return this.#computeCullActive ? "compute-cull" : "cpu-grid";
   }
 
   #assertTrustedRunSource(
@@ -1453,11 +1528,14 @@ function readPoint(
   return { x: value.x, y: value.y };
 }
 
-function resolveCullingOptions(
-  options: false | TextLayerCullingOptions | undefined,
-): Readonly<{ enabled: boolean; padding: number; bounds: Readonly<BoundsData> | undefined }> {
+function resolveCullingOptions(options: false | TextLayerCullingOptions | undefined): Readonly<{
+  enabled: boolean;
+  padding: number;
+  bounds: Readonly<BoundsData> | undefined;
+  computeCull: boolean;
+}> {
   if (options === false) {
-    return { enabled: false, padding: 0, bounds: undefined };
+    return { enabled: false, padding: 0, bounds: undefined, computeCull: false };
   }
   const padding = options?.padding ?? 0;
   if (!Number.isFinite(padding) || padding < 0) {
@@ -1468,6 +1546,7 @@ function resolveCullingOptions(
   return {
     enabled: options?.enabled ?? true,
     padding,
+    computeCull: options?.computeCull ?? true,
     bounds: options?.bounds === undefined ? undefined : Object.freeze({ ...options.bounds }),
   };
 }

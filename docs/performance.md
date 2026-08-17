@@ -103,7 +103,8 @@ storage budgets stay until a human accepts new numbers.
 - Reserve the expected label capacity.
 - Reuse `Float64Array` IDs and `Float32Array` position buffers.
 - Use `updatePositions` for movement and `updateTextPositions` for counter-style streams.
-- Keep viewport culling enabled for large worlds.
+- Keep viewport culling enabled for large worlds. WebGPU camera frames can compact on the GPU
+  (`stats.cullPath === "compute-cull"`); WebGL 2 stays on the CPU hash grid.
 - Reuse styles and fonts to maximize shaping and layout cache hits.
 - Set an atlas ceiling that matches the product glyph working set.
 - Read diagnostics at telemetry cadence.
