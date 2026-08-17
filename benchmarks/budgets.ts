@@ -25,7 +25,13 @@ for (const definition of BENCHMARK_WORKLOADS) {
   );
   const file = Bun.file(path);
   const exists = await file.exists();
-  record(`artifact:${definition.id}`, exists ? "present" : "missing", "present", exists);
+  const artifactRequired = definition.artifactRequired !== false;
+  record(
+    `artifact:${definition.id}`,
+    exists ? "present" : "missing",
+    artifactRequired ? "present" : "optional",
+    exists || !artifactRequired,
+  );
   if (!exists) continue;
   const artifact = (await file.json()) as BrowserBenchmarkArtifact;
   artifacts.set(definition.id, artifact);
@@ -144,6 +150,41 @@ if (atlas !== undefined) {
     "> 0",
     (atlas.counters.atlasEvictions ?? 0) > 0,
   );
+  // Wave 1 changed the packer; the 1.1.0 638 ms artifact is not a fail gate.
+  record("atlas-pressure-frame-p95-ms", p95(atlas.timings.frameMs), "deferred", true);
+}
+
+const live = glyphflow(artifacts.get("million-live"));
+if (live !== undefined) {
+  record(
+    "live-visible-glyphs",
+    live.counters.visibleGlyphs,
+    8_000_000,
+    live.counters.visibleGlyphs === 8_000_000,
+  );
+  record("live-draw-calls", live.counters.drawCalls, 1, live.counters.drawCalls === 1);
+  if (live.counters.allocatedStoreBytes !== undefined) {
+    record(
+      "live-store-bytes",
+      live.counters.allocatedStoreBytes,
+      128 * 1_024 ** 2,
+      live.counters.allocatedStoreBytes <= 128 * 1_024 ** 2,
+    );
+  }
+  if (live.timings.cpuMs !== undefined && live.timings.gpuMs !== undefined) {
+    record(
+      "live-cpu-samples",
+      live.timings.cpuMs.length,
+      live.timings.frameMs.length,
+      live.timings.cpuMs.length === live.timings.frameMs.length,
+    );
+    record(
+      "live-gpu-samples",
+      live.timings.gpuMs.length,
+      live.timings.frameMs.length,
+      live.timings.gpuMs.length === live.timings.frameMs.length,
+    );
+  }
 }
 
 const coreGzipBytes = await coreGzipSize();

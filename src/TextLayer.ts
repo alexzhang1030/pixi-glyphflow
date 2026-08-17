@@ -84,6 +84,11 @@ export class TextLayer extends Container {
   #lastCommitContentLabels = 0;
   #lastCommitTransformLabels = 0;
   #lastCommitStyleLabels = 0;
+  #lastLayoutMs = 0;
+  #lastInstanceWriteMs = 0;
+  #lastPaletteWriteMs = 0;
+  #lastSpatialUpdateMs = 0;
+  #lastUploadMs = 0;
   #renderer: Renderer | undefined;
   readonly #renderingOptions: false | TextLayerRenderingOptions;
   #renderCoordinator: RenderCoordinator | undefined;
@@ -677,6 +682,11 @@ export class TextLayer extends Container {
       this.#lastCommitContentLabels = 0;
       this.#lastCommitTransformLabels = 0;
       this.#lastCommitStyleLabels = 0;
+      this.#lastLayoutMs = 0;
+      this.#lastInstanceWriteMs = 0;
+      this.#lastPaletteWriteMs = 0;
+      this.#lastSpatialUpdateMs = 0;
+      this.#lastUploadMs = 0;
       return this.#lastCommitPromise;
     }
     if (hasLabelChanges && this.#revision === Number.MAX_SAFE_INTEGER) {
@@ -711,10 +721,16 @@ export class TextLayer extends Container {
     this.#lastCommitTransformLabels = dirty.transform;
     this.#lastCommitStyleLabels = dirty.style;
     this.#viewDirty = false;
+    const spatialStart = performance.now();
     if (this.#cullingEnabled || this.#visibilityDirty) {
       this.#visibleCount = this.#queryVisible();
       this.#visibilityDirty = false;
     }
+    this.#lastSpatialUpdateMs = performance.now() - spatialStart;
+    this.#lastLayoutMs = 0;
+    this.#lastInstanceWriteMs = 0;
+    this.#lastPaletteWriteMs = 0;
+    this.#lastUploadMs = 0;
     const changes = coordinator === undefined ? [] : this.#buildRenderChanges();
     this.#clearDirtyMasks();
 
@@ -734,7 +750,12 @@ export class TextLayer extends Container {
     const renderSequence = this.#renderSequence;
     const renderWork = this.#renderTail.then(async () => {
       const result = await coordinator.commit(renderSequence, changes);
+      this.#lastLayoutMs = coordinator.stats.lastLayoutMs;
+      this.#lastInstanceWriteMs = coordinator.stats.lastInstanceWriteMs;
+      this.#lastPaletteWriteMs = coordinator.stats.lastPaletteWriteMs;
       surface?.apply(result);
+      this.#lastUploadMs = surface?.stats.lastUploadMs ?? 0;
+      const spatialWriteStart = performance.now();
       for (const change of changes) {
         if (change.snapshot === undefined) continue;
         const run = coordinator.getRun(change.slot);
@@ -755,6 +776,7 @@ export class TextLayer extends Container {
           this.#isEffectivelyVisible(current.id, current.visible),
         );
       }
+      this.#lastSpatialUpdateMs += performance.now() - spatialWriteStart;
     });
     this.#renderTail = renderWork.then(
       () => undefined,
@@ -833,6 +855,11 @@ export class TextLayer extends Container {
       lastCommitContentLabels: this.#lastCommitContentLabels,
       lastCommitTransformLabels: this.#lastCommitTransformLabels,
       lastCommitStyleLabels: this.#lastCommitStyleLabels,
+      lastLayoutMs: this.#lastLayoutMs,
+      lastInstanceWriteMs: this.#lastInstanceWriteMs,
+      lastPaletteWriteMs: this.#lastPaletteWriteMs,
+      lastSpatialUpdateMs: this.#lastSpatialUpdateMs,
+      lastUploadMs: this.#lastUploadMs,
       glyphCount: render?.glyphs ?? 0,
       pendingGlyphCount: render?.pendingGlyphs ?? 0,
       shapedLabels: render?.shapedLabels ?? 0,

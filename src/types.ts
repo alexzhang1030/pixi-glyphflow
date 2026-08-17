@@ -162,6 +162,11 @@ export interface TextLayerStats {
   readonly lastCommitContentLabels: number;
   readonly lastCommitTransformLabels: number;
   readonly lastCommitStyleLabels: number;
+  readonly lastLayoutMs: number;
+  readonly lastInstanceWriteMs: number;
+  readonly lastPaletteWriteMs: number;
+  readonly lastSpatialUpdateMs: number;
+  readonly lastUploadMs: number;
   readonly glyphCount: number;
   readonly pendingGlyphCount: number;
   readonly shapedLabels: number;

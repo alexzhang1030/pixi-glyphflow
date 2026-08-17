@@ -35,6 +35,11 @@ describe("TextLayer commit and maintenance", () => {
       lastCommitContentLabels: 0,
       lastCommitTransformLabels: 0,
       lastCommitStyleLabels: 0,
+      lastLayoutMs: 0,
+      lastInstanceWriteMs: 0,
+      lastPaletteWriteMs: 0,
+      lastSpatialUpdateMs: 0,
+      lastUploadMs: 0,
     });
 
     layer.destroy();
@@ -118,6 +123,11 @@ describe("TextLayer commit and maintenance", () => {
       shapedLabels: 1,
       transformOnlyLabels: 1,
     });
+    expect(layer.stats.lastLayoutMs).toBeGreaterThanOrEqual(0);
+    expect(layer.stats.lastInstanceWriteMs).toBeGreaterThanOrEqual(0);
+    expect(layer.stats.lastPaletteWriteMs).toBeGreaterThanOrEqual(0);
+    expect(layer.stats.lastSpatialUpdateMs).toBeGreaterThanOrEqual(0);
+    expect(layer.stats.lastUploadMs).toBeGreaterThanOrEqual(0);
 
     layer.detach();
     expect(layer.stats.attached).toBe(false);

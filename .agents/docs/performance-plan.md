@@ -2,7 +2,7 @@
 
 Status: unstamped research and implementation program dated 2026-08-16.
 
-The current conclusion: Waves 1 and Wave 2 compression are in the tree. Keep the 1.1.0 public contract and instanced MSDF/SDF/alpha/color path. Atlas packing is Skyline plus a waste map with per-mode O(1) LRU; instances write through typed arrays; numeric fills skip `Color`; spatial queries use a hierarchical hash grid; shared styles intern to one frozen object; position-only commits patch palette x/y texels; z-index is `Float32` in the store and spatial index; fill-only GPU transforms use two `rgba32float` texels (32 bytes) and stroke/shadow live in a sparse tail after the core region; the CPU store packs scale/rotation/alpha/anchors as `f16`, generations and source revisions as `u16`, and occupied/visible/kind into one flag byte, and the dirty journal keeps a sparse slot list; live glyph instances use 24 bytes (four `f16` local-rect components, bound as `uint32x2` and unpacked in the shader). The 40 KiB core gzip CI gate is deferred. Published browser artifacts are still 1.1.0 — rerun the isolated Chrome suite on the reference M1 Pro before tightening frame budgets. Wave 0 live-layer 8M measurement is still open. Slug and Vello stay optional quality tracks.
+The current conclusion: Waves 0–2 are in the tree. Keep the 1.1.0 public contract and instanced MSDF/SDF/alpha/color path. Atlas packing is Skyline plus a waste map with per-mode O(1) LRU; instances write through typed arrays; numeric fills skip `Color`; spatial queries use a hierarchical hash grid; shared styles intern to one frozen object; position-only commits patch palette x/y texels; z-index is `Float32` in the store and spatial index; fill-only GPU transforms use two `rgba32float` texels (32 bytes) and stroke/shadow live in a sparse tail after the core region; the CPU store packs scale/rotation/alpha/anchors as `f16`, generations and source revisions as `u16`, and occupied/visible/kind into one flag byte, and the dirty journal keeps a sparse slot list; live glyph instances use 24 bytes (four `f16` local-rect components, bound as `uint32x2` and unpacked in the shader). Wave 0 adds `million-live` (coordinator mesh, not `createStressMesh`), splits rendering frames into CPU / upload / GPU completion, and records layout, instance-write, palette-write, spatial, and upload timers on `TextLayer.stats`. The 40 KiB core gzip and `atlas-pressure` frame CI gates stay deferred — do not fail the 1.1.0 638 ms artifact. Published browser artifacts are still 1.1.0; `million-live` has no reference artifact yet. Slug and Vello stay optional quality tracks.
 
 This record is the research ledger and delivery sequence. Published numbers stay in [`docs/performance.md`](../../docs/performance.md) and [`benchmarks/PERFORMANCE.md`](../../benchmarks/PERFORMANCE.md). The 1.0 specification still owns budgets until a human tightens them.
 
@@ -13,7 +13,7 @@ Version 1.1.0 already meets the formal million-label frame and mutation budgets 
 1. Atlas churn is unbounded. `atlas-pressure` records 638.50 ms frame p95 while packing 20,000 unique 16×16 glyphs under a 4 MiB ceiling with 3,616 evictions. The budget gate only checks bytes and eviction activation, so this cliff is currently legal.
 2. Dynamic text is at the wall. `dynamic-counters` records 16.40 ms frame p95 and 15.70 ms mutation p95 against a 16.67 ms limit.
 3. Camera-only frames still walk every resident label. `SpatialIndex.query` is a dense linear scan. Viewport workloads stay inside budget (5.40–7.60 ms p95) but leave little room for denser worlds, rotated cameras, or slower devices.
-4. The 8,000,000-glyph “full visibility” frame number is a synthetic `GlyphMesh`, not the live `TextLayer` commit, cull, and instance-build path. Treat 0.10 ms p95 as GPU submission evidence, not product-path evidence.
+4. The 8,000,000-glyph “full visibility” frame number in 1.1.0 artifacts is a synthetic `GlyphMesh`. `million-live` now exists as the product-path workload; treat 0.10 ms p95 as GPU submission evidence until a reference `million-live` artifact exists.
 5. CPU and GPU store the same transform three times: `TextStore` columns, `SpatialIndex` bounds, and a GPU palette texel. Fill-only labels use 32 bytes on the GPU. The CPU store now packs the non-position columns; one million reserved slots stay ≤ 48 MiB in unit measurement. The 1.1.0 artifacts still report 72 MiB and 64-byte records.
 
 Extreme here means: keep 1,000,000 resident labels and 8,000,000 visible glyphs, then make atlas pressure, dynamic counters, and camera motion cheap enough that the 16.67 ms budget is headroom rather than a cliff. Do not replace the product with a document renderer, a compute-only 2D engine, or an outline-only GPU path.
@@ -65,7 +65,7 @@ The published 128 MiB store and 64-byte transform ceilings stay until new M1 Pro
 
 ### The million-glyph GPU path is not the product path
 
-`runMillionFull` builds a `TextLayer` for storage counters, then draws a separately filled `GlyphMesh`. That is useful GPU evidence (one instanced draw, 8,000,000 instances, non-transparent output). It does not measure layout, atlas lookup, instance compaction, or culling at that scale. An extreme program has to add a live-layer full-visibility workload before claiming 8M-glyph product performance.
+`runMillionFull` still builds a `TextLayer` for storage counters, then draws a separately filled `GlyphMesh`. That remains the GPU-throughput probe. `runMillionLive` commits the same 1,000,000 labels through the coordinator and draws that mesh. A reference Chrome artifact for `million-live` is still required before claiming 8M-glyph product-path performance.
 
 ### String maps sit on every hot cache
 
@@ -138,7 +138,7 @@ Make the laboratory tell the truth before changing algorithms.
 - Record mutation, layout, instance-write, palette-write, spatial-update, and upload timers in `TextLayer.stats` so later waves prove their own claim.
 - Keep the synthetic 8M mesh as a GPU-throughput probe with a different workload id.
 
-Acceptance: `bun run benchmark:check` fails `atlas-pressure` until Wave 1 lands, and the live full-visibility artifact exists even if it misses 16.67 ms.
+Acceptance: `million-live` is runnable beside `million-full`; frame samples split CPU, upload bytes, and GPU completion; `TextLayer.stats` exposes phase timers. `benchmark:check` measures `atlas-pressure` frame p95 and does not fail the 1.1.0 638 ms artifact. The live artifact is optional until a reference M1 Pro Chrome rerun.
 
 ### Wave 1 — CPU cliffs, same public contract
 

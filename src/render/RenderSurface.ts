@@ -58,6 +58,7 @@ export interface RenderSurfaceStats {
   readonly instanceWrites: number;
   readonly transformWrites: number;
   readonly pageRebuilds: number;
+  readonly lastUploadMs: number;
 }
 
 export class RenderSurface {
@@ -77,6 +78,7 @@ export class RenderSurface {
   #instanceWrites = 0;
   #transformWrites = 0;
   #pageRebuilds = 0;
+  #lastUploadMs = 0;
   #destroyed = false;
 
   constructor(renderer: Renderer, owner: Container, coordinator: RenderCoordinator) {
@@ -90,6 +92,7 @@ export class RenderSurface {
 
   apply(result: Readonly<RenderCommitResult>): void {
     this.#assertActive();
+    const uploadStart = performance.now();
     this.#applyAtlasCommit(result.atlasCommit);
     const transformRanges = this.#coordinator.transforms.consumeDirty();
     const instanceRanges = this.#coordinator.instances.consumeDirty();
@@ -97,6 +100,7 @@ export class RenderSurface {
     if (instanceRanges.length > 0 || result.drawOrderChanged || this.#meshes.size === 0) {
       this.#syncMeshes(instanceRanges);
     }
+    this.#lastUploadMs = performance.now() - uploadStart;
   }
 
   get stats(): Readonly<RenderSurfaceStats> {
@@ -111,6 +115,7 @@ export class RenderSurface {
       instanceWrites: this.#instanceWrites,
       transformWrites: this.#transformWrites,
       pageRebuilds: this.#pageRebuilds,
+      lastUploadMs: this.#lastUploadMs,
     });
   }
 

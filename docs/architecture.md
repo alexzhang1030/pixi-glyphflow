@@ -105,4 +105,5 @@ transform, coalesces the current input burst, updates culling bounds, and publis
 
 `TextLayer.stats` allocates one immutable snapshot at read time. It reports CPU capacity, dirty
 domains, revisions, shaping, visible labels, spatial queries, renderer backend, draw calls, glyphs,
-pending glyphs, and upload bytes.
+pending glyphs, upload bytes, and last-commit layout, instance-write, palette-write, spatial, and
+upload milliseconds.

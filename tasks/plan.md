@@ -200,7 +200,9 @@ Research record: [`.agents/docs/performance-plan.md`](../.agents/docs/performanc
 
 The 1.1.0 suite already meets the formal million-label frame budgets. The next program attacks the unbudgeted atlas-pressure cliff, the dynamic-counter wall, linear culling, duplicated transform storage, and the synthetic 8M-glyph probe. Public budgets stay until a human accepts tighter numbers.
 
-- Wave 0: live-layer full-visibility workload, split CPU/GPU timers, atlas-pressure frame budget.
+- Wave 0: `million-live` coordinator-mesh workload, split CPU/upload/GPU timers, and
+  `TextLayer.stats` phase timers are in source. `atlas-pressure` frame p95 is measured, not failed,
+  against the 1.1.0 artifact.
 - Wave 1: Skyline atlas + O(1) LRU, typed instance writes, hierarchical hash grid, packed numeric fills.
 - Wave 2: intern shared styles, position-only palette patches, `Float32` z-index, 32-byte
   fill-only GPU transforms, packed CPU store columns, and 24-byte live instances are in
