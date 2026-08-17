@@ -83,7 +83,8 @@ how far the current code can go:
   submission. `million-live` is the product-path workload; it has no 1.1.0 artifact yet.
 
 Wave 1 of that program is in source: Skyline atlas packing, per-mode O(1) LRU, typed instance
-writes, numeric fill packing, and a hierarchical hash grid. Wave 2 has started without changing
+writes, numeric fill packing, a hierarchical hash grid, packed live atlas keys, power-of-two
+instance free-list buckets, and policy-costed dirty uploads. Wave 2 has started without changing
 published ceilings: shared styles intern, position-only commits patch 16 palette bytes,
 z-index is `Float32`, fill-only GPU transforms use 32 bytes with a sparse effect tail, the
 CPU store packs non-position columns so one million reserved slots stay within 48 MiB plus

@@ -28,6 +28,10 @@
   frames split CPU JS, upload bytes, and GPU completion; `TextLayer.stats` records layout,
   instance-write, palette-write, spatial, and upload timers. `atlas-pressure` frame p95 is
   measured and not failed against the 1.1.0 artifact.
+- Live atlas keys pack to integers on the coordinator path. The instance free list is a
+  power-of-two segregated first-fit. Dirty uploads merge a 256-byte gap, collapse after eight
+  ranges, and promote when dirty bytes reach 75% of the live span. Techniques adapted from
+  [pmndrs/glyph](https://github.com/pmndrs/glyph). Published frame and storage ceilings stay.
 
 ## 1.1.0 - 2026-08-15
 

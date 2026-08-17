@@ -261,14 +261,14 @@ describe("TextLayer commit and maintenance", () => {
     expect(
       layer.update(id, {
         layout: null,
-        style: { fontFamily: "sans-serif", fontSize: 16, fontWeight: "bold", fill: 0x33ccff },
+        style: { fontFamily: "sans-serif", fontSize: 16, fontWeight: "normal", fill: 0x33ccff },
       }),
     ).toBe(true);
     await layer.commit();
     expect(inputs).toHaveLength(2);
-    expect(inputs[1]).toMatchObject({ style: { fontWeight: "bold", fill: 0x33ccff } });
+    expect(inputs[1]).toMatchObject({ style: { fontWeight: "normal", fill: 0x33ccff } });
     expect(inputs[1]?.writingMode).toBeUndefined();
-    expect(rasterWeights).toEqual(["700", "bold"]);
+    expect(rasterWeights).toEqual(["700", "normal"]);
     expect(layer.stats.lastCommitStyleLabels).toBe(1);
 
     layer.destroy();

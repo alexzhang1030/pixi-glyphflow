@@ -1,8 +1,10 @@
 import type { BLEND_MODES, TextStyleOptions } from "pixi.js";
 
 import { GlyphAtlas } from "../atlas/GlyphAtlas";
+import { resolveGlyphIdentity } from "../atlas/glyphIdentity";
 import type {
   GlyphAtlasOptions,
+  GlyphCacheKey,
   GlyphMode,
   GlyphRaster,
   RasterGlyphProviderOptions,
@@ -135,7 +137,7 @@ export class RenderCoordinator {
   readonly #ownsTransforms: boolean;
   readonly #runs = new Map<number, Readonly<PositionedRun>>();
   readonly #drawStates = new Map<number, Readonly<RenderDrawState>>();
-  readonly #pendingGlyphs = new Map<string, Promise<void>>();
+  readonly #pendingGlyphs = new Map<GlyphCacheKey, Promise<void>>();
   #batchPositions = new Float32Array(0);
   #batchUvs = new Float32Array(0);
   #batchPalette = new Uint32Array(0);
@@ -370,9 +372,17 @@ export class RenderCoordinator {
     const mode = selectMode(run, index);
     const glyphText = resolveGlyphText(run, index);
     const glyphId = run.glyphIds[index] ?? 0;
-    const fontSize = resolveFontSize(snapshot.style.fontSize);
-    const fontWeight = snapshot.style.fontWeight ?? "normal";
-    const key = glyphKey(run, glyphId, glyphText, fontSize, fontWeight, mode);
+    const identity = resolveGlyphIdentity({
+      fontFamily: run.fontFamily,
+      ...(run.fontFamilies === undefined ? {} : { fontFamilies: run.fontFamilies }),
+      fontRevision: run.fontRevision,
+      glyphId,
+      glyphText,
+      fontSize: resolveFontSize(snapshot.style.fontSize),
+      fontWeight: snapshot.style.fontWeight ?? "normal",
+      mode,
+    });
+    const key = identity.key;
     if (this.atlas.get(key) !== undefined) {
       return;
     }
@@ -389,12 +399,12 @@ export class RenderCoordinator {
         fontRevision: run.fontRevision,
         glyphId,
         glyphText,
-        fontSize,
-        fontWeight,
+        fontSize: identity.fontSize,
+        fontWeight: identity.fontWeight,
         mode,
       });
       if (!this.atlas.stage(request, raster) && this.atlas.get(key) === undefined) {
-        throw new Error(`Glyph atlas capacity rejected: ${key}`);
+        throw new Error(`Glyph atlas capacity rejected: ${String(key)}`);
       }
     })();
     this.#pendingGlyphs.set(key, promise);
@@ -422,12 +432,20 @@ export class RenderCoordinator {
       const mode = selectMode(run, index);
       const glyphText = resolveGlyphText(run, index);
       const glyphId = run.glyphIds[index] ?? 0;
-      const fontSize = resolveFontSize(snapshot.style.fontSize);
-      const fontWeight = snapshot.style.fontWeight ?? "normal";
-      const key = glyphKey(run, glyphId, glyphText, fontSize, fontWeight, mode);
+      const identity = resolveGlyphIdentity({
+        fontFamily: run.fontFamily,
+        ...(run.fontFamilies === undefined ? {} : { fontFamilies: run.fontFamilies }),
+        fontRevision: run.fontRevision,
+        glyphId,
+        glyphText,
+        fontSize: resolveFontSize(snapshot.style.fontSize),
+        fontWeight: snapshot.style.fontWeight ?? "normal",
+        mode,
+      });
+      const key = identity.key;
       const entry = this.atlas.get(key);
       if (entry === undefined) {
-        throw new Error(`Atlas entry missing for positioned glyph: ${key}`);
+        throw new Error(`Atlas entry missing for positioned glyph: ${String(key)}`);
       }
       const outputOffset = index * 4;
       const rasterScale = entry.metrics?.rasterScale ?? 1;
@@ -549,26 +567,6 @@ function resolveGlyphText(run: Readonly<PositionedRun>, index: number): string {
   const cluster = run.clusters[index] ?? 0;
   const suffix = run.text.slice(cluster);
   return Array.from(suffix)[0] ?? "�";
-}
-
-function glyphKey(
-  run: Readonly<PositionedRun>,
-  glyphId: number,
-  glyphText: string,
-  fontSize: number,
-  fontWeight: NonNullable<TextStyleOptions["fontWeight"]>,
-  mode: GlyphMode,
-): string {
-  return [
-    run.fontFamily,
-    run.fontFamilies?.join("\u0001") ?? "",
-    run.fontRevision,
-    glyphId,
-    glyphText,
-    fontSize,
-    fontWeight,
-    mode,
-  ].join("\u0000");
 }
 
 function resolveFontSize(value: number | string | undefined): number {

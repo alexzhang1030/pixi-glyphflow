@@ -2,8 +2,11 @@ import type { TextStyleFontWeight } from "pixi.js";
 
 export type GlyphMode = "msdf" | "sdf" | "alpha" | "color";
 
+/** Atlas cache identity. Live-path keys are packed integers; strings remain valid. */
+export type GlyphCacheKey = string | number;
+
 export interface GlyphRequest {
-  readonly key: string;
+  readonly key: GlyphCacheKey;
   readonly generation: number;
 }
 
@@ -25,7 +28,7 @@ export interface GlyphMetrics {
 }
 
 export interface AtlasEntry {
-  readonly key: string;
+  readonly key: GlyphCacheKey;
   readonly generation: number;
   readonly page: number;
   readonly mode: GlyphMode;
@@ -56,7 +59,7 @@ export interface AtlasPageInfo {
 export interface AtlasCommit {
   readonly entries: readonly Readonly<AtlasEntry>[];
   readonly uploads: readonly Readonly<AtlasUpload>[];
-  readonly evictedKeys: readonly string[];
+  readonly evictedKeys: readonly GlyphCacheKey[];
 }
 
 export interface GlyphAtlasOptions {
