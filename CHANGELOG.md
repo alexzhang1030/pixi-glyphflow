@@ -32,6 +32,9 @@
   power-of-two segregated first-fit. Dirty uploads merge a 256-byte gap, collapse after eight
   ranges, and promote when dirty bytes reach 75% of the live span. Techniques adapted from
   [pmndrs/glyph](https://github.com/pmndrs/glyph). Published frame and storage ceilings stay.
+- Equal-height atlas cells pack along a next-fit shelf when they match the current row. Skyline
+  still places the first cell of a new row and mixed sizes. Eviction holes still go through the
+  waste map. Published `atlas-pressure` frame ceilings stay.
 
 ## 1.1.0 - 2026-08-15
 

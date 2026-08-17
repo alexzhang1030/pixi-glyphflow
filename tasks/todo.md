@@ -262,6 +262,11 @@
   - Verify: bun test tests/GlyphInstanceStore.test.ts tests/GlyphMesh.test.ts tests/RenderCoordinator.test.ts
   - Files: src/render/types.ts, src/render/GlyphInstanceStore.ts, src/render/GlyphMesh.ts, src/render/RenderSurface.ts
 
+- [x] Task 12.2b: Shelf-pack equal-height atlas rows (Wave 1 leftover).
+  - Acceptance: Incoming glyphs that match the current row height pack left-to-right on that shelf. A 1024×1024 page holds 4096 of 16×16 cells. Mixed heights do not overlap. Waste-map eviction reuse and Skyline fallback stay. Published frame ceilings stay.
+  - Verify: bun test tests/Packer.test.ts tests/GlyphAtlas.test.ts
+  - Files: src/atlas/Packer.ts, tests/Packer.test.ts
+
 - [x] Task 12.9: Steal hot-path techniques from pmndrs/glyph (Wave 1 leftovers).
   - Acceptance: Live atlas keys are packed integers with a string fallback; `GlyphInstanceStore` allocates from power-of-two free-list buckets; dirty publishes merge a 256-byte gap, collapse after 8 ranges, and promote at 75% of live bytes. Public `TextLayer` contract and published 32/64/128 ceilings stay. No new WASM, GLB, or `glyphMode`.
   - Verify: bun test tests/glyphIdentity.test.ts tests/GlyphAtlas.test.ts tests/GlyphInstanceStore.test.ts tests/DirtyRanges.test.ts tests/RenderCoordinator.test.ts

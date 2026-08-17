@@ -11,6 +11,13 @@ interface SkylineNode {
   width: number;
 }
 
+interface Shelf {
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+}
+
 const KEY_FIELD = 8_192;
 
 export class Packer {
@@ -19,6 +26,7 @@ export class Packer {
   readonly #free: PackedRectangle[] = [];
   readonly #allocated = new Set<number | string>();
   #skyline: SkylineNode[];
+  #shelf: Shelf | undefined;
 
   constructor(width: number, height: number) {
     assertDimension("width", width);
@@ -37,10 +45,17 @@ export class Packer {
       this.#resetIfEmpty();
       return fromWaste;
     }
+    const fromShelf = this.#allocateShelf(width, height);
+    if (fromShelf !== undefined) {
+      this.#allocated.add(rectangleKey(fromShelf, this.width, this.height));
+      return fromShelf;
+    }
     const fromSkyline = this.#allocateSkyline(width, height);
     if (fromSkyline === undefined) {
       return undefined;
     }
+    this.#carveShelf(fromSkyline);
+    this.#noteShelf(fromSkyline);
     this.#allocated.add(rectangleKey(fromSkyline, this.width, this.height));
     return fromSkyline;
   }
@@ -223,6 +238,65 @@ export class Packer {
     if (this.#free.length > 0 && holes < this.width * this.height) return;
     this.#free.length = 0;
     this.#skyline = [{ x: 0, y: 0, width: this.width }];
+    this.#shelf = undefined;
+  }
+
+  #allocateShelf(width: number, height: number): Readonly<PackedRectangle> | undefined {
+    const shelf = this.#shelf;
+    if (shelf === undefined || shelf.height !== height || shelf.width < width) {
+      return undefined;
+    }
+    const allocated = Object.freeze({ x: shelf.x, y: shelf.y, width, height });
+    shelf.x += width;
+    shelf.width -= width;
+    if (shelf.width === 0) {
+      this.#shelf = undefined;
+    }
+    this.#raiseSkyline(allocated.x, allocated.y + height, width);
+    return allocated;
+  }
+
+  #noteShelf(rectangle: PackedRectangle): void {
+    const remaining = this.#flatWidth(rectangle.x + rectangle.width, rectangle.y);
+    if (remaining <= 0) return;
+    this.#shelf = {
+      x: rectangle.x + rectangle.width,
+      y: rectangle.y,
+      width: remaining,
+      height: rectangle.height,
+    };
+  }
+
+  #carveShelf(rectangle: PackedRectangle): void {
+    const shelf = this.#shelf;
+    if (shelf === undefined) return;
+    const vertical =
+      rectangle.y < shelf.y + shelf.height && rectangle.y + rectangle.height > shelf.y;
+    const horizontal =
+      rectangle.x < shelf.x + shelf.width && rectangle.x + rectangle.width > shelf.x;
+    if (!vertical || !horizontal) return;
+    const rectangleRight = rectangle.x + rectangle.width;
+    const shelfRight = shelf.x + shelf.width;
+    if (rectangleRight < shelfRight) {
+      shelf.x = rectangleRight;
+      shelf.width = shelfRight - rectangleRight;
+      return;
+    }
+    this.#shelf = undefined;
+  }
+
+  #flatWidth(x: number, y: number): number {
+    let width = 0;
+    let cursor = x;
+    for (const node of this.#skyline) {
+      const nodeRight = node.x + node.width;
+      if (nodeRight <= cursor) continue;
+      if (node.x > cursor || node.y !== y) break;
+      const take = nodeRight - cursor;
+      width += take;
+      cursor += take;
+    }
+    return width;
   }
 }
 
