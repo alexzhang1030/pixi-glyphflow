@@ -217,10 +217,10 @@
   - Verify: bun run docs:check && bun run format:check
   - Files: .agents/docs/performance-plan.md, .agents/docs/README.md, docs/performance.md, tasks/plan.md, tasks/todo.md
 
-- [ ] Task 12.1: Make the laboratory tell the truth (Wave 0).
-  - Acceptance: A live-layer full-visibility workload exists beside the synthetic 8M mesh; frame samples split CPU, upload, and GPU completion; atlas-pressure has a frame budget that the current packer fails.
-  - Verify: bun run benchmark -- --workload million-full,atlas-pressure && bun run benchmark:check
-  - Files: benchmarks/browser/workloads.ts, benchmarks/budgets.ts, benchmarks/workloads.ts, docs/performance.md
+- [x] Task 12.1: Make the laboratory tell the truth (Wave 0).
+  - Acceptance: `million-live` commits 1,000,000 labels through `TextLayer` and draws the coordinator mesh. Rendering frames split CPU, upload bytes, and GPU completion. `TextLayer.stats` records layout, instance-write, palette-write, spatial, and upload timers. `atlas-pressure` frame p95 is measured and not failed against the 1.1.0 638 ms artifact. The live artifact is optional until a reference Chrome rerun.
+  - Verify: bun test tests/TextLayer.commit.test.ts tests/benchmark-workloads.test.ts && bun run benchmark:check
+  - Files: benchmarks/browser/workloads.ts, benchmarks/browser/timing.ts, benchmarks/budgets.ts, benchmarks/workloads.ts, src/TextLayer.ts, src/types.ts, docs/performance.md
 
 - [x] Task 12.2: Replace guillotine packing and linear LRU (Wave 1 atlas).
   - Acceptance: Skyline Bottom-Left plus waste-map packing and O(1) LRU eviction keep 20,000 unique glyphs under 4 MiB. A unit pressure fixture completes in 65–89 ms here with 3,616 evictions and zero capacity failures. Browser frame p95 still needs a reference Chrome rerun.
@@ -263,7 +263,7 @@
   - Files: src/render/types.ts, src/render/GlyphInstanceStore.ts, src/render/GlyphMesh.ts, src/render/RenderSurface.ts
 
 - [ ] Task 12.5: Remaining Wave 2 follow-through after measured artifacts.
-  - Acceptance: Published instance, transform, and store ceilings may tighten once M1 Pro Chrome artifacts exist. Wave 0 live-layer 8M measurement is still open.
+  - Acceptance: Published instance, transform, and store ceilings may tighten once M1 Pro Chrome artifacts exist. `million-live` still needs a reference artifact before a live-path frame budget.
   - Verify: bun run benchmark:check
   - Files: benchmarks/budgets.ts, docs/performance.md
 

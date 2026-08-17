@@ -106,6 +106,9 @@ export interface RenderCoordinatorStats {
   readonly removedLabels: number;
   readonly glyphs: number;
   readonly pendingGlyphs: number;
+  readonly lastLayoutMs: number;
+  readonly lastInstanceWriteMs: number;
+  readonly lastPaletteWriteMs: number;
 }
 
 interface PreparedChange {
@@ -148,6 +151,9 @@ export class RenderCoordinator {
   #removedLabels = 0;
   #lastAddedOrder = 0;
   #needsDrawSort = false;
+  #lastLayoutMs = 0;
+  #lastInstanceWriteMs = 0;
+  #lastPaletteWriteMs = 0;
   #destroyed = false;
 
   constructor(options: RenderCoordinatorOptions) {
@@ -174,8 +180,13 @@ export class RenderCoordinator {
       throw new TypeError("Render revision must be a non-negative safe integer");
     }
     validateChanges(changes);
+    this.#lastLayoutMs = 0;
+    this.#lastInstanceWriteMs = 0;
+    this.#lastPaletteWriteMs = 0;
     const ticket = ++this.#ticket;
+    const prepareStart = performance.now();
     const prepared = await Promise.all(changes.map((change) => this.#prepare(change, ticket)));
+    this.#lastLayoutMs = performance.now() - prepareStart;
     if (ticket !== this.#ticket) {
       this.#staleRevisions += 1;
       return this.#result(revision, true, 0, EMPTY_ATLAS_COMMIT, false);
@@ -189,8 +200,12 @@ export class RenderCoordinator {
       if (change.snapshot === undefined) {
         this.#runs.delete(change.slot);
         drawOrderChanged = this.#drawStates.delete(change.slot) || drawOrderChanged;
+        const instanceStart = performance.now();
         this.instances.remove(change.slot);
+        this.#lastInstanceWriteMs += performance.now() - instanceStart;
+        const paletteStart = performance.now();
         this.transforms.remove(change.slot);
+        this.#lastPaletteWriteMs += performance.now() - paletteStart;
         this.#removedLabels += 1;
         appliedLabels += 1;
         continue;
@@ -228,13 +243,16 @@ export class RenderCoordinator {
         this.#runs.get(change.slot) === undefined;
       if (sourceChanged) {
         this.#runs.set(change.slot, run);
+        const instanceStart = performance.now();
         this.instances.set(change.slot, this.#buildInstances(change.slot, run, change.snapshot), {
           skipEquality: true,
         });
+        this.#lastInstanceWriteMs += performance.now() - instanceStart;
         this.#shapedLabels += 1;
       } else {
         this.#transformOnlyLabels += 1;
       }
+      const paletteStart = performance.now();
       if (change.positionOnly === true && !sourceChanged) {
         this.transforms.setPosition(change.slot, change.snapshot.x, change.snapshot.y);
       } else {
@@ -257,6 +275,7 @@ export class RenderCoordinator {
           run.bounds,
         );
       }
+      this.#lastPaletteWriteMs += performance.now() - paletteStart;
       appliedLabels += 1;
     }
     this.#revisions += 1;
@@ -289,6 +308,9 @@ export class RenderCoordinator {
       removedLabels: this.#removedLabels,
       glyphs: this.instances.stats.activeInstances,
       pendingGlyphs: this.#pendingGlyphs.size,
+      lastLayoutMs: this.#lastLayoutMs,
+      lastInstanceWriteMs: this.#lastInstanceWriteMs,
+      lastPaletteWriteMs: this.#lastPaletteWriteMs,
     });
   }
 

@@ -23,6 +23,7 @@ import type {
   BrowserBenchmarkTimings,
 } from "../schema";
 import type { BrowserFixtureResult } from "./fixtures";
+import { completeFrame } from "./timing";
 
 const ACTIVE_ALPHA_METADATA = 0x8001_0000;
 const INSTANCE_STRIDE = GLYPH_INSTANCE_STRIDE;
@@ -51,6 +52,8 @@ export async function runGlyphflowWorkload(
   switch (configuration.workload) {
     case "million-full":
       return runMillionFull(app, configuration);
+    case "million-live":
+      return runMillionLive(app, configuration);
     case "million-viewport":
       return runMillionViewport(configuration);
     case "dynamic-counters":
@@ -85,13 +88,9 @@ async function runMillionFull(
   const drawObserver = observeInstancedDraws(app.renderer);
   const stress = createStressMesh(app.renderer, configuration.labelCount, glyphCount);
   app.stage.addChild(stress.mesh);
-  renderAndFinish(app);
+  await completeFrame(app);
   const setupMs = performance.now() - setupStart;
-  const frameMs = await sampleFrames(configuration, async () => {
-    const start = performance.now();
-    renderAndFinish(app);
-    return performance.now() - start;
-  });
+  const split = await sampleCompletedFrames(app, configuration);
   const layerStats = dense.layer.stats;
   const observed = drawObserver.read();
   const nonTransparentPixels = countNonTransparentPixels(app.renderer);
@@ -113,7 +112,7 @@ async function runMillionFull(
   stress.destroy();
   dense.layer.destroy();
 
-  return result({ setupMs, frameMs }, counters, {
+  return result({ setupMs, ...split }, counters, {
     exactResidentLabels: counters.residentLabels === configuration.labelCount,
     exactVisibleGlyphs: counters.visibleGlyphs === glyphCount,
     eightGlyphsPerLabel: glyphCount === configuration.labelCount * 8,
@@ -125,6 +124,66 @@ async function runMillionFull(
       1 + configuration.warmupFrames + configuration.sampleFrames,
     exactSubmittedInstanceCount: counters.maximumInstanceCount === glyphCount,
     nonTransparentOutput: nonTransparentPixels > 0,
+    syntheticMesh: true,
+  });
+}
+
+async function runMillionLive(
+  app: Application,
+  configuration: Readonly<BrowserBenchmarkConfiguration>,
+): Promise<Readonly<BrowserFixtureResult>> {
+  const setupStart = performance.now();
+  const dense = await createDenseLayer(
+    configuration,
+    {
+      rendering: true,
+      culling: false,
+      text: "Glyph000",
+    },
+    app.renderer,
+  );
+  app.stage.addChild(dense.layer);
+  const drawObserver = observeInstancedDraws(app.renderer);
+  await completeFrame(app);
+  const setupMs = performance.now() - setupStart;
+  const split = await sampleCompletedFrames(app, configuration, dense.layer);
+  const layerStats = dense.layer.stats;
+  const observed = drawObserver.read();
+  const nonTransparentPixels = countNonTransparentPixels(app.renderer);
+  const glyphCount = layerStats.glyphCount;
+  const counters: BrowserBenchmarkCounters = Object.freeze({
+    ...layerCounters(layerStats, glyphCount / Math.max(1, layerStats.labelCount)),
+    visibleGlyphs: glyphCount,
+    drawCalls: layerStats.drawCalls,
+    instanceBytes: glyphCount * INSTANCE_STRIDE,
+    observedDrawCalls: observed.drawCalls,
+    maximumInstanceCount: observed.maximumInstanceCount,
+    nonTransparentPixels,
+    lastLayoutMs: layerStats.lastLayoutMs,
+    lastInstanceWriteMs: layerStats.lastInstanceWriteMs,
+    lastPaletteWriteMs: layerStats.lastPaletteWriteMs,
+    lastSpatialUpdateMs: layerStats.lastSpatialUpdateMs,
+    lastUploadMs: layerStats.lastUploadMs,
+  });
+  drawObserver.destroy();
+  dense.layer.destroy();
+
+  return result({ setupMs, ...split }, counters, {
+    exactResidentLabels: counters.residentLabels === configuration.labelCount,
+    exactVisibleGlyphs: counters.visibleGlyphs === configuration.labelCount * 8,
+    eightGlyphsPerLabel: glyphCount === configuration.labelCount * 8,
+    instanceStrideBytes: INSTANCE_STRIDE,
+    transformStrideBytes: TRANSFORM_STRIDE,
+    singleDrawCall: counters.drawCalls === 1,
+    gpuDrawObserved:
+      (counters.observedDrawCalls ?? 0) >=
+      1 + configuration.warmupFrames + configuration.sampleFrames,
+    exactSubmittedInstanceCount:
+      observed.maximumInstanceCount === configuration.labelCount * 8 ||
+      layerStats.submittedGlyphs === configuration.labelCount * 8,
+    nonTransparentOutput: nonTransparentPixels > 0,
+    liveCoordinatorMesh: true,
+    splitCpuGpuSamples: split.cpuMs.length === split.frameMs.length,
   });
 }
 
@@ -354,7 +413,7 @@ async function runMultilingualStream(
     app.renderer,
   );
   app.stage.addChild(dense.layer);
-  renderAndFinish(app);
+  await completeFrame(app);
   const ids = requireIds(dense);
   const mutationCount = Math.min(configuration.mutationCount, configuration.labelCount);
   const updates = scripts.map((text, scriptIndex) =>
@@ -374,7 +433,7 @@ async function runMultilingualStream(
     const mutationDuration = performance.now() - mutationStart;
     const commitStart = performance.now();
     await dense.layer.commit();
-    renderAndFinish(app);
+    await completeFrame(app);
     const commitDuration = performance.now() - commitStart;
     if (frame >= configuration.warmupFrames) {
       mutationMs.push(mutationDuration);
@@ -420,7 +479,7 @@ async function runScaleScan(
   app.stage.addChild(viewport);
   const binding = bindViewport(dense.layer, viewport);
   await binding.whenIdle();
-  renderAndFinish(app);
+  await completeFrame(app);
   const setupMs = performance.now() - setupStart;
   const frameMs = await sampleFrames(configuration, async (frame) => {
     const progress = (frame % 32) / 31;
@@ -431,7 +490,7 @@ async function runScaleScan(
     const start = performance.now();
     viewport.emit("frame-end", viewport);
     await binding.whenIdle();
-    renderAndFinish(app);
+    await completeFrame(app);
     return performance.now() - start;
   });
   const stats = dense.layer.stats;
@@ -661,7 +720,52 @@ function layerCounters(
     shapedLabels: stats.shapedLabels,
     transformOnlyLabels: stats.transformOnlyLabels,
     cullingQueries: stats.cullingQueries,
+    lastLayoutMs: stats.lastLayoutMs,
+    lastInstanceWriteMs: stats.lastInstanceWriteMs,
+    lastPaletteWriteMs: stats.lastPaletteWriteMs,
+    lastSpatialUpdateMs: stats.lastSpatialUpdateMs,
+    lastUploadMs: stats.lastUploadMs,
   });
+}
+
+async function sampleCompletedFrames(
+  app: Application,
+  configuration: Readonly<BrowserBenchmarkConfiguration>,
+  layer?: TextLayer,
+): Promise<
+  Readonly<{
+    frameMs: readonly number[];
+    cpuMs: readonly number[];
+    gpuMs: readonly number[];
+    uploadBytes: readonly number[];
+  }>
+> {
+  const frameMs: number[] = [];
+  const cpuMs: number[] = [];
+  const gpuMs: number[] = [];
+  const uploadBytes: number[] = [];
+  const total = configuration.warmupFrames + configuration.sampleFrames;
+  for (let frame = 0; frame < total; frame += 1) {
+    const beforeUpload = layer === undefined ? 0 : uploadTotal(layer);
+    const sample = await completeFrame(app);
+    if (frame < configuration.warmupFrames) continue;
+    frameMs.push(sample.frameMs);
+    cpuMs.push(sample.cpuMs);
+    gpuMs.push(sample.gpuMs);
+    uploadBytes.push(layer === undefined ? 0 : Math.max(0, uploadTotal(layer) - beforeUpload));
+  }
+
+  return Object.freeze({
+    frameMs: Object.freeze(frameMs),
+    cpuMs: Object.freeze(cpuMs),
+    gpuMs: Object.freeze(gpuMs),
+    uploadBytes: Object.freeze(uploadBytes),
+  });
+}
+
+function uploadTotal(layer: TextLayer): number {
+  const stats = layer.stats;
+  return stats.instanceUploadBytes + stats.transformUploadBytes + stats.atlasUploadBytes;
 }
 
 function result(
@@ -674,11 +778,6 @@ function result(
     counters,
     invariants: Object.freeze(invariants),
   });
-}
-
-function renderAndFinish(app: Application): void {
-  app.render();
-  if ("gl" in app.renderer) app.renderer.gl.finish();
 }
 
 function observeInstancedDraws(renderer: Renderer): Readonly<{

@@ -39,7 +39,7 @@ if (latest === undefined) {
 lines.push(
   "## Method",
   "",
-  "Each workload starts in an isolated Chrome process. Setup, warmup, mutation, commit, culling, and frame samples are recorded separately. The full-visibility fixture submits one instanced draw containing eight million glyphs. Viewport workloads use pixi-viewport drag, deceleration, wheel, pinch, zoom, and camera rotation events over one million resident labels.",
+  "Each workload starts in an isolated Chrome process. Setup, warmup, mutation, commit, culling, and frame samples are recorded separately. Rendering frames split CPU JS, upload bytes, and GPU completion (`gl.finish()` / `onSubmittedWorkDone`). `million-full` is the synthetic 8M-instance GPU probe. `million-live` commits one million labels through `TextLayer` and draws the coordinator mesh. Viewport workloads use pixi-viewport drag, deceleration, wheel, pinch, zoom, and camera rotation events over one million resident labels.",
   "",
   "## Workload results",
   "",

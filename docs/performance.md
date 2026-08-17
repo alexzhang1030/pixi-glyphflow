@@ -61,9 +61,11 @@ Setup time covers layer construction, label insertion, the initial commit, and f
 allocation. Frame time covers the workload operation and its completion boundary. Mutation and
 commit distributions separate synchronous intake from publication work.
 
-The full-visibility fixture records actual `drawElementsInstanced` calls, maximum submitted instance
-count, and non-transparent framebuffer output. This evidence connects logical counters to a real GPU
-submission path.
+The synthetic full-visibility fixture (`million-full`) records actual `drawElementsInstanced` calls,
+maximum submitted instance count, and non-transparent framebuffer output. `million-live` commits the
+same label set through `TextLayer` and draws the coordinator mesh. Rendering frames split CPU JS,
+upload bytes, and GPU completion. This evidence connects logical counters to a real GPU submission
+path.
 
 Atlas pages share an eight-texture draw bank. Page-alternating multilingual runs retain instance
 order while consuming one PixiJS local-uniform slot per bank, keeping WebGPU submission below its
@@ -78,16 +80,18 @@ how far the current code can go:
   activation. The same artifact records 638.50 ms frame p95 while packing 20,000 unique glyphs.
 - `dynamic-counters` sits at 16.40 ms frame p95, 0.27 ms under the 16.67 ms wall.
 - `million-full` draws a synthetic 8,000,000-instance mesh. It proves one instanced GPU
-  submission, not the live `TextLayer` commit, cull, and instance-build path.
+  submission. `million-live` is the product-path workload; it has no 1.1.0 artifact yet.
 
 Wave 1 of that program is in source: Skyline atlas packing, per-mode O(1) LRU, typed instance
 writes, numeric fill packing, and a hierarchical hash grid. Wave 2 has started without changing
 published ceilings: shared styles intern, position-only commits patch 16 palette bytes,
 z-index is `Float32`, fill-only GPU transforms use 32 bytes with a sparse effect tail, the
 CPU store packs non-position columns so one million reserved slots stay within 48 MiB plus
-the journal floor, and live glyph instances use 24 bytes. The
-40 KiB core gzip CI gate is deferred; the check still prints the graph size. Published browser
-artifacts remain 1.1.0 until the isolated Chrome suite is rerun on the reference fixture. The
+the journal floor, and live glyph instances use 24 bytes. Wave 0 adds `million-live`, split
+CPU/upload/GPU frame samples, and commit phase timers. The
+40 KiB core gzip and `atlas-pressure` frame CI gates are deferred; the check still prints those
+sizes. Published browser artifacts remain 1.1.0 until the isolated Chrome suite is rerun on the
+reference fixture. The
 next program is recorded in
 [`.agents/docs/performance-plan.md`](../.agents/docs/performance-plan.md). Published frame and
 storage budgets stay until a human accepts new numbers.

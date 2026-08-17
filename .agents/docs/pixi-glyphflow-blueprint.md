@@ -268,7 +268,8 @@ TextLayerStats includes:
 - atlas pages, bytes, uploads, evictions, repacks, and generation swaps;
 - draw calls, batch breaks, effect passes, submitted glyphs, and culled labels;
 - CPU store bytes, GPU instance bytes, staging high-water mark, and upload bytes;
-- worker queue depth, stale results, fallbacks, and last commit timings.
+- worker queue depth, stale results, fallbacks, and last commit timings;
+- last layout, instance-write, palette-write, spatial-update, and upload milliseconds.
 
 Diagnostics snapshots are immutable and allocation occurs only when the stats getter is read.
 
@@ -277,6 +278,7 @@ Diagnostics snapshots are immutable and allocation occurs only when the stats ge
 | Workload | Fixture | Primary pressure |
 | --- | --- | --- |
 | Million-label full visibility | 1,000,000 labels and 8,000,000 representative visible glyphs | Instance capacity, draw submission, memory, GPU throughput |
+| Million-label live visibility | Same scale through the live `TextLayer` coordinator mesh | Layout, atlas, instance build, upload, and GPU completion |
 | Million-label viewport | 1,000,000 resident labels with a deterministic visible subset | Spatial indexing, culling, steady-state traversal |
 | Dynamic counters | 1,000,000 resident labels with 100,000 text and transform mutations per commit | Bulk mutation intake, shape cache, dirty compaction, partial upload |
 | Viewport drag | 1,000,000 resident labels, 50,000 visible labels, continuous drag and deceleration | Camera transforms, visible-set queries, allocation stability |

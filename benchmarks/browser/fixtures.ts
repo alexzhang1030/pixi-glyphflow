@@ -7,6 +7,7 @@ import type {
   BrowserBenchmarkFixture,
   BrowserBenchmarkTimings,
 } from "../schema";
+import { completeFrame } from "./timing";
 
 export interface StaticHudFixtureOptions {
   readonly fixture: BrowserBenchmarkFixture;
@@ -42,23 +43,31 @@ export async function runStaticHudFixture(
   const setupStart = performance.now();
   const handle = await createFixture(app, options.fixture, content);
   app.stage.addChild(handle.container);
-  renderAndFinish(app);
+  await completeFrame(app);
   await handle.prepare?.();
-  renderAndFinish(app);
+  await completeFrame(app);
   const setupMs = performance.now() - setupStart;
 
-  for (let frame = 0; frame < options.warmupFrames; frame += 1) renderAndFinish(app);
+  for (let frame = 0; frame < options.warmupFrames; frame += 1) await completeFrame(app);
   const frameMs: number[] = [];
+  const cpuMs: number[] = [];
+  const gpuMs: number[] = [];
   for (let frame = 0; frame < options.sampleFrames; frame += 1) {
-    const start = performance.now();
-    renderAndFinish(app);
-    frameMs.push(performance.now() - start);
+    const sample = await completeFrame(app);
+    frameMs.push(sample.frameMs);
+    cpuMs.push(sample.cpuMs);
+    gpuMs.push(sample.gpuMs);
   }
   const counters = handle.counters;
   handle.destroy();
 
   return Object.freeze({
-    timings: Object.freeze({ setupMs, frameMs: Object.freeze(frameMs) }),
+    timings: Object.freeze({
+      setupMs,
+      frameMs: Object.freeze(frameMs),
+      cpuMs: Object.freeze(cpuMs),
+      gpuMs: Object.freeze(gpuMs),
+    }),
     counters,
     invariants: Object.freeze({
       exactLabelCount: counters.residentLabels === options.labelCount,
@@ -161,11 +170,6 @@ function countGlyphs(content: readonly Readonly<TextLabelSpec>[]): number {
   for (const spec of content) count += Array.from(spec.text).length;
 
   return count;
-}
-
-function renderAndFinish(app: Application): void {
-  app.render();
-  if ("gl" in app.renderer) app.renderer.gl.finish();
 }
 
 async function waitForHtmlTextures(app: Application, labels: readonly HTMLText[]): Promise<void> {

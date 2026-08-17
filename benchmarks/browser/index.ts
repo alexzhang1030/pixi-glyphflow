@@ -1,16 +1,15 @@
 import { Application } from "pixi.js";
 
-import type {
-  BrowserBenchmarkConfiguration,
-  BrowserBenchmarkFixture,
-  BrowserBenchmarkPageState,
-  BrowserBenchmarkWorkload,
+import {
+  BENCHMARK_SCHEMA_VERSION,
+  type BrowserBenchmarkConfiguration,
+  type BrowserBenchmarkFixture,
+  type BrowserBenchmarkPageState,
+  type BrowserBenchmarkWorkload,
 } from "../schema";
 import { isBenchmarkWorkload } from "../workloads";
 import { runStaticHudFixture } from "./fixtures";
 import { runGlyphflowWorkload } from "./workloads";
-
-const BROWSER_BENCHMARK_SCHEMA_VERSION = 3;
 
 declare global {
   interface Window {
@@ -52,7 +51,7 @@ async function run(): Promise<void> {
   window.__glyphflowBenchmark = {
     done: true,
     result: Object.freeze({
-      schemaVersion: BROWSER_BENCHMARK_SCHEMA_VERSION,
+      schemaVersion: BENCHMARK_SCHEMA_VERSION,
       kind: "pixi-glyphflow-browser-sample",
       capturedAt: new Date().toISOString(),
       userAgent: navigator.userAgent,

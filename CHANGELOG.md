@@ -24,6 +24,10 @@
 - Live glyph instances pack the local rectangle as four `f16` values and occupy 24 bytes. The mesh
   binds that field as `uint32x2` and shaders unpack it, so WebGL 2 does not need `HALF_FLOAT`
   instance attributes. The published 32-byte ceiling stays until new artifacts exist.
+- Wave 0 laboratory: `million-live` draws the coordinator mesh for one million labels; rendering
+  frames split CPU JS, upload bytes, and GPU completion; `TextLayer.stats` records layout,
+  instance-write, palette-write, spatial, and upload timers. `atlas-pressure` frame p95 is
+  measured and not failed against the 1.1.0 artifact.
 
 ## 1.1.0 - 2026-08-15
 

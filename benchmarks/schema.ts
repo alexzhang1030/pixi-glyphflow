@@ -10,7 +10,7 @@ export interface BenchmarkDistribution {
   readonly max: number;
 }
 
-export const BENCHMARK_SCHEMA_VERSION = 3;
+export const BENCHMARK_SCHEMA_VERSION = 4;
 
 export type BrowserBenchmarkFixture = "bitmap-text" | "glyphflow" | "html-text" | "text";
 
@@ -18,6 +18,7 @@ export type BrowserBenchmarkWorkload =
   | "atlas-pressure"
   | "dynamic-counters"
   | "million-full"
+  | "million-live"
   | "million-viewport"
   | "multilingual-stream"
   | "position-storm"
@@ -41,6 +42,9 @@ export interface BrowserBenchmarkConfiguration {
 export interface BrowserBenchmarkTimings {
   readonly setupMs: number;
   readonly frameMs: readonly number[];
+  readonly cpuMs?: readonly number[];
+  readonly gpuMs?: readonly number[];
+  readonly uploadBytes?: readonly number[];
   readonly mutationMs?: readonly number[];
   readonly commitMs?: readonly number[];
   readonly cullingMs?: readonly number[];
@@ -68,6 +72,11 @@ export interface BrowserBenchmarkCounters {
   readonly observedDrawCalls?: number;
   readonly maximumInstanceCount?: number;
   readonly nonTransparentPixels?: number;
+  readonly lastLayoutMs?: number;
+  readonly lastInstanceWriteMs?: number;
+  readonly lastPaletteWriteMs?: number;
+  readonly lastSpatialUpdateMs?: number;
+  readonly lastUploadMs?: number;
 }
 
 export interface BrowserBenchmarkSample {

@@ -8,6 +8,8 @@ export interface BenchmarkWorkloadDefinition {
   readonly warmupFrames: number;
   readonly sampleFrames: number;
   readonly timeoutMs: number;
+  /** Formal 1.1.0 artifacts omit this laboratory workload until a reference Chrome rerun. */
+  readonly artifactRequired?: boolean;
 }
 
 export const BENCHMARK_WORKLOADS: readonly Readonly<BenchmarkWorkloadDefinition>[] = Object.freeze([
@@ -78,12 +80,22 @@ export const BENCHMARK_WORKLOADS: readonly Readonly<BenchmarkWorkloadDefinition>
   ),
   define(
     "million-full",
-    "One million labels and eight million visible glyph instances",
+    "Synthetic eight-million-instance GPU probe beside a TextLayer store",
     1_000_000,
     1,
     1,
     5,
     600_000,
+  ),
+  define(
+    "million-live",
+    "Live TextLayer full visibility: one million labels through the coordinator mesh",
+    1_000_000,
+    1,
+    1,
+    5,
+    600_000,
+    false,
   ),
 ]);
 
@@ -108,6 +120,7 @@ function define(
   warmupFrames: number,
   sampleFrames: number,
   timeoutMs = 120_000,
+  artifactRequired = true,
 ): Readonly<BenchmarkWorkloadDefinition> {
   return Object.freeze({
     id,
@@ -117,5 +130,6 @@ function define(
     warmupFrames,
     sampleFrames,
     timeoutMs,
+    artifactRequired,
   });
 }
