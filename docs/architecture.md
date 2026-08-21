@@ -107,9 +107,21 @@ minimum texture-unit budget and the WebGPU minimum sampled-texture limit.
 caller-owned typed arrays. `ViewportBinding` converts pixi-viewport camera corners through the layer
 transform, coalesces the current input burst, updates culling bounds, and publishes visibility work.
 
+WebGPU compute culling keeps two sets. The CPU grid shapes and instances labels from an expanded
+working viewport. A stable prefix sum and scatter compact those resident glyphs against the tight
+padded draw viewport. Camera motion inside the working viewport does not query the grid or write the
+instance store. Crossing its edge refreshes residency and uploads cull records.
+
+The direct natural-order `GlyphMesh` rebinds its instance attributes to the compact buffer and uses
+an indexed indirect draw. The encoder hook checks geometry ownership and is removed when the pass is
+destroyed. WebGL, missing devices, disabled compute culling, and multi-segment meshes retain the
+tight CPU-grid path.
+
 ## Diagnostics
 
 `TextLayer.stats` allocates one immutable snapshot at read time. It reports CPU capacity, dirty
-domains, revisions, shaping, visible labels, spatial queries, renderer backend, draw calls, glyphs,
-pending glyphs, upload bytes, and last-commit layout, instance-write, palette-write, spatial, and
-upload milliseconds.
+domains, revisions, shaping, visible labels, spatial queries, renderer backend, cull path, draw
+calls, glyphs, pending glyphs, upload bytes, and last-commit layout, instance-write, palette-write,
+spatial, and upload milliseconds. `visibleLabelCount` is the instanced working set. On the CPU grid
+that set is the tight padded viewport. On compute cull it is the expanded residency query. The
+getter does not walk the grid.

@@ -39,6 +39,10 @@ and diagnostics.
 `TextId` includes a layer namespace, slot, and generation. Stale and foreign identities fail bulk
 validation before state publication.
 
+`TextLayerCullingOptions.computeCull` accepts `true`, `false`, or `"auto"`. The default is `"auto"`.
+Automatic mode uses compute compaction only when the attached WebGPU device and the mesh shape
+support it. WebGL, unavailable devices, and `false` use the CPU grid.
+
 `showAll()` and `hideAll()` return the number of labels whose `visible` state changed. Repeated calls
 return `0` and preserve revision state. One following `commit()` publishes the complete visibility
 change through culling, hit testing, accessibility, and the active WebGL or WebGPU renderer.
@@ -145,3 +149,7 @@ minimum source resolution for dynamic MSDF/SDF glyphs and defaults to `48`. The 
 physical-to-logical raster scale so layout, stroke, and shadow dimensions remain stable.
 `createMsdfGenerator` supplies explicit worker and WebAssembly URLs for production bundlers. Each
 worker serializes font loading and atlas generation; separate workers execute in parallel.
+
+`TextLayerStats.cullPath` is either `"compute-cull"` or `"cpu-grid"` and names the path used by the
+latest draw preparation. The root entry exports the `CullPath` type. Compute shader and pass
+internals are not root exports.

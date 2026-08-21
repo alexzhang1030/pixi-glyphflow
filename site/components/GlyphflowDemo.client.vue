@@ -4,6 +4,7 @@ import msdfWasmUrl from "@zappar/msdf-generator/msdfgen_wasm.wasm?url";
 import msdfWorkerUrl from "@zappar/msdf-generator/worker.js?worker&url";
 import {
   TextLayer,
+  type CullPath,
   type TextId,
   type TextLabelSpec,
   type TextShapingOptions,
@@ -73,6 +74,14 @@ const numberFormat = new Intl.NumberFormat("en-US");
 type RendererBackend = "webgl" | "webgpu";
 type WebGpuCapability = "checking" | "available" | "unavailable";
 
+function resolveDemoBackend(
+  query: RendererBackend | undefined,
+  capability: Exclude<WebGpuCapability, "checking">,
+): RendererBackend {
+  if (query !== undefined) return query;
+  return capability === "available" ? "webgpu" : "webgl";
+}
+
 const canvasHost = ref<HTMLElement>();
 const state = ref<"booting" | "ready" | "error">("booting");
 const errorMessage = ref("");
@@ -98,12 +107,22 @@ const viewportDuration = ref("0.00 ms");
 const fps = ref("0");
 const fontStatus = ref("Loading custom fonts");
 const fontFootprint = ref("0 KiB");
+const cullPath = ref<CullPath>("cpu-grid");
 const rendererName = computed(() => formatRenderer(activeBackend.value ?? requestedBackend.value));
 
 const webGpuCapabilityLabel = computed(() => {
-  if (webGpuCapability.value === "available") return "WebGPU available";
-  if (webGpuCapability.value === "unavailable") return "WebGPU unavailable";
-  return "Checking WebGPU";
+  switch (webGpuCapability.value) {
+    case "available":
+      return "WebGPU available";
+    case "unavailable":
+      return "WebGPU unavailable";
+    case "checking":
+      return "Checking WebGPU";
+    default: {
+      const _exhaustive: never = webGpuCapability.value;
+      return _exhaustive;
+    }
+  }
 });
 
 const stateLabel = computed(() => {
@@ -129,11 +148,19 @@ let destroyed = false;
 let rendererRun = 0;
 let customFontsPromise: Promise<readonly Readonly<LoadedFontAsset>[]> | undefined;
 
-onMounted(() => {
+onMounted(async () => {
   stormEnabled.value = !window.matchMedia("(prefers-reduced-motion: reduce)").matches;
-  requestedBackend.value = readInitialBackend();
-  void probeWebGpu();
-  void restartRenderer(requestedBackend.value);
+  const query = readRendererQuery();
+  if (query === "webgl") {
+    void probeWebGpu();
+    void restartRenderer(resolveDemoBackend(query, "unavailable"));
+    return;
+  }
+  await probeWebGpu();
+  if (destroyed) return;
+  const capability = webGpuCapability.value;
+  if (capability === "checking") return;
+  void restartRenderer(resolveDemoBackend(query, capability));
 });
 
 onBeforeUnmount(() => {
@@ -190,10 +217,15 @@ async function probeWebGpu(): Promise<void> {
   }
 }
 
-function readInitialBackend(): RendererBackend {
-  return new URL(window.location.href).searchParams.get("renderer") === "webgpu"
-    ? "webgpu"
-    : "webgl";
+function readRendererQuery(): RendererBackend | undefined {
+  const value = new URL(window.location.href).searchParams.get("renderer");
+  switch (value) {
+    case "webgl":
+    case "webgpu":
+      return value;
+    default:
+      return undefined;
+  }
 }
 
 function updateRendererQuery(backend: RendererBackend): void {
@@ -218,6 +250,7 @@ function resetHud(): void {
   fps.value = "0";
   fontStatus.value = "Loading custom fonts";
   fontFootprint.value = "0 KiB";
+  cullPath.value = "cpu-grid";
   allVisible.value = true;
   visibilityPending.value = false;
   rotationDegrees.value = 0;
@@ -295,6 +328,7 @@ async function initialize(backend: RendererBackend, runId: number): Promise<void
     culling: {
       bounds: { x: 0, y: 0, width: nextApp.screen.width, height: nextApp.screen.height },
       padding: 48,
+      computeCull: "auto",
     },
   });
   layer = nextLayer;
@@ -504,6 +538,7 @@ function updateHud(overrideViewportDuration?: number): void {
   glyphs.value = numberFormat.format(stats.submittedGlyphs);
   drawCalls.value = stats.drawCalls;
   atlasTextures.value = stats.atlasTextureCount;
+  cullPath.value = stats.cullPath;
   viewportDuration.value = `${(
     overrideViewportDuration ?? nextBinding.stats.lastDurationMs
   ).toFixed(2)} ms`;
@@ -694,6 +729,7 @@ async function loadCustomFonts(): Promise<readonly Readonly<LoadedFontAsset>[]> 
     data-testid="glyphflow-demo"
     :data-demo-state="state"
     :data-renderer-backend="activeBackend"
+    :data-cull-path="cullPath"
     :data-pending-glyphs="pendingGlyphs"
     :data-draw-calls="drawCalls"
     :data-atlas-textures="atlasTextures"
@@ -803,6 +839,10 @@ async function loadCustomFonts(): Promise<readonly Readonly<LoadedFontAsset>[]> 
           <dd>
             <span data-testid="renderer-adapter">{{ rendererName }}</span> · {{ fps }} FPS
           </dd>
+        </div>
+        <div>
+          <dt>Cull path</dt>
+          <dd data-testid="cull-path">{{ cullPath }}</dd>
         </div>
         <div>
           <dt>Font pipeline</dt>

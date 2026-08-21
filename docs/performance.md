@@ -89,7 +89,9 @@ without changing
 published ceilings: shared styles intern, position-only commits patch 16 palette bytes,
 z-index is `Float32`, fill-only GPU transforms use 32 bytes with a sparse effect tail, the
 CPU store packs non-position columns so one million reserved slots stay within 48 MiB plus
-the journal floor, and live glyph instances use 24 bytes. Wave 0 adds `million-live`, split
+the journal floor, and live glyph instances use 24 bytes. Wave 3 adds stable WebGPU compute
+compaction on the direct natural-order mesh. Camera frames inside an expanded CPU working set upload
+only the tight draw viewport. WebGL keeps the tight CPU grid. Wave 0 adds `million-live`, split
 CPU/upload/GPU frame samples, and commit phase timers. The
 40 KiB core gzip and `atlas-pressure` frame CI gates are deferred; the check still prints those
 sizes. Published browser artifacts remain 1.1.0 until the isolated Chrome suite is rerun on the
@@ -104,6 +106,8 @@ storage budgets stay until a human accepts new numbers.
 - Reuse `Float64Array` IDs and `Float32Array` position buffers.
 - Use `updatePositions` for movement and `updateTextPositions` for counter-style streams.
 - Keep viewport culling enabled for large worlds.
+- Leave `computeCull` at `"auto"` for WebGPU camera workloads. Set it to `false` to force the
+  WebGL-compatible CPU grid.
 - Reuse styles and fonts to maximize shaping and layout cache hits.
 - Set an atlas ceiling that matches the product glyph working set.
 - Read diagnostics at telemetry cadence.

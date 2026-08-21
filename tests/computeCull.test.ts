@@ -8,8 +8,8 @@ import {
   expandWorkingSet,
   packCullRecords,
   resolveCullPath,
+  shouldRefreshResidency,
   workingSetContains,
-  workingSetSlack,
 } from "../src/culling/computeCull";
 import { GLYPH_INSTANCE_STRIDE } from "../src/render/types";
 
@@ -108,9 +108,59 @@ describe("compute cull host reference", () => {
 
   test("keeps a camera move inside the working set off the CPU grid", () => {
     const draw = { x: 0, y: 0, width: 100, height: 100, padding: 0 };
-    const instanced = expandWorkingSet(draw, workingSetSlack(draw));
+    const instanced = expandWorkingSet(draw, Math.max(draw.width, draw.height));
     expect(workingSetContains(instanced, { ...draw, x: 40 })).toBe(true);
     expect(workingSetContains(instanced, { ...draw, x: 950 })).toBe(false);
     expect(aabbVisible(1000, 10, 1008, 20, instanced)).toBe(false);
+  });
+
+  test("refreshes residency only when the selected path needs CPU work", () => {
+    const draw = { x: 0, y: 0, width: 100, height: 100, padding: 8 };
+    const instanced = expandWorkingSet(draw, Math.max(draw.width, draw.height));
+    expect(
+      shouldRefreshResidency({
+        cullPath: "compute-cull",
+        hasLabelChanges: false,
+        visibilityDirty: false,
+        instanced,
+        draw: { ...draw, x: 40 },
+      }),
+    ).toBe(false);
+    expect(
+      shouldRefreshResidency({
+        cullPath: "compute-cull",
+        hasLabelChanges: false,
+        visibilityDirty: false,
+        instanced,
+        draw: { ...draw, x: 950 },
+      }),
+    ).toBe(true);
+    expect(
+      shouldRefreshResidency({
+        cullPath: "compute-cull",
+        hasLabelChanges: true,
+        visibilityDirty: false,
+        instanced,
+        draw,
+      }),
+    ).toBe(true);
+    expect(
+      shouldRefreshResidency({
+        cullPath: "compute-cull",
+        hasLabelChanges: false,
+        visibilityDirty: true,
+        instanced,
+        draw,
+      }),
+    ).toBe(true);
+    expect(
+      shouldRefreshResidency({
+        cullPath: "cpu-grid",
+        hasLabelChanges: false,
+        visibilityDirty: false,
+        instanced,
+        draw,
+      }),
+    ).toBe(true);
   });
 });

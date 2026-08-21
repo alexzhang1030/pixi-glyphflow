@@ -18,6 +18,7 @@ const labels = new TextLayer({
   culling: {
     bounds: { x: 0, y: 0, width: 1280, height: 720 },
     padding: 32,
+    computeCull: "auto",
   },
 });
 app.stage.addChild(labels);
@@ -59,6 +60,7 @@ console.table({
   revision: labels.stats.revision,
   visible: labels.stats.visibleLabelCount,
   glyphs: labels.stats.submittedGlyphs,
+  cullPath: labels.stats.cullPath,
 });`;
 
 const fontCode = `const productFonts = [

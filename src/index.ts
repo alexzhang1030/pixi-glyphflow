@@ -1,6 +1,7 @@
 export { FontRegistry } from "./FontRegistry";
 export { TextLayer } from "./TextLayer";
 export type {
+  CullPath,
   TextGroupId,
   TextId,
   TextCompactionResult,

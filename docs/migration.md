@@ -22,9 +22,12 @@ Pass the renderer during construction or call `attach` before the first rendered
 const layer = new TextLayer({
   renderer: app.renderer,
   initialCapacity: expectedLabels,
-  culling: { bounds: initialViewportBounds },
+  culling: { bounds: initialViewportBounds, computeCull: "auto" },
 });
 ```
+
+`computeCull` defaults to `"auto"`, so existing constructors do not need the explicit field. Set it
+to `false` when an application requires the CPU-grid path on every renderer.
 
 ## Mutation calls
 
@@ -47,8 +50,8 @@ explicit.
 ## Diagnostics
 
 Use `stats.backend === "glyphflow-core"`. Capacity and memory fields support operational alerts.
-`visibleLabelCount`, `cullingQueries`, `drawCalls`, `submittedGlyphs`, and upload byte fields support
-camera and rendering telemetry.
+`visibleLabelCount`, `cullingQueries`, `cullPath`, `drawCalls`, `submittedGlyphs`, and upload byte
+fields support camera and rendering telemetry.
 
 ## Viewport scenes
 

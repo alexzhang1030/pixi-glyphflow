@@ -8,6 +8,16 @@ Keep the 24-byte CPU layout (four `f16` local-rect components). Bind the rect as
 
 Do not revert to 32-byte `float32x4` rects to make CI green.
 
+## Compute culling needs a larger CPU working set than its draw set
+
+When culling has viewport bounds, never instance `SpatialIndex.queryAll()` for compute culling. A
+million-label world can exceed the 16,777,216-glyph instance ceiling before the GPU removes
+offscreen labels.
+
+Do not instance only the tight draw viewport either. Every camera frame would cross the residency
+edge and run the CPU grid again. Query the expanded working viewport with zero query padding, then
+let compute culling compact those resident instances against the tight padded draw viewport.
+
 ## Live atlas keys omit `glyphText` when a glyph id is present
 
 Packed identities are family intern + glyph id + size bucket + weight class + mode + font revision. Rasterize must use the same size bucket as the key. String keys stay valid for `atlas-pressure` (`glyph-${index}`), prebuilt pages, non-BMP text with glyph id 0, and unusual weights. Do not put `glyphText` back into the packed key, and do not fall back to `float16x4` instance attributes.

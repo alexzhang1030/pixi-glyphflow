@@ -2,7 +2,7 @@
 
 Status: unstamped research and implementation program dated 2026-08-16.
 
-The current conclusion: Waves 0–2 are in the tree. Keep the 1.1.0 public contract and instanced MSDF/SDF/alpha/color path. Atlas packing is Skyline plus a waste map, a next-fit equal-height shelf, and per-mode O(1) LRU; instances write through typed arrays; numeric fills skip `Color`; spatial queries use a hierarchical hash grid; shared styles intern to one frozen object; position-only commits patch palette x/y texels; z-index is `Float32` in the store and spatial index; fill-only GPU transforms use two `rgba32float` texels (32 bytes) and stroke/shadow live in a sparse tail after the core region; the CPU store packs scale/rotation/alpha/anchors as `f16`, generations and source revisions as `u16`, and occupied/visible/kind into one flag byte, and the dirty journal keeps a sparse slot list; live glyph instances use 24 bytes (four `f16` local-rect components, bound as `uint32x2` and unpacked in the shader). Live atlas keys pack to 52-bit integers; the instance free list is power-of-two segregated; dirty uploads merge a 256-byte gap, collapse after 8 ranges, and promote when dirty bytes reach 75% of the live span. Wave 0 adds `million-live` (coordinator mesh, not `createStressMesh`), splits rendering frames into CPU / upload / GPU completion, and records layout, instance-write, palette-write, spatial, and upload timers on `TextLayer.stats`. The 40 KiB core gzip and `atlas-pressure` frame CI gates stay deferred — do not fail the 1.1.0 638 ms artifact. Published browser artifacts are still 1.1.0; `million-live` has no reference artifact yet. Slug and Vello stay optional quality tracks.
+The current conclusion: Waves 0–3 are in the tree. Keep the 1.1.0 public contract and instanced MSDF/SDF/alpha/color path. Atlas packing is Skyline plus a waste map, a next-fit equal-height shelf, and per-mode O(1) LRU; instances write through typed arrays; numeric fills skip `Color`; spatial queries use a hierarchical hash grid; shared styles intern to one frozen object; position-only commits patch palette x/y texels; z-index is `Float32` in the store and spatial index; fill-only GPU transforms use two `rgba32float` texels (32 bytes) and stroke/shadow live in a sparse tail after the core region; the CPU store packs scale/rotation/alpha/anchors as `f16`, generations and source revisions as `u16`, and occupied/visible/kind into one flag byte, and the dirty journal keeps a sparse slot list; live glyph instances use 24 bytes (four `f16` local-rect components, bound as `uint32x2` and unpacked in the shader). Live atlas keys pack to 52-bit integers; the instance free list is power-of-two segregated; dirty uploads merge a 256-byte gap, collapse after 8 ranges, and promote when dirty bytes reach 75% of the live span. WebGPU camera frames keep an expanded CPU working set and use stable prefix-sum compaction for the tight draw viewport on the direct natural-order mesh. WebGL and unsupported WebGPU draws keep the tight CPU grid path. Wave 0 adds `million-live` (coordinator mesh, not `createStressMesh`), splits rendering frames into CPU / upload / GPU completion, and records layout, instance-write, palette-write, spatial, and upload timers on `TextLayer.stats`. The 40 KiB core gzip and `atlas-pressure` frame CI gates stay deferred. Do not fail the 1.1.0 638 ms artifact. Published browser artifacts are still 1.1.0; `million-live` has no reference artifact yet. Slug and Vello stay optional quality tracks.
 
 This record is the research ledger and delivery sequence. Published numbers stay in [`docs/performance.md`](../../docs/performance.md) and [`benchmarks/PERFORMANCE.md`](../../benchmarks/PERFORMANCE.md). The 1.0 specification still owns budgets until a human tightens them.
 
@@ -62,6 +62,14 @@ The published 128 MiB store and 64-byte transform ceilings stay until new M1 Pro
 ### Culling was a full-resident scan
 
 `SpatialIndex.query` and `hitTest` now walk a size-classed hash grid and fall back to the linear scan only when the query would visit most residents. The 1.1.0 artifacts still measure the linear path.
+
+### WebGPU camera frames compact an expanded working set
+
+Compute culling separates CPU residency from the submitted draw set. The CPU grid shapes and
+instances an expanded viewport. Camera motion inside that box uploads one tight viewport uniform
+and dispatches stable prefix-sum compaction without rebuilding instances. Crossing the working-set
+edge refreshes residency through another expanded grid query. WebGL and multi-segment meshes keep
+the tight CPU-grid path.
 
 ### The million-glyph GPU path is not the product path
 
@@ -185,9 +193,15 @@ Verify: existing storage assertions in `benchmarks/budgets.ts` plus new optional
 
 WebGL 2 keeps the Wave 1 CPU grid. WebGPU gains a second adapter that does not walk JS arrays on camera-only frames.
 
-- Move the transform palette from an `rgba32float` texture to a storage buffer. Eight atlas pages can become a 2D texture array so the fragment shader indexes one binding instead of eight.
-- Upload label bounds once. A compute pass tests the viewport (or OBB for rotation), writes a compacted instance-index buffer, and patches `drawIndirect` arguments. No CPU readback on the hot path.
-- Preserve insertion order and z-index. Do not use atomic append order for visible text. Prefix-sum or per-bin stable counts, then scatter.
+- The direct natural-order mesh now uploads label bounds with instance ranges. A compute pass tests
+  the tight viewport, writes compacted instances, and patches indirect draw arguments.
+- Camera-only commits inside the expanded CPU working set upload only the viewport uniform. Residency
+  refreshes pack records and upload instances again.
+- Prefix sums and stable scatter preserve z-index and insertion order without atomic append order.
+- WebGL, missing WebGPU devices, `computeCull: false`, and multi-segment compact meshes keep the
+  tight CPU grid.
+- Moving the transform palette to a storage buffer and combining atlas pages into a texture array
+  remain follow-up work.
 - Optional LOD: drop or downsample glyphs whose projected height is below one pixel, following map-label practice. This is a policy flag, default off, because it changes pixels.
 
 Primary targets: camera-only CPU ≤ 1.00 ms p95 at 1,000,000 residents / 50,000 visible; WebGPU `viewport-drag` and `viewport-zoom` at or below the Wave 1 CPU-grid numbers; WebGL 2 unchanged within variance.

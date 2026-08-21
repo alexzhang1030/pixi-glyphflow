@@ -23,7 +23,10 @@ points through exact aliases to `dist/`.
 
 `components/GlyphflowDemo.client.vue` runs the public package surface with:
 
-- a forced WebGL 2 / WebGPU selector that rebuilds the complete PixiJS scene;
+- a WebGL 2 or WebGPU selector that rebuilds the complete PixiJS scene;
+- WebGPU as the first boot when a GPU adapter is available and `?renderer` is absent;
+- `?renderer=webgl` and `?renderer=webgpu` as hard overrides;
+- `computeCull: "auto"` plus a HUD and `data-cull-path` readout of `stats.cullPath`, either `compute-cull` or `cpu-grid`;
 - 1,000,000 resident labels and viewport culling;
 - 100,000 packed position updates every 100 milliseconds;
 - five registered Noto subsets covering CJKV, Arabic, Devanagari, Hebrew, and Thai;
@@ -47,6 +50,6 @@ existing responsive document layout.
 ## Browser acceptance
 
 `bun run site:test` builds the root package and Nuxt server, then runs Chrome checks for the live
-WebGL 2 renderer, capability-gated WebGPU renderer, backend teardown and rebuild, position-storm
-revisions, progressive examples, camera controls, theme switching, reduced motion, keyboard access,
-console errors, and horizontal fit at 320, 768, 1024, and 1440 pixels.
+default backend, capability-gated WebGPU renderer, WebGL override and rebuild, cull-path readout,
+position-storm revisions, progressive examples, camera controls, theme switching, reduced motion,
+keyboard access, console errors, and horizontal fit at 320, 768, 1024, and 1440 pixels.
