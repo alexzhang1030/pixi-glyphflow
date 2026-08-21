@@ -66,6 +66,9 @@ flush.
 `ViewportBinding`; storm commits are 100ms and camera-only `frame-end` flushes skip when the camera
 is idle.
 
+Slots that make the wave must drop their dirty mask. If they keep `ALL_DIRTY`, the next commit
+sends them through layout again and the leftover first-seen set never shrinks.
+
 ## Live atlas keys omit `glyphText` when a glyph id is present
 
 Packed identities are family intern + glyph id + size bucket + weight class + mode + font revision. Rasterize must use the same size bucket as the key. String keys stay valid for `atlas-pressure` (`glyph-${index}`), prebuilt pages, non-BMP text with glyph id 0, and unusual weights. Do not put `glyphText` back into the packed key, and do not fall back to `float16x4` instance attributes.

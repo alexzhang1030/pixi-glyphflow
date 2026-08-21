@@ -376,21 +376,19 @@ export class RenderCoordinator {
       else cheap.push(change);
     }
     const prepared = await Promise.all(cheap.map((change) => this.#prepare(change, ticket)));
-    const deferredSlots: number[] = [];
     const deadline = performance.now() + this.#prepareBudgetMs;
     for (let index = 0; index < expensive.length;) {
-      if (index > 0 && (this.#prepareBudgetMs === 0 || performance.now() >= deadline)) {
-        for (let rest = index; rest < expensive.length; rest += 1) {
-          const change = expensive[rest];
-          if (change !== undefined) deferredSlots.push(change.slot);
-        }
-        break;
+      if (index > 0 && performance.now() >= deadline) {
+        return {
+          prepared,
+          deferredSlots: expensive.slice(index).map((change) => change.slot),
+        };
       }
       const wave = expensive.slice(index, index + this.#prepareWave);
       prepared.push(...(await Promise.all(wave.map((change) => this.#prepare(change, ticket)))));
       index += wave.length;
     }
-    return { prepared, deferredSlots };
+    return { prepared, deferredSlots: [] };
   }
 
   #needsGlyphPrepare(change: RenderChange): boolean {

@@ -120,8 +120,6 @@ export class TextLayer extends Container {
   #instancedViewport: CullViewport | undefined;
   #viewDirty = false;
   #visibilityDirty = true;
-  #admissionPending = false;
-  #admissionScheduled = false;
   #admissionCancel: (() => void) | undefined;
   #pendingAdmissionCount = 0;
   #dirtyMasks: Uint8Array;
@@ -709,7 +707,7 @@ export class TextLayer extends Container {
     this.#assertActive();
     const hasLabelChanges = this.#store.pendingDirty.labels > 0;
     this.#cancelAdmissionSchedule();
-    if (!hasLabelChanges && !this.#viewDirty && !this.#admissionPending) {
+    if (!hasLabelChanges && !this.#viewDirty && this.#pendingAdmissionCount === 0) {
       this.#lastCommitDurationMs = 0;
       this.#lastCommitDirtyLabels = 0;
       this.#lastCommitContentLabels = 0;
@@ -756,7 +754,7 @@ export class TextLayer extends Container {
     const cullPath = this.#resolveCullPath();
     const drawViewport = this.#drawViewport();
     const refreshResidency =
-      this.#admissionPending ||
+      this.#pendingAdmissionCount > 0 ||
       shouldRefreshResidency({
         cullPath,
         visibilityDirty: this.#visibilityDirty,
@@ -782,7 +780,7 @@ export class TextLayer extends Container {
 
     const needsComputeDispatch = cullPath === "compute-cull";
     if (coordinator === undefined || (changes.length === 0 && !needsComputeDispatch)) {
-      this.#clearAdmission();
+      this.#pendingAdmissionCount = 0;
       this.#lastCommitDurationMs = performance.now() - start;
       this.#lastCommitPromise = this.#renderTail.then(() => {
         this.emit(TEXT_LAYER_COMMIT_EVENT, revision);
@@ -846,11 +844,11 @@ export class TextLayer extends Container {
         this.#deferAdmissions(changes, result.deferredSlots);
         surface?.apply(result, computeUpdate);
       } else {
-        this.#clearAdmission();
+        this.#pendingAdmissionCount = 0;
         if (computeUpdate !== undefined) surface?.refreshComputeCull(computeUpdate);
       }
       this.#lastUploadMs = surface?.stats.lastUploadMs ?? 0;
-      if (this.#admissionPending) this.#scheduleAdmission();
+      if (this.#pendingAdmissionCount > 0) this.#scheduleAdmission();
     });
     this.#renderTail = renderWork.then(
       () => undefined,
@@ -883,7 +881,6 @@ export class TextLayer extends Container {
     this.#renderSurface?.destroy();
     this.#renderSurface = undefined;
     this.#renderCoordinator?.destroy();
-    this.#cancelAdmissionSchedule();
     this.#resetRenderedSet();
     this.#renderer = renderer;
     this.#activateRendering();
@@ -898,7 +895,6 @@ export class TextLayer extends Container {
     this.#renderCoordinator?.destroy();
     this.#renderCoordinator = undefined;
     this.#renderer = undefined;
-    this.#cancelAdmissionSchedule();
     this.#resetRenderedSet();
     this.#renderTail = Promise.resolve();
     this.#lastCommitPromise = Promise.resolve(this.#revision as TextRevision);
@@ -1298,7 +1294,7 @@ export class TextLayer extends Container {
 
   #resetRenderedSet(): void {
     this.#cancelAdmissionSchedule();
-    this.#clearAdmission();
+    this.#pendingAdmissionCount = 0;
     this.#renderedEpochs.fill(0);
     this.#renderedCount = 0;
     this.#renderEpoch = 0;
@@ -1307,24 +1303,19 @@ export class TextLayer extends Container {
   }
 
   #deferAdmissions(changes: readonly LayerRenderChange[], deferredSlots: readonly number[]): void {
-    if (deferredSlots.length === 0) {
-      this.#clearAdmission();
-      return;
-    }
+    this.#pendingAdmissionCount = deferredSlots.length;
     const deferred = new Set(deferredSlots);
     for (const change of changes) {
-      if (!deferred.has(change.slot)) continue;
-      this.#dirtyMasks[change.slot] = change.mask;
-      if (this.#renderCoordinator?.getRun(change.slot) === undefined) {
-        this.#renderedEpochs[change.slot] = 0;
+      if (deferred.has(change.slot)) {
+        this.#dirtyMasks[change.slot] = change.mask;
+        if (this.#renderCoordinator?.getRun(change.slot) === undefined) {
+          this.#renderedEpochs[change.slot] = 0;
+        }
+        continue;
       }
+      this.#dirtyMasks[change.slot] = TextDirty.None;
     }
-    this.#compactRenderedSlots();
-    this.#pendingAdmissionCount = deferredSlots.length;
-    this.#admissionPending = true;
-  }
-
-  #compactRenderedSlots(): void {
+    if (deferredSlots.length === 0) return;
     const epoch = this.#renderEpoch;
     let count = 0;
     for (let index = 0; index < this.#renderedCount; index += 1) {
@@ -1338,12 +1329,10 @@ export class TextLayer extends Container {
   }
 
   #scheduleAdmission(): void {
-    if (this.#admissionScheduled) return;
-    this.#admissionScheduled = true;
+    if (this.#admissionCancel !== undefined) return;
     const finish = (): void => {
       this.#admissionCancel = undefined;
-      this.#admissionScheduled = false;
-      if (this.destroyed || !this.#admissionPending) return;
+      if (this.destroyed || this.#pendingAdmissionCount === 0) return;
       void this.commit();
     };
     const raf = globalThis.requestAnimationFrame;
@@ -1363,12 +1352,6 @@ export class TextLayer extends Container {
   #cancelAdmissionSchedule(): void {
     this.#admissionCancel?.();
     this.#admissionCancel = undefined;
-    this.#admissionScheduled = false;
-  }
-
-  #clearAdmission(): void {
-    this.#admissionPending = false;
-    this.#pendingAdmissionCount = 0;
   }
 
   #renderChangeForSlot(
