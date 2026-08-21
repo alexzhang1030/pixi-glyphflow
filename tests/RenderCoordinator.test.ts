@@ -142,7 +142,9 @@ describe("RenderCoordinator", () => {
     expect(coordinator.getRun(0)?.text).toBe("AB");
     expect(coordinator.instances.getRange(0)).toEqual({ offset: 0, count: 2, capacity: 2 });
 
-    await coordinator.commit(2, [{ slot: 0, mask: CONTENT, snapshot: undefined, retainResources: true }]);
+    await coordinator.commit(2, [
+      { slot: 0, mask: CONTENT, snapshot: undefined, retainResources: true },
+    ]);
     expect(coordinator.getRun(0)?.text).toBe("AB");
     expect(coordinator.instances.getRange(0)).toEqual({ offset: 0, count: 2, capacity: 2 });
     expect(coordinator.transforms.stats.activeLabels).toBe(1);
