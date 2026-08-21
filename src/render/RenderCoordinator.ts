@@ -52,6 +52,8 @@ export interface RenderChange {
   readonly trustedRun?: TrustedGlyphRun;
   /** Transform dirty is only x/y; patch palette texels without rewriting fill/effects. */
   readonly positionOnly?: boolean;
+  /** Drop the draw state but keep the run, instances, and palette. */
+  readonly retainResources?: boolean;
 }
 
 export interface RenderLayoutEngineLike {
@@ -202,11 +204,15 @@ export class RenderCoordinator {
     for (const item of prepared) {
       const { change, run } = item;
       if (change.snapshot === undefined) {
-        this.#runs.delete(change.slot);
         if (this.#drawStates.delete(change.slot)) {
           drawOrderChanged = true;
           this.#drawStatesDirty = true;
         }
+        if (change.retainResources === true) {
+          appliedLabels += 1;
+          continue;
+        }
+        this.#runs.delete(change.slot);
         const instanceStart = performance.now();
         this.instances.remove(change.slot);
         this.#lastInstanceWriteMs += performance.now() - instanceStart;

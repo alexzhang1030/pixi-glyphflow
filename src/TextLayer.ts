@@ -762,7 +762,7 @@ export class TextLayer extends Container {
     if (refreshResidency) {
       this.#visibleCount = this.#queryVisible(cullPath, drawViewport);
       this.#visibilityDirty = false;
-      if (coordinator !== undefined) changes = this.#buildRenderChanges();
+      if (coordinator !== undefined) changes = this.#buildRenderChanges(cullPath);
     } else if (hasLabelChanges && coordinator !== undefined) {
       changes = this.#buildResidentDirtyChanges();
     }
@@ -1226,13 +1226,14 @@ export class TextLayer extends Container {
     return changes;
   }
 
-  #buildRenderChanges(): LayerRenderChange[] {
+  #buildRenderChanges(cullPath: CullPath): LayerRenderChange[] {
     let previousEpoch = this.#renderEpoch;
     if (previousEpoch === 0xffff_ffff) {
       this.#renderedEpochs.fill(0);
       previousEpoch = 0;
     }
     const nextEpoch = previousEpoch + 1;
+    const coordinator = this.#renderCoordinator;
     const changes: LayerRenderChange[] = [];
     for (let index = 0; index < this.#visibleCount; index += 1) {
       const slot = this.#visibleSlots[index];
@@ -1241,7 +1242,8 @@ export class TextLayer extends Container {
       this.#renderedEpochs[slot] = nextEpoch;
       const dirtyMask = this.#dirtyMasks[slot] ?? TextDirty.None;
       if (wasRendered && dirtyMask === TextDirty.None) continue;
-      const change = this.#renderChangeForSlot(slot, wasRendered);
+      const hasRun = coordinator?.getRun(slot) !== undefined;
+      const change = this.#renderChangeForSlot(slot, wasRendered, hasRun);
       if (change === undefined) throw new Error("Visible label snapshot is unavailable");
       changes.push(change);
     }
@@ -1249,7 +1251,13 @@ export class TextLayer extends Container {
       const slot = this.#renderedSlots[index];
       if (slot === undefined) throw new Error("Rendered slot list is incomplete");
       if (this.#renderedEpochs[slot] !== nextEpoch) {
-        changes.push({ slot, mask: ALL_DIRTY, snapshot: undefined });
+        const gone = this.#store.snapshotAt(slot) === undefined;
+        changes.push({
+          slot,
+          mask: ALL_DIRTY,
+          snapshot: undefined,
+          ...(cullPath === "compute-cull" && !gone ? { retainResources: true } : {}),
+        });
       }
     }
     this.#renderedSlots.set(this.#visibleSlots.subarray(0, this.#visibleCount));
@@ -1278,14 +1286,23 @@ export class TextLayer extends Container {
     this.#clearCullRecordIndex();
   }
 
-  #renderChangeForSlot(slot: number, wasRendered: boolean): LayerRenderChange | undefined {
+  #renderChangeForSlot(
+    slot: number,
+    wasRendered: boolean,
+    hasRun = false,
+  ): LayerRenderChange | undefined {
     const snapshot = this.#store.snapshotAt(slot);
     if (snapshot === undefined) return undefined;
     const order = this.#spatial.orderOf(slot);
     if (order === undefined) throw new Error("Visible label order is unavailable");
     const trustedRun = this.#trustedRuns.get(snapshot.id);
     const dirtyMask = this.#dirtyMasks[slot] ?? TextDirty.None;
-    const mask = wasRendered ? dirtyMask : ALL_DIRTY;
+    const mask =
+      wasRendered || hasRun
+        ? dirtyMask === TextDirty.None
+          ? TextDirty.Transform
+          : dirtyMask
+        : ALL_DIRTY;
     return {
       slot,
       labelId: snapshot.id,

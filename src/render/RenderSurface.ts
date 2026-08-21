@@ -184,11 +184,17 @@ export class RenderSurface {
     const transformRanges = this.#coordinator.transforms.consumeDirty();
     const instanceRanges = this.#coordinator.instances.consumeDirty();
     this.#syncPalette(transformRanges);
+    const skipSegmentWalk =
+      computeCull !== undefined &&
+      this.#hasDirectComputeMesh() &&
+      instanceRanges.length === 0 &&
+      !this.#needsComputeMeshRebuild(computeCull);
     if (
-      instanceRanges.length > 0 ||
-      result.drawOrderChanged ||
-      this.#meshes.size === 0 ||
-      this.#needsComputeMeshRebuild(computeCull)
+      !skipSegmentWalk &&
+      (instanceRanges.length > 0 ||
+        result.drawOrderChanged ||
+        this.#meshes.size === 0 ||
+        this.#needsComputeMeshRebuild(computeCull))
     ) {
       this.#syncMeshes(instanceRanges, computeCull);
     }

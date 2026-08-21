@@ -104,6 +104,63 @@ describe("RenderCoordinator", () => {
     registry.destroy();
   });
 
+  test("retains runs and instances when a compute-cull working-set exit asks to keep resources", async () => {
+    const registry = new FontRegistry();
+    await registry.register({ family: "Fixture" });
+    let layoutCalls = 0;
+    let rasterCalls = 0;
+    const coordinator = new RenderCoordinator({
+      registry,
+      layoutEngine: {
+        async layout(_slot, _revision, input) {
+          layoutCalls += 1;
+          return run(input.text);
+        },
+        destroy() {},
+      },
+      glyphProvider: {
+        async rasterize(): Promise<GlyphRaster> {
+          rasterCalls += 1;
+          return {
+            mode: "alpha",
+            width: 4,
+            height: 6,
+            pixels: new Uint8Array(24).fill(255),
+          };
+        },
+        destroy() {},
+      },
+      atlasOptions: { pageWidth: 16, pageHeight: 16, maxBytes: 256 },
+      instanceOptions: { initialCapacity: 4 },
+      transformOptions: { initialCapacity: 4, textureWidth: 4 },
+    });
+
+    await coordinator.commit(1, [
+      { slot: 0, mask: CONTENT | TRANSFORM | STYLE, snapshot: label(1, 10, 20) },
+    ]);
+    expect({ layoutCalls, rasterCalls }).toEqual({ layoutCalls: 1, rasterCalls: 2 });
+    expect(coordinator.getRun(0)?.text).toBe("AB");
+    expect(coordinator.instances.getRange(0)).toEqual({ offset: 0, count: 2, capacity: 2 });
+
+    await coordinator.commit(2, [{ slot: 0, mask: CONTENT, snapshot: undefined, retainResources: true }]);
+    expect(coordinator.getRun(0)?.text).toBe("AB");
+    expect(coordinator.instances.getRange(0)).toEqual({ offset: 0, count: 2, capacity: 2 });
+    expect(coordinator.transforms.stats.activeLabels).toBe(1);
+    expect(coordinator.getDrawStates()).toEqual([]);
+
+    const restored = await coordinator.commit(3, [
+      { slot: 0, mask: TRANSFORM, snapshot: label(1, 10, 20) },
+    ]);
+    expect(restored).toMatchObject({ stale: false, appliedLabels: 1, glyphs: 2, atlasUploads: 0 });
+    expect({ layoutCalls, rasterCalls }).toEqual({ layoutCalls: 1, rasterCalls: 2 });
+    expect(coordinator.getDrawStates()).toEqual([
+      { slot: 0, zIndex: 0, order: 1, blendMode: "normal" },
+    ]);
+
+    coordinator.destroy();
+    registry.destroy();
+  });
+
   test("renders oversampled atlas glyphs at logical layout dimensions", async () => {
     const registry = new FontRegistry();
     await registry.register({ family: "Fixture" });

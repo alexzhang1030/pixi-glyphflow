@@ -39,6 +39,11 @@ the palette. Re-query only on show/hide/add/remove or when the camera leaves the
 `getRange` must return the live range. Copying and freezing it on every pack or segment walk is the
 hot leaf.
 
+Leaving the working set must not delete the run, instances, or palette. A later homepage trace
+spent the pan windows in `RenderCoordinator.#prepare` / `#ensureGlyph` / `#buildInstances` because
+re-entry used `ALL_DIRTY` after a full remove. Drop the draw state and cull records only. `remove()`
+still tears the slot down. WebGL keeps the tight evict.
+
 ## Live atlas keys omit `glyphText` when a glyph id is present
 
 Packed identities are family intern + glyph id + size bucket + weight class + mode + font revision. Rasterize must use the same size bucket as the key. String keys stay valid for `atlas-pressure` (`glyph-${index}`), prebuilt pages, non-BMP text with glyph id 0, and unusual weights. Do not put `glyphText` back into the packed key, and do not fall back to `float16x4` instance attributes.

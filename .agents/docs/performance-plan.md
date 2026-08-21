@@ -69,8 +69,9 @@ Compute culling separates CPU residency from the submitted draw set. The CPU gri
 instances an expanded viewport. Camera motion inside that box uploads one tight viewport uniform
 and dispatches stable prefix-sum compaction without rebuilding instances. Position-only storms
 inside the same box patch resident cull AABBs and palette texels. They do not re-query or rebuild
-draw segments. Crossing the working-set edge, or a show/hide/add/remove, refreshes residency
-through another expanded grid query. WebGL and multi-segment meshes keep the tight CPU-grid path.
+draw segments. Crossing the working-set edge refreshes the draw-state set and cull records, but
+keeps runs and instances so a later re-entry does not layout or raster again. Show/hide/add/remove
+still goes through the store. WebGL and multi-segment meshes keep the tight CPU-grid path.
 
 ### The million-glyph GPU path is not the product path
 
