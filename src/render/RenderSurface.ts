@@ -155,7 +155,9 @@ export class RenderSurface {
     const store = this.#coordinator.instances;
     const instanceBytes = store.stats.highWater * GLYPH_INSTANCE_STRIDE;
     if (update.records !== undefined) {
-      pass.ensureCapacity(update.recordCount, instanceBytes);
+      if (!pass.ensureCapacity(update.recordCount, instanceBytes)) {
+        return this.#useCpuCull();
+      }
       pass.uploadRecords(update.records, update.recordCount);
       if (update.mirrorInstances) pass.uploadInstances(store.buffer, instanceBytes);
     }

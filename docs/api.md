@@ -44,6 +44,11 @@ Automatic mode uses compute compaction when the attached WebGPU device is ready 
 glyphs fit one atlas bank. WebGL, unavailable devices, multi-segment meshes, and `false` use the
 CPU grid.
 
+PixiJS creates WebGPU devices with the 128 MiB core `maxStorageBufferBindingSize`. A million-label
+instance buffer can be 256 MiB. `requestComputeCullGpu()` requests the adapter's storage and buffer
+limits and returns `{ adapter, device }` for `Application.init({ gpu })`. If a live buffer still
+exceeds the device limit, the layer uses `cpu-grid`.
+
 `showAll()` and `hideAll()` return the number of labels whose `visible` state changed. Repeated calls
 return `0` and preserve revision state. One following `commit()` publishes the complete visibility
 change through culling, hit testing, accessibility, and the active WebGL or WebGPU renderer.
@@ -152,5 +157,5 @@ physical-to-logical raster scale so layout, stroke, and shadow dimensions remain
 worker serializes font loading and atlas generation; separate workers execute in parallel.
 
 `TextLayerStats.cullPath` is either `"compute-cull"` or `"cpu-grid"` and names the path used by the
-latest draw preparation. The root entry exports the `CullPath` type. Compute shader and pass
-internals are not root exports.
+latest draw preparation. The root entry exports the `CullPath` type and `requestComputeCullGpu`.
+Compute shader and pass internals are not root exports.

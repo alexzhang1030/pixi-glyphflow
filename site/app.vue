@@ -2,13 +2,15 @@
 const installCode = `bun add pixi-glyphflow pixi.js pixi-viewport`;
 
 const quickStartCode = `import { Application } from "pixi.js";
-import { TextLayer } from "pixi-glyphflow";
+import { requestComputeCullGpu, TextLayer } from "pixi-glyphflow";
 
+const gpu = await requestComputeCullGpu({ powerPreference: "high-performance" });
 const app = new Application();
 await app.init({
   resizeTo: window,
   preference: ["webgpu", "webgl"],
   webgl: { preferWebGLVersion: 2 },
+  gpu,
 });
 document.body.appendChild(app.canvas);
 

@@ -3,14 +3,17 @@ import { describe, expect, test } from "bun:test";
 import {
   aabbVisible,
   compactVisibleInstances,
+  computeCullRequiredLimits,
   computeCullStructurallyEligible,
   createIndirectArgs,
   cullResidency,
   expandWorkingSet,
   packCullRecords,
   patchCullRecordAabbAt,
+  planComputeCullStorageBytes,
   resolveCullPath,
   shouldRefreshResidency,
+  WEBGPU_DEFAULT_MAX_STORAGE_BUFFER_BINDING_SIZE,
   workingSetContains,
 } from "../src/culling/computeCull";
 import { COMPUTE_CULL_WGSL } from "../src/culling/computeCull.wgsl";
@@ -45,6 +48,32 @@ describe("compute cull host reference", () => {
         activeInstances: 6,
       }),
     ).toBe(false);
+  });
+
+  test("keeps storage buffers inside the device binding limit", () => {
+    expect(planComputeCullStorageBytes(24, WEBGPU_DEFAULT_MAX_STORAGE_BUFFER_BINDING_SIZE)).toBe(
+      32,
+    );
+    expect(
+      planComputeCullStorageBytes(90 * 1024 * 1024, WEBGPU_DEFAULT_MAX_STORAGE_BUFFER_BINDING_SIZE),
+    ).toBe(WEBGPU_DEFAULT_MAX_STORAGE_BUFFER_BINDING_SIZE);
+    expect(
+      planComputeCullStorageBytes(
+        WEBGPU_DEFAULT_MAX_STORAGE_BUFFER_BINDING_SIZE + 1,
+        WEBGPU_DEFAULT_MAX_STORAGE_BUFFER_BINDING_SIZE,
+      ),
+    ).toBeUndefined();
+    expect(planComputeCullStorageBytes(200_000_000, 210_000_000)).toBe(200_000_000);
+    expect(planComputeCullStorageBytes(268_435_456, 4_294_967_292)).toBe(268_435_456);
+    expect(
+      computeCullRequiredLimits({
+        maxStorageBufferBindingSize: 4_294_967_292,
+        maxBufferSize: 4_294_967_296,
+      }),
+    ).toEqual({
+      maxStorageBufferBindingSize: 4_294_967_292,
+      maxBufferSize: 4_294_967_296,
+    });
   });
 
   test("enables compute cull only on a ready WebGPU device", () => {

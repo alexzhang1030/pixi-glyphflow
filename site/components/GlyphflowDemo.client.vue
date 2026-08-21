@@ -3,6 +3,7 @@ import { MSDF } from "@zappar/msdf-generator";
 import msdfWasmUrl from "@zappar/msdf-generator/msdfgen_wasm.wasm?url";
 import msdfWorkerUrl from "@zappar/msdf-generator/worker.js?worker&url";
 import {
+  requestComputeCullGpu,
   TextLayer,
   type CullPath,
   type TextId,
@@ -132,6 +133,7 @@ const stateLabel = computed(() => {
 });
 
 let app: Application | undefined;
+let computeCullGpuDevice: GPUDevice | undefined;
 let viewport: Viewport | undefined;
 let layer: TextLayer | undefined;
 let binding: ViewportBinding | undefined;
@@ -264,22 +266,38 @@ async function initialize(backend: RendererBackend, runId: number): Promise<void
   const host = canvasHost.value;
   if (host === undefined) throw new Error("Demo canvas host is unavailable");
 
+  const gpu =
+    backend === "webgpu"
+      ? await requestComputeCullGpu({ powerPreference: "high-performance" })
+      : undefined;
+  if (backend === "webgpu" && gpu === undefined) {
+    throw new Error("WebGPU device is unavailable");
+  }
+
   const nextApp = new Application();
-  await nextApp.init({
-    width: Math.max(host.clientWidth, 320),
-    height: Math.max(host.clientHeight, 320),
-    preference: [backend],
-    preferWebGLVersion: 2,
-    powerPreference: "high-performance",
-    antialias: false,
-    autoDensity: true,
-    resolution: Math.min(window.devicePixelRatio, 2),
-    background: "#080d12",
-  });
+  try {
+    await nextApp.init({
+      width: Math.max(host.clientWidth, 320),
+      height: Math.max(host.clientHeight, 320),
+      preference: [backend],
+      preferWebGLVersion: 2,
+      powerPreference: "high-performance",
+      antialias: false,
+      autoDensity: true,
+      resolution: Math.min(window.devicePixelRatio, 2),
+      background: "#080d12",
+      gpu,
+    });
+  } catch (error: unknown) {
+    gpu?.device.destroy();
+    throw error;
+  }
   if (isStale(runId)) {
     nextApp.destroy(true);
+    gpu?.device.destroy();
     return;
   }
+  computeCullGpuDevice = gpu?.device;
   app = nextApp;
   nextApp.stop();
   nextApp.canvas.className = "demo-canvas-element";
@@ -640,6 +658,7 @@ function cleanup(): void {
   layer?.destroy();
   viewport?.destroy({ children: true });
   app?.destroy(true);
+  computeCullGpuDevice?.destroy();
   stormTimer = undefined;
   resizeObserver = undefined;
   intersectionObserver = undefined;
@@ -647,6 +666,7 @@ function cleanup(): void {
   layer = undefined;
   viewport = undefined;
   app = undefined;
+  computeCullGpuDevice = undefined;
   movingIds = undefined;
   firstPositions = undefined;
   secondPositions = undefined;

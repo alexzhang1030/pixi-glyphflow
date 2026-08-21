@@ -8,6 +8,16 @@ Keep the 24-byte CPU layout (four `f16` local-rect components). Bind the rect as
 
 Do not revert to 32-byte `float32x4` rects to make CI green.
 
+## PixiJS WebGPU devices keep the 128 MiB storage binding default
+
+PixiJS `requestDevice()` does not raise `maxStorageBufferBindingSize`. The core default is
+134,217,728 bytes. A million-label homepage working set rounds the instance storage buffer to
+268,435,456 bytes. Binding it fails even when the adapter allows ~4 GiB.
+
+Call `requestComputeCullGpu()` and pass `{ gpu }` into `Application.init`. The helper copies the
+adapter's `maxStorageBufferBindingSize` and `maxBufferSize`. If a buffer still exceeds the live
+device limit, compute cull falls back to `cpu-grid` instead of submitting an invalid bind group.
+
 ## WGSL rejects `from` as an identifier
 
 `CreateShaderModule` failed on `let from = …` in the compute-cull scatter pass. Tint treats `from`

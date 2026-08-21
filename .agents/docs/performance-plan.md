@@ -197,6 +197,9 @@ WebGL 2 keeps the Wave 1 CPU grid. WebGPU gains a second adapter that does not w
 
 - The direct single-bank mesh now uploads label bounds with instance ranges. A compute pass tests
   the tight viewport, writes compacted instances, and patches indirect draw arguments.
+- PixiJS keeps the 128 MiB storage-binding default. Million-label instance buffers request the
+  adapter limit through `requestComputeCullGpu()` and fall back to `cpu-grid` when they still
+  cannot bind.
 - Camera-only commits inside the expanded CPU working set upload only the viewport uniform. Residency
   refreshes pack records and upload instances again.
 - Prefix sums and stable scatter preserve z-index and insertion order without atomic append order.

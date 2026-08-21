@@ -109,6 +109,8 @@ storage budgets stay until a human accepts new numbers.
 - Keep viewport culling enabled for large worlds.
 - Leave `computeCull` at `"auto"` for WebGPU camera workloads. Set it to `false` to force the
   WebGL-compatible CPU grid.
+- Pass `requestComputeCullGpu()` into `Application.init({ gpu })` so compute cull can bind
+  instance storage larger than the 128 MiB WebGPU default.
 - Reuse styles and fonts to maximize shaping and layout cache hits.
 - Set an atlas ceiling that matches the product glyph working set.
 - Read diagnostics at telemetry cadence.

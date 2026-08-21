@@ -114,9 +114,10 @@ instance store. Crossing its edge refreshes residency and uploads cull records.
 
 The direct `GlyphMesh` rebinds its instance attributes to the compact buffer and uses an indexed
 indirect draw. The encoder hook checks geometry ownership and is removed when the pass is
-destroyed. WebGL, missing devices, disabled compute culling, and multi-segment meshes retain the
-tight CPU-grid path. A single-bank mesh stays on the compute path when CPU instance order is not
-spatial order.
+destroyed. WebGL, missing devices, disabled compute culling, oversized storage buffers, and
+multi-segment meshes retain the tight CPU-grid path. A single-bank mesh stays on the compute path
+when CPU instance order is not spatial order. PixiJS devices keep the 128 MiB storage-binding default;
+`requestComputeCullGpu()` raises that limit to the adapter maximum.
 
 ## Diagnostics
 

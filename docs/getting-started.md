@@ -74,6 +74,23 @@ layer.create({
 await layer.commit();
 ```
 
+Million-label WebGPU compute cull needs a device whose storage-buffer binding limit is above the
+128 MiB WebGPU default. Request that device before `Application.init`:
+
+```ts
+import { Application } from "pixi.js";
+import { requestComputeCullGpu, TextLayer } from "pixi-glyphflow";
+
+const gpu = await requestComputeCullGpu({ powerPreference: "high-performance" });
+const app = new Application();
+await app.init({
+  resizeTo: window,
+  preference: ["webgpu", "webgl"],
+  webgl: { preferWebGLVersion: 2 },
+  gpu,
+});
+```
+
 `attach(renderer)` supports a later renderer association. `detach()` releases renderer-owned atlas,
 mesh, and upload resources while preserving accepted label state. A later `attach()` rebuilds the
 render surface from that state.

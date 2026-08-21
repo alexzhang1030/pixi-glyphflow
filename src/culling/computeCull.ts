@@ -6,7 +6,14 @@ export type CullResidency = "viewport" | "all";
 
 export const CULL_RECORD_STRIDE = 32;
 export const CULL_WORKGROUP = 256;
+/** WebGPU core default for `maxStorageBufferBindingSize`. */
+export const WEBGPU_DEFAULT_MAX_STORAGE_BUFFER_BINDING_SIZE = 134_217_728;
 const FLOATS_PER_RECORD = CULL_RECORD_STRIDE / Float32Array.BYTES_PER_ELEMENT;
+
+export interface ComputeCullDeviceLimits {
+  readonly maxStorageBufferBindingSize: number;
+  readonly maxBufferSize: number;
+}
 
 export interface CullViewport {
   readonly x: number;
@@ -51,6 +58,28 @@ export function resolveCullPath(input: {
     return "cpu-grid";
   }
   return "compute-cull";
+}
+
+export function nextPowerOfTwo(value: number): number {
+  let capacity = 1;
+  while (capacity < value) capacity *= 2;
+  return capacity;
+}
+
+export function planComputeCullStorageBytes(needed: number, limit: number): number | undefined {
+  const size = Math.max(Uint32Array.BYTES_PER_ELEMENT, needed);
+  const pot = nextPowerOfTwo(size);
+  if (pot <= limit) return pot;
+  const aligned = size + ((4 - (size % 4)) % 4);
+  if (aligned <= limit) return aligned;
+  return undefined;
+}
+
+export function computeCullRequiredLimits(limits: ComputeCullDeviceLimits): Record<string, number> {
+  return {
+    maxStorageBufferBindingSize: limits.maxStorageBufferBindingSize,
+    maxBufferSize: limits.maxBufferSize,
+  };
 }
 
 export function computeCullStructurallyEligible(input: {
