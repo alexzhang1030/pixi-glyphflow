@@ -276,18 +276,32 @@ async function initialize(backend: RendererBackend, runId: number): Promise<void
 
   const nextApp = new Application();
   try {
-    await nextApp.init({
-      width: Math.max(host.clientWidth, 320),
-      height: Math.max(host.clientHeight, 320),
-      preference: [backend],
-      preferWebGLVersion: 2,
-      powerPreference: "high-performance",
-      antialias: false,
-      autoDensity: true,
-      resolution: Math.min(window.devicePixelRatio, 2),
-      background: "#080d12",
-      gpu,
-    });
+    if (gpu === undefined) {
+      await nextApp.init({
+        width: Math.max(host.clientWidth, 320),
+        height: Math.max(host.clientHeight, 320),
+        preference: [backend],
+        preferWebGLVersion: 2,
+        powerPreference: "high-performance",
+        antialias: false,
+        autoDensity: true,
+        resolution: Math.min(window.devicePixelRatio, 2),
+        background: "#080d12",
+      });
+    } else {
+      await nextApp.init({
+        width: Math.max(host.clientWidth, 320),
+        height: Math.max(host.clientHeight, 320),
+        preference: [backend],
+        preferWebGLVersion: 2,
+        powerPreference: "high-performance",
+        antialias: false,
+        autoDensity: true,
+        resolution: Math.min(window.devicePixelRatio, 2),
+        background: "#080d12",
+        gpu,
+      });
+    }
   } catch (error: unknown) {
     gpu?.device.destroy();
     throw error;
