@@ -278,7 +278,7 @@
   - Files: benchmarks/budgets.ts, docs/performance.md
 
 - [x] Task 12.6: Add a WebGPU compute cull adapter (Wave 3).
-  - Acceptance: Camera-only WebGPU frames inside an expanded CPU working set compact the direct natural-order mesh with stable z/insertion order and no instance rewrite. WebGL, unavailable devices, disabled compute culling, and multi-segment meshes keep the tight CPU grid. Diagnostics name the path that ran.
+  - Acceptance: Camera-only WebGPU frames inside an expanded CPU working set compact the direct single-bank mesh with stable z/insertion order and no instance rewrite. Late glyph allocation may leave the CPU store out of draw order; GPU scatter restores it. WebGL, unavailable devices, disabled compute culling, and multi-segment meshes keep the tight CPU grid. Diagnostics name the path that ran.
   - Verify: bun run test:browser -- glyph-rendering && bun run test:browser -- viewport-integration
   - Files: src/TextLayer.ts, src/types.ts, src/render/ComputeCullPass.ts, src/render/RenderSurface.ts, src/culling/computeCull.ts, src/culling/computeCull.wgsl.ts
 

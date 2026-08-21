@@ -3,12 +3,14 @@ import { describe, expect, test } from "bun:test";
 import {
   aabbVisible,
   compactVisibleInstances,
+  computeCullStructurallyEligible,
   createIndirectArgs,
   cullResidency,
   expandWorkingSet,
   packCullRecords,
   resolveCullPath,
   shouldRefreshResidency,
+  shouldUseDirectInstanceMesh,
   workingSetContains,
 } from "../src/culling/computeCull";
 import { GLYPH_INSTANCE_STRIDE } from "../src/render/types";
@@ -18,6 +20,34 @@ describe("compute cull host reference", () => {
     expect(cullResidency(true, true)).toBe("viewport");
     expect(cullResidency(true, false)).toBe("all");
     expect(cullResidency(false, true)).toBe("all");
+  });
+
+  test("keeps a single-bank compute mesh on the direct store when CPU order is not draw order", () => {
+    const fragmented = {
+      segmentCount: 1,
+      naturalOrder: false,
+      highWater: 8,
+      activeInstances: 6,
+    };
+    expect(computeCullStructurallyEligible(fragmented)).toBe(true);
+    expect(shouldUseDirectInstanceMesh({ ...fragmented, computeCullRequested: true })).toBe(true);
+    expect(shouldUseDirectInstanceMesh({ ...fragmented, computeCullRequested: false })).toBe(false);
+    expect(
+      computeCullStructurallyEligible({
+        segmentCount: 2,
+        highWater: 8,
+        activeInstances: 6,
+      }),
+    ).toBe(false);
+    expect(
+      shouldUseDirectInstanceMesh({
+        segmentCount: 2,
+        naturalOrder: true,
+        computeCullRequested: true,
+        highWater: 8,
+        activeInstances: 6,
+      }),
+    ).toBe(false);
   });
 
   test("enables compute cull only on a ready WebGPU device", () => {

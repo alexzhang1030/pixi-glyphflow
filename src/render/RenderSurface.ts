@@ -12,9 +12,11 @@ import type { AtlasCommit, AtlasPageInfo, GlyphMode } from "../atlas/types";
 import {
   aabbVisible,
   CULL_RECORD_STRIDE,
+  computeCullStructurallyEligible,
   type CullPath,
   type CullViewport,
   resolveCullPath,
+  shouldUseDirectInstanceMesh,
 } from "../culling/computeCull";
 import { ComputeCullPass } from "./ComputeCullPass";
 import { GlyphMesh } from "./GlyphMesh";
@@ -126,11 +128,7 @@ export class RenderSurface {
     const pass = this.#cullPass ?? new ComputeCullPass(this.#renderer);
     if (!pass.initialize()) return "cpu-grid";
     this.#cullPass = pass;
-    if (this.#meshes.size === 0) return "compute-cull";
-    const direct = this.#meshes.get(0);
-    return this.#meshes.size === 1 && direct !== undefined && !direct.compact
-      ? "compute-cull"
-      : "cpu-grid";
+    return "compute-cull";
   }
 
   refreshComputeCull(update: Readonly<RenderComputeCullUpdate>): CullPath {
@@ -148,6 +146,7 @@ export class RenderSurface {
     const pass = this.#cullPass;
     const surface = this.#meshes.get(0);
     if (pass === undefined || surface === undefined || this.#meshes.size !== 1 || surface.compact) {
+      this.#fallbackCompactDraw(update);
       return this.#useCpuCull();
     }
     const store = this.#coordinator.instances;
@@ -159,7 +158,10 @@ export class RenderSurface {
       pass.uploadInstances(store.buffer, instanceBytes);
     }
     pass.trackGeometry(surface.mesh.geometry);
-    if (!pass.dispatch(update.viewport)) return this.#useCpuCull();
+    if (!pass.dispatch(update.viewport)) {
+      this.#fallbackCompactDraw(update);
+      return this.#useCpuCull();
+    }
     this.#cullPath = "compute-cull";
     return this.#cullPath;
   }
@@ -174,7 +176,12 @@ export class RenderSurface {
     const transformRanges = this.#coordinator.transforms.consumeDirty();
     const instanceRanges = this.#coordinator.instances.consumeDirty();
     this.#syncPalette(transformRanges);
-    if (instanceRanges.length > 0 || result.drawOrderChanged || this.#meshes.size === 0) {
+    if (
+      instanceRanges.length > 0 ||
+      result.drawOrderChanged ||
+      this.#meshes.size === 0 ||
+      this.#needsComputeMeshRebuild(computeCull)
+    ) {
       this.#syncMeshes(instanceRanges, computeCull);
     }
     if (computeCull === undefined) this.#useCpuCull();
@@ -310,20 +317,21 @@ export class RenderSurface {
     const data = store.buffer;
     const view = new DataView(data);
     const draw = this.#buildDrawSegments(view);
-    if (
-      draw.segments.length === 1 &&
-      draw.naturalOrder &&
-      storeStats.highWater <= storeStats.activeInstances * 2
-    ) {
-      this.#computeEligible = true;
+    const meshInput = {
+      segmentCount: draw.segments.length,
+      naturalOrder: draw.naturalOrder,
+      computeCullRequested: computeCull !== undefined,
+      highWater: storeStats.highWater,
+      activeInstances: storeStats.activeInstances,
+    };
+    this.#computeEligible = computeCullStructurallyEligible(meshInput);
+    if (shouldUseDirectInstanceMesh(meshInput)) {
       const segment = draw.segments[0];
       if (segment === undefined) throw new Error("Active glyph segment is unavailable");
       this.#syncDirectMesh(segment.bank, segment.blendMode, data, storeStats.highWater, ranges);
       this.#submittedGlyphs = storeStats.activeInstances;
       return;
     }
-
-    this.#computeEligible = false;
     const compactDraw =
       computeCull?.records === undefined
         ? draw
@@ -595,6 +603,30 @@ export class RenderSurface {
 
   #destroyMeshes(): void {
     for (const [key, surface] of this.#meshes) this.#destroyMesh(key, surface);
+  }
+
+  #needsComputeMeshRebuild(computeCull: Readonly<RenderComputeCullUpdate> | undefined): boolean {
+    if (computeCull === undefined || this.#computeEligible === false) return false;
+    if (this.#meshes.size === 0) return true;
+    const direct = this.#meshes.get(0);
+    return this.#meshes.size !== 1 || direct === undefined || direct.compact;
+  }
+
+  #fallbackCompactDraw(update: Readonly<RenderComputeCullUpdate>): void {
+    const store = this.#coordinator.instances;
+    const storeStats = store.stats;
+    if (storeStats.activeInstances === 0) {
+      this.#destroyMeshes();
+      this.#submittedGlyphs = 0;
+      return;
+    }
+    const view = new DataView(store.buffer);
+    const draw =
+      update.records === undefined
+        ? this.#buildDrawSegments(view)
+        : this.#buildDrawSegments(view, this.#visibleCullRecords(update.records, update.viewport));
+    this.#syncCompactMeshes(store.buffer, draw.segments);
+    this.#submittedGlyphs = draw.count;
   }
 
   #useCpuCull(): CullPath {

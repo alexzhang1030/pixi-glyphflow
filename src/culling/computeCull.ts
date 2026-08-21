@@ -54,6 +54,29 @@ export function resolveCullPath(input: {
   return "compute-cull";
 }
 
+export interface DirectInstanceMeshInput {
+  readonly segmentCount: number;
+  readonly naturalOrder: boolean;
+  readonly computeCullRequested: boolean;
+  readonly highWater: number;
+  readonly activeInstances: number;
+}
+
+export function computeCullStructurallyEligible(
+  input: Pick<DirectInstanceMeshInput, "segmentCount" | "highWater" | "activeInstances">,
+): boolean {
+  return (
+    input.segmentCount === 1 &&
+    input.activeInstances > 0 &&
+    input.highWater <= input.activeInstances * 2
+  );
+}
+
+export function shouldUseDirectInstanceMesh(input: DirectInstanceMeshInput): boolean {
+  if (!computeCullStructurallyEligible(input)) return false;
+  return input.naturalOrder || input.computeCullRequested;
+}
+
 export function shouldRefreshResidency(input: ResidencyRefreshInput): boolean {
   if (input.hasLabelChanges || input.visibilityDirty) return true;
   switch (input.cullPath) {

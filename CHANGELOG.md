@@ -37,7 +37,8 @@
   waste map. Published `atlas-pressure` frame ceilings stay.
 - WebGPU can compact an expanded CPU working set against the tight draw viewport with a stable
   prefix sum and indexed indirect draw. Camera motion inside that working set skips spatial queries
-  and instance writes. WebGL and unsupported mesh shapes retain the tight CPU grid. `cullPath`
+  and instance writes. A single-bank mesh stays on that path when late glyph allocation leaves the
+  CPU store out of draw order. WebGL and multi-segment meshes retain the tight CPU grid. `cullPath`
   reports the path that ran.
 
 ## 1.1.0 - 2026-08-15

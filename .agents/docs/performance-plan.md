@@ -193,8 +193,9 @@ Verify: existing storage assertions in `benchmarks/budgets.ts` plus new optional
 
 WebGL 2 keeps the Wave 1 CPU grid. WebGPU gains a second adapter that does not walk JS arrays on camera-only frames.
 
-- The direct natural-order mesh now uploads label bounds with instance ranges. A compute pass tests
-  the tight viewport, writes compacted instances, and patches indirect draw arguments.
+- The direct single-bank mesh now uploads label bounds with instance ranges. A compute pass tests
+  the tight viewport, writes compacted instances, and patches indirect draw arguments. GPU scatter
+  restores draw order when the CPU store is no longer in spatial order.
 - Camera-only commits inside the expanded CPU working set upload only the viewport uniform. Residency
   refreshes pack records and upload instances again.
 - Prefix sums and stable scatter preserve z-index and insertion order without atomic append order.

@@ -8,6 +8,17 @@ Keep the 24-byte CPU layout (four `f16` local-rect components). Bind the rect as
 
 Do not revert to 32-byte `float32x4` rects to make CI green.
 
+## Compute culling cannot stay locked to last frame's compact mesh
+
+The homepage million-label demo rasterizes unique glyphs after the first commit. Those late
+instance ranges are not in spatial draw order, so the CPU path builds compact meshes. The first
+Wave 3 eligibility check then treated a compact or multi-mesh surface as a permanent `cpu-grid`
+veto. WebGPU camera frames never tried again, and the HUD kept reporting `cpu-grid`.
+
+A single atlas bank can stay on the direct instance store. GPU scatter writes draw-state order
+into the compact buffer. Only a true multi-segment scene or a fragmented store (`highWater` more
+than twice the live instances) must keep the CPU compact path.
+
 ## Compute culling needs a larger CPU working set than its draw set
 
 When culling has viewport bounds, never instance `SpatialIndex.queryAll()` for compute culling. A
