@@ -39,10 +39,6 @@ export interface ResidencyRefreshInput {
   readonly draw: CullViewport | undefined;
 }
 
-/**
- * Who is shaped and instanced. The million-label product keeps the CPU viewport set. Compute cull
- * must not switch this to the full world. The instance store caps at 16,777,216 glyphs.
- */
 export function cullResidency(cullingEnabled: boolean, hasViewportBounds: boolean): CullResidency {
   return cullingEnabled && hasViewportBounds ? "viewport" : "all";
 }
@@ -169,7 +165,6 @@ export function viewportFromBounds(bounds: BoundsData, padding: number): CullVie
   };
 }
 
-/** One viewport of travel before the CPU hash grid runs again. */
 export function workingSetSlack(viewport: CullViewport): number {
   return Math.max(viewport.width, viewport.height);
 }
