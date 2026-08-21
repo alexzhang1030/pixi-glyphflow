@@ -41,8 +41,8 @@ validation before state publication.
 
 `TextLayerCullingOptions.computeCull` accepts `true`, `false`, or `"auto"`. The default is `"auto"`.
 Automatic mode uses compute compaction when the attached WebGPU device is ready and the live
-glyphs fit one atlas bank. A fragmented CPU instance order is not a veto: the GPU scatter restores
-draw order. WebGL, unavailable devices, multi-segment meshes, and `false` use the CPU grid.
+glyphs fit one atlas bank. WebGL, unavailable devices, multi-segment meshes, and `false` use the
+CPU grid.
 
 `showAll()` and `hideAll()` return the number of labels whose `visible` state changed. Repeated calls
 return `0` and preserve revision state. One following `commit()` publishes the complete visibility

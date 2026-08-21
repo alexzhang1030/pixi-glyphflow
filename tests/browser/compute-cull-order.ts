@@ -43,10 +43,7 @@ async function run(): Promise<void> {
   document.body.appendChild(app.canvas);
   const layer = new TextLayer({
     renderer: app.renderer,
-    culling: {
-      bounds: { x: 0, y: 0, width: 320, height: 180 },
-      computeCull: "auto",
-    },
+    culling: { bounds: { x: 0, y: 0, width: 320, height: 180 } },
   });
   app.stage.addChild(layer);
   const ids = layer.createMany(

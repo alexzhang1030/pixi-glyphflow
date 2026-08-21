@@ -26,9 +26,7 @@ points through exact aliases to `dist/`.
 - a WebGL 2 or WebGPU selector that rebuilds the complete PixiJS scene;
 - WebGPU as the first boot when a GPU adapter is available and `?renderer` is absent;
 - `?renderer=webgl` and `?renderer=webgpu` as hard overrides;
-- `computeCull: "auto"` plus a HUD and `data-cull-path` readout of `stats.cullPath`. WebGPU with one
-  atlas bank reports `compute-cull` even after late glyph rasterization breaks CPU instance order.
-  WebGL and multi-segment meshes report `cpu-grid`;
+- `computeCull: "auto"` plus a HUD and `data-cull-path` readout of `stats.cullPath`, either `compute-cull` or `cpu-grid`;
 - 1,000,000 resident labels and viewport culling;
 - 100,000 packed position updates every 100 milliseconds;
 - five registered Noto subsets covering CJKV, Arabic, Devanagari, Hebrew, and Thai;

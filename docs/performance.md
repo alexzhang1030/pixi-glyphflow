@@ -91,8 +91,7 @@ z-index is `Float32`, fill-only GPU transforms use 32 bytes with a sparse effect
 CPU store packs non-position columns so one million reserved slots stay within 48 MiB plus
 the journal floor, and live glyph instances use 24 bytes. Wave 3 adds stable WebGPU compute
 compaction on the direct single-bank mesh. Camera frames inside an expanded CPU working set upload
-only the tight draw viewport. GPU scatter restores draw order when CPU instance allocation is not
-spatial order. WebGL keeps the tight CPU grid. Wave 0 adds `million-live`, split
+only the tight draw viewport. WebGL keeps the tight CPU grid. Wave 0 adds `million-live`, split
 CPU/upload/GPU frame samples, and commit phase timers. The
 40 KiB core gzip and `atlas-pressure` frame CI gates are deferred; the check still prints those
 sizes. Published browser artifacts remain 1.1.0 until the isolated Chrome suite is rerun on the

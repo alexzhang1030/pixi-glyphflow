@@ -607,7 +607,6 @@ export class RenderSurface {
 
   #needsComputeMeshRebuild(computeCull: Readonly<RenderComputeCullUpdate> | undefined): boolean {
     if (computeCull === undefined || this.#computeEligible === false) return false;
-    if (this.#meshes.size === 0) return true;
     const direct = this.#meshes.get(0);
     return this.#meshes.size !== 1 || direct === undefined || direct.compact;
   }

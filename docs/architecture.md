@@ -113,10 +113,10 @@ padded draw viewport. Camera motion inside the working viewport does not query t
 instance store. Crossing its edge refreshes residency and uploads cull records.
 
 The direct `GlyphMesh` rebinds its instance attributes to the compact buffer and uses an indexed
-indirect draw. GPU scatter writes draw-state order, so a single-bank mesh can stay on that path
-when CPU instance allocation is no longer spatial order. The encoder hook checks geometry
-ownership and is removed when the pass is destroyed. WebGL, missing devices, disabled compute
-culling, and multi-segment meshes retain the tight CPU-grid path.
+indirect draw. The encoder hook checks geometry ownership and is removed when the pass is
+destroyed. WebGL, missing devices, disabled compute culling, and multi-segment meshes retain the
+tight CPU-grid path. A single-bank mesh stays on the compute path when CPU instance order is not
+spatial order.
 
 ## Diagnostics
 
