@@ -10,7 +10,6 @@ import {
   packCullRecords,
   resolveCullPath,
   shouldRefreshResidency,
-  shouldUseDirectInstanceMesh,
   workingSetContains,
 } from "../src/culling/computeCull";
 import { GLYPH_INSTANCE_STRIDE } from "../src/render/types";
@@ -22,16 +21,14 @@ describe("compute cull host reference", () => {
     expect(cullResidency(false, true)).toBe("all");
   });
 
-  test("keeps a single-bank compute mesh on the direct store when CPU order is not draw order", () => {
-    const fragmented = {
-      segmentCount: 1,
-      naturalOrder: false,
-      highWater: 8,
-      activeInstances: 6,
-    };
-    expect(computeCullStructurallyEligible(fragmented)).toBe(true);
-    expect(shouldUseDirectInstanceMesh({ ...fragmented, computeCullRequested: true })).toBe(true);
-    expect(shouldUseDirectInstanceMesh({ ...fragmented, computeCullRequested: false })).toBe(false);
+  test("keeps a single-bank store compute-eligible when instance order is not draw order", () => {
+    expect(
+      computeCullStructurallyEligible({
+        segmentCount: 1,
+        highWater: 8,
+        activeInstances: 6,
+      }),
+    ).toBe(true);
     expect(
       computeCullStructurallyEligible({
         segmentCount: 2,
@@ -40,11 +37,9 @@ describe("compute cull host reference", () => {
       }),
     ).toBe(false);
     expect(
-      shouldUseDirectInstanceMesh({
-        segmentCount: 2,
-        naturalOrder: true,
-        computeCullRequested: true,
-        highWater: 8,
+      computeCullStructurallyEligible({
+        segmentCount: 1,
+        highWater: 13,
         activeInstances: 6,
       }),
     ).toBe(false);

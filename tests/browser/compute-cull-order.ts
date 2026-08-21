@@ -2,7 +2,7 @@ import { Application } from "pixi.js";
 
 import { TextLayer } from "../../src";
 
-interface BrowserFixtureState {
+interface ComputeCullOrderFixtureState {
   done: boolean;
   error?: string;
   result?: {
@@ -15,16 +15,16 @@ interface BrowserFixtureState {
 
 declare global {
   interface Window {
-    __glyphflow: BrowserFixtureState;
+    __glyphflowComputeCullOrder: ComputeCullOrderFixtureState;
   }
 }
 
-window.__glyphflow = { done: false };
+window.__glyphflowComputeCullOrder = { done: false };
 
 void run().catch((error: unknown) => {
-  window.__glyphflow.error =
+  window.__glyphflowComputeCullOrder.error =
     error instanceof Error ? `${error.message}\n${error.stack ?? ""}` : String(error);
-  window.__glyphflow.done = true;
+  window.__glyphflowComputeCullOrder.done = true;
 });
 
 async function run(): Promise<void> {
@@ -67,11 +67,11 @@ async function run(): Promise<void> {
   app.render();
 
   const stats = layer.stats;
-  window.__glyphflow.result = {
+  window.__glyphflowComputeCullOrder.result = {
     rendererAdapter: stats.rendererAdapter,
     cullPath: stats.cullPath,
     drawCalls: stats.drawCalls,
     submittedGlyphs: stats.submittedGlyphs,
   };
-  window.__glyphflow.done = true;
+  window.__glyphflowComputeCullOrder.done = true;
 }

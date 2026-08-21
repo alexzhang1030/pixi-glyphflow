@@ -66,17 +66,6 @@ export function computeCullStructurallyEligible(input: {
   );
 }
 
-export function shouldUseDirectInstanceMesh(input: {
-  readonly segmentCount: number;
-  readonly naturalOrder: boolean;
-  readonly computeCullRequested: boolean;
-  readonly highWater: number;
-  readonly activeInstances: number;
-}): boolean {
-  if (!computeCullStructurallyEligible(input)) return false;
-  return input.naturalOrder || input.computeCullRequested;
-}
-
 export function shouldRefreshResidency(input: ResidencyRefreshInput): boolean {
   if (input.hasLabelChanges || input.visibilityDirty) return true;
   switch (input.cullPath) {

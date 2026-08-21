@@ -16,7 +16,6 @@ import {
   type CullPath,
   type CullViewport,
   resolveCullPath,
-  shouldUseDirectInstanceMesh,
 } from "../culling/computeCull";
 import { ComputeCullPass } from "./ComputeCullPass";
 import { GlyphMesh } from "./GlyphMesh";
@@ -97,7 +96,7 @@ export class RenderSurface {
   #lastUploadMs = 0;
   #cullPass: ComputeCullPass | undefined;
   #cullPath: CullPath = "cpu-grid";
-  #computeEligible: boolean | undefined;
+  #computeEligible = true;
   readonly #computeCull: boolean | "auto";
   #destroyed = false;
 
@@ -118,7 +117,7 @@ export class RenderSurface {
 
   prepareCullPath(): CullPath {
     if (!isWebGPURenderer(this.#renderer)) return "cpu-grid";
-    if (this.#computeEligible === false) return "cpu-grid";
+    if (!this.#computeEligible) return "cpu-grid";
     const path = resolveCullPath({
       adapter: "webgpu",
       computeCull: this.#computeCull,
@@ -143,10 +142,10 @@ export class RenderSurface {
     if (this.prepareCullPath() !== "compute-cull") {
       return this.#useCpuCull();
     }
+    if (!this.#hasDirectComputeMesh()) this.#syncMeshes([], update);
     const pass = this.#cullPass;
     const surface = this.#meshes.get(0);
-    if (pass === undefined || surface === undefined || this.#meshes.size !== 1 || surface.compact) {
-      this.#fallbackCompactDraw(update);
+    if (pass === undefined || surface === undefined || !this.#hasDirectComputeMesh()) {
       return this.#useCpuCull();
     }
     const store = this.#coordinator.instances;
@@ -159,7 +158,7 @@ export class RenderSurface {
     }
     pass.trackGeometry(surface.mesh.geometry);
     if (!pass.dispatch(update.viewport)) {
-      this.#fallbackCompactDraw(update);
+      this.#syncCompactDraw(update);
       return this.#useCpuCull();
     }
     this.#cullPath = "compute-cull";
@@ -317,15 +316,12 @@ export class RenderSurface {
     const data = store.buffer;
     const view = new DataView(data);
     const draw = this.#buildDrawSegments(view);
-    const meshInput = {
+    this.#computeEligible = computeCullStructurallyEligible({
       segmentCount: draw.segments.length,
-      naturalOrder: draw.naturalOrder,
-      computeCullRequested: computeCull !== undefined,
       highWater: storeStats.highWater,
       activeInstances: storeStats.activeInstances,
-    };
-    this.#computeEligible = computeCullStructurallyEligible(meshInput);
-    if (shouldUseDirectInstanceMesh(meshInput)) {
+    });
+    if (this.#computeEligible && (draw.naturalOrder || computeCull !== undefined)) {
       const segment = draw.segments[0];
       if (segment === undefined) throw new Error("Active glyph segment is unavailable");
       this.#syncDirectMesh(segment.bank, segment.blendMode, data, storeStats.highWater, ranges);
@@ -605,16 +601,18 @@ export class RenderSurface {
     for (const [key, surface] of this.#meshes) this.#destroyMesh(key, surface);
   }
 
-  #needsComputeMeshRebuild(computeCull: Readonly<RenderComputeCullUpdate> | undefined): boolean {
-    if (computeCull === undefined || this.#computeEligible === false) return false;
+  #hasDirectComputeMesh(): boolean {
     const direct = this.#meshes.get(0);
-    return this.#meshes.size !== 1 || direct === undefined || direct.compact;
+    return this.#meshes.size === 1 && direct !== undefined && !direct.compact;
   }
 
-  #fallbackCompactDraw(update: Readonly<RenderComputeCullUpdate>): void {
+  #needsComputeMeshRebuild(computeCull: Readonly<RenderComputeCullUpdate> | undefined): boolean {
+    return computeCull !== undefined && this.#computeEligible && !this.#hasDirectComputeMesh();
+  }
+
+  #syncCompactDraw(update: Readonly<RenderComputeCullUpdate>): void {
     const store = this.#coordinator.instances;
-    const storeStats = store.stats;
-    if (storeStats.activeInstances === 0) {
+    if (store.stats.activeInstances === 0) {
       this.#destroyMeshes();
       this.#submittedGlyphs = 0;
       return;

@@ -3,30 +3,43 @@ import type { Page } from "@playwright/test";
 
 import { hasWebGpuAdapter } from "./webgpu-support";
 
-test("keeps WebGPU compute cull after instance ranges leave draw order", async ({ page }) => {
+test("keeps WebGPU compute cull after instance ranges leave draw order", async ({
+  page,
+}, testInfo) => {
+  const messages: string[] = [];
+  page.on("console", (message) => messages.push(`${message.type()}: ${message.text()}`));
+  page.on("pageerror", (error) => messages.push(`pageerror: ${error.message}`));
   const webgpuAvailable = await hasWebGpuAdapter(page);
   const webgl = await loadFixture(page, "webgl");
-  assertFixture(webgl, "webgl");
-
   const webgpu = await loadFixture(page, "webgpu");
+  await testInfo.attach("browser-console", {
+    body: messages.join("\n"),
+    contentType: "text/plain",
+  });
+  await testInfo.attach("compute-cull-order-state", {
+    body: JSON.stringify({ webgl, webgpu, webgpuAvailable }, undefined, 2),
+    contentType: "application/json",
+  });
+
+  assertFixture(webgl, "webgl");
   assertFixture(webgpu, webgpuAvailable ? "webgpu" : "webgl");
 });
 
-type FixtureState = typeof window.__glyphflow;
+type FixtureState = typeof window.__glyphflowComputeCullOrder;
 type RendererAdapter = "webgl" | "webgpu";
 
 async function loadFixture(page: Page, renderer: RendererAdapter): Promise<FixtureState> {
   await page.goto(`/tests/browser/compute-cull-order.html?renderer=${renderer}`);
-  await page.waitForFunction(() => window.__glyphflow?.done === true);
-  return page.evaluate(() => window.__glyphflow);
+  await page.waitForFunction(() => window.__glyphflowComputeCullOrder?.done === true);
+  return page.evaluate(() => window.__glyphflowComputeCullOrder);
 }
 
 function assertFixture(state: FixtureState, renderer: RendererAdapter): void {
   expect(state.error).toBeUndefined();
-  expect(state.result).toBeDefined();
-  const result = state.result!;
-  expect(result.rendererAdapter).toBe(renderer);
-  expect(result.cullPath).toBe(renderer === "webgpu" ? "compute-cull" : "cpu-grid");
-  expect(result.drawCalls).toBe(1);
-  expect(result.submittedGlyphs).toBeGreaterThan(0);
+  expect(state.result).toMatchObject({
+    rendererAdapter: renderer,
+    cullPath: renderer === "webgpu" ? "compute-cull" : "cpu-grid",
+    drawCalls: 1,
+  });
+  expect(state.result?.submittedGlyphs).toBeGreaterThan(0);
 }
