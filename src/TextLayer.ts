@@ -889,6 +889,7 @@ export class TextLayer extends Container {
   /** Read an immutable diagnostics snapshot. */
   get stats(): Readonly<TextLayerStats> {
     if (this.#drawVisibleCountStale) {
+      this.#ensureScratchCapacity();
       this.#drawVisibleCount =
         this.#cullingEnabled && this.#viewportBounds !== undefined
           ? this.#spatial.query(this.#viewportBounds, this.#bulkSlots, this.#cullingPadding)
@@ -1141,8 +1142,13 @@ export class TextLayer extends Container {
     const bounds: MutableBoundsData = { x: 0, y: 0, width: 0, height: 0 };
     for (const state of coordinator.getDrawStates()) {
       const range = coordinator.instances.getRange(state.slot);
+      if (range === undefined) {
+        throw new Error(`Cull instance range ${String(state.slot)} is unavailable`);
+      }
       const box = this.#spatial.get(state.slot, bounds);
-      if (range === undefined || box === undefined) continue;
+      if (box === undefined) {
+        throw new Error(`Cull bounds ${String(state.slot)} are unavailable`);
+      }
       records.push({
         minX: box.x,
         minY: box.y,

@@ -10,6 +10,7 @@ import {
 
 import type { AtlasCommit, AtlasPageInfo, GlyphMode } from "../atlas/types";
 import {
+  aabbVisible,
   CULL_RECORD_STRIDE,
   type CullPath,
   type CullViewport,
@@ -94,6 +95,7 @@ export class RenderSurface {
   #lastUploadMs = 0;
   #cullPass: ComputeCullPass | undefined;
   #cullPath: CullPath = "cpu-grid";
+  #computeEligible: boolean | undefined;
   readonly #computeCull: boolean | "auto";
   #destroyed = false;
 
@@ -114,6 +116,7 @@ export class RenderSurface {
 
   prepareCullPath(): CullPath {
     if (!isWebGPURenderer(this.#renderer)) return "cpu-grid";
+    if (this.#computeEligible === false) return "cpu-grid";
     const path = resolveCullPath({
       adapter: "webgpu",
       computeCull: this.#computeCull,
@@ -172,7 +175,7 @@ export class RenderSurface {
     const instanceRanges = this.#coordinator.instances.consumeDirty();
     this.#syncPalette(transformRanges);
     if (instanceRanges.length > 0 || result.drawOrderChanged || this.#meshes.size === 0) {
-      this.#syncMeshes(instanceRanges);
+      this.#syncMeshes(instanceRanges, computeCull);
     }
     if (computeCull === undefined) this.#useCpuCull();
     else this.#refreshComputeCull(computeCull);
@@ -293,7 +296,10 @@ export class RenderSurface {
     this.#transformWrites += uploaded.writes;
   }
 
-  #syncMeshes(ranges: readonly Readonly<DirtyByteRange>[]): void {
+  #syncMeshes(
+    ranges: readonly Readonly<DirtyByteRange>[],
+    computeCull: Readonly<RenderComputeCullUpdate> | undefined,
+  ): void {
     const store = this.#coordinator.instances;
     const storeStats = store.stats;
     if (storeStats.activeInstances === 0) {
@@ -303,33 +309,52 @@ export class RenderSurface {
     }
     const data = store.buffer;
     const view = new DataView(data);
-    const { segments, naturalOrder } = this.#buildDrawSegments(view);
+    const draw = this.#buildDrawSegments(view);
     if (
-      segments.length === 1 &&
-      naturalOrder &&
+      draw.segments.length === 1 &&
+      draw.naturalOrder &&
       storeStats.highWater <= storeStats.activeInstances * 2
     ) {
-      const segment = segments[0];
+      this.#computeEligible = true;
+      const segment = draw.segments[0];
       if (segment === undefined) throw new Error("Active glyph segment is unavailable");
       this.#syncDirectMesh(segment.bank, segment.blendMode, data, storeStats.highWater, ranges);
       this.#submittedGlyphs = storeStats.activeInstances;
       return;
     }
 
-    this.#syncCompactMeshes(data, segments);
-    this.#submittedGlyphs = storeStats.activeInstances;
+    this.#computeEligible = false;
+    const compactDraw =
+      computeCull?.records === undefined
+        ? draw
+        : this.#buildDrawSegments(
+            view,
+            this.#visibleCullRecords(computeCull.records, computeCull.viewport),
+          );
+    this.#syncCompactMeshes(data, compactDraw.segments);
+    this.#submittedGlyphs = compactDraw.count;
   }
 
-  #buildDrawSegments(view: DataView): Readonly<{
+  #buildDrawSegments(
+    view: DataView,
+    included: Uint8Array | undefined = undefined,
+  ): Readonly<{
     segments: DrawSegment[];
     naturalOrder: boolean;
+    count: number;
   }> {
     const segments: DrawSegment[] = [];
     let lastSourceIndex = -1;
     let naturalOrder = true;
-    for (const state of this.#coordinator.getDrawStates()) {
+    let count = 0;
+    const states = this.#coordinator.getDrawStates();
+    for (let stateIndex = 0; stateIndex < states.length; stateIndex += 1) {
+      if (included !== undefined && included[stateIndex] !== 1) continue;
+      const state = states[stateIndex];
+      if (state === undefined) throw new Error("Draw state list is incomplete");
       const range = this.#coordinator.instances.getRange(state.slot);
       if (range === undefined) continue;
+      count += range.count;
       for (let index = 0; index < range.count; index += 1) {
         const sourceIndex = range.offset + index;
         const metadata = view.getUint32(sourceIndex * GLYPH_INSTANCE_STRIDE + 20, true);
@@ -365,13 +390,34 @@ export class RenderSurface {
         segment.count += 1;
       }
     }
-    if (
-      segments.reduce((sum, segment) => sum + segment.count, 0) !==
-      this.#coordinator.instances.stats.activeInstances
-    ) {
+    if (segments.reduce((sum, segment) => sum + segment.count, 0) !== count) {
       throw new Error("Draw segment glyph count differs from active instance count");
     }
-    return { segments, naturalOrder };
+    return { segments, naturalOrder, count };
+  }
+
+  #visibleCullRecords(records: ArrayBuffer, viewport: CullViewport): Uint8Array {
+    const recordCount = records.byteLength / CULL_RECORD_STRIDE;
+    const states = this.#coordinator.getDrawStates();
+    if (recordCount !== states.length) {
+      throw new Error("Cull record count differs from draw state count");
+    }
+    const floats = new Float32Array(records);
+    const included = new Uint8Array(recordCount);
+    const floatsPerRecord = CULL_RECORD_STRIDE / Float32Array.BYTES_PER_ELEMENT;
+    for (let index = 0; index < recordCount; index += 1) {
+      const offset = index * floatsPerRecord;
+      included[index] = Number(
+        aabbVisible(
+          floats[offset] ?? 0,
+          floats[offset + 1] ?? 0,
+          floats[offset + 2] ?? 0,
+          floats[offset + 3] ?? 0,
+          viewport,
+        ),
+      );
+    }
+    return included;
   }
 
   #syncDirectMesh(
