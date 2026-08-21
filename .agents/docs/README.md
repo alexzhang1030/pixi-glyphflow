@@ -6,7 +6,7 @@
 - [Paid traps](gotchas.md) — compute-cull working-set residency, CI Chrome/`float16x4` instance attributes, packed atlas keys vs `glyphText`, and the deferred atlas-pressure frame gate.
 - [Implementation plan](../../tasks/plan.md) — dependency order, delivery phases, checkpoints, risks, and release sequence.
 - [Task ledger](../../tasks/todo.md) — small implementation slices with acceptance criteria and verification commands.
-- [Interactive documentation site](../../site/README.md) — Nuxt build contract, live-render scale, browser acceptance, and local operation.
+- [Interactive documentation site](../../site/README.md) — Nuxt build contract, live-render scale, WebGPU when available, cull-path readout, browser acceptance, and local operation.
 - [Font and language guide](../../docs/fonts.md) — custom font sources, CJKV routing, fallback semantics, shaping controls, and MSDF asset setup.
 
 The 1.0 specification is the current unstamped design record. Tests, benchmarks, package artifacts, and tagged release evidence are the authoritative proof for implementation claims.
