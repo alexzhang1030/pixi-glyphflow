@@ -13,6 +13,7 @@ import {
   aabbVisible,
   CULL_RECORD_STRIDE,
   computeCullStructurallyEligible,
+  cullViewportsEqual,
   type CullPath,
   type CullViewport,
   resolveCullPath,
@@ -58,7 +59,9 @@ interface DrawSegment {
 
 export interface RenderComputeCullUpdate {
   readonly records: ArrayBuffer | undefined;
+  readonly recordCount: number;
   readonly viewport: CullViewport;
+  readonly mirrorInstances: boolean;
 }
 
 export interface RenderSurfaceStats {
@@ -98,6 +101,7 @@ export class RenderSurface {
   #cullPath: CullPath = "cpu-grid";
   #computeEligible = true;
   readonly #computeCull: boolean | "auto";
+  #lastCullViewport: CullViewport | undefined;
   #destroyed = false;
 
   constructor(
@@ -151,16 +155,21 @@ export class RenderSurface {
     const store = this.#coordinator.instances;
     const instanceBytes = store.stats.highWater * GLYPH_INSTANCE_STRIDE;
     if (update.records !== undefined) {
-      const recordCount = update.records.byteLength / CULL_RECORD_STRIDE;
-      pass.ensureCapacity(recordCount, instanceBytes);
-      pass.uploadRecords(update.records, recordCount);
-      pass.uploadInstances(store.buffer, instanceBytes);
+      pass.ensureCapacity(update.recordCount, instanceBytes);
+      pass.uploadRecords(update.records, update.recordCount);
+      if (update.mirrorInstances) pass.uploadInstances(store.buffer, instanceBytes);
     }
     pass.trackGeometry(surface.mesh.geometry);
+    const viewportUnchanged = cullViewportsEqual(this.#lastCullViewport, update.viewport);
+    if (update.records === undefined && viewportUnchanged) {
+      this.#cullPath = "compute-cull";
+      return this.#cullPath;
+    }
     if (!pass.dispatch(update.viewport)) {
       this.#syncCompactDraw(update);
       return this.#useCpuCull();
     }
+    this.#lastCullViewport = update.viewport;
     this.#cullPath = "compute-cull";
     return this.#cullPath;
   }
@@ -218,6 +227,7 @@ export class RenderSurface {
     this.#cullPass?.destroy();
     this.#cullPass = undefined;
     this.#cullPath = "cpu-grid";
+    this.#lastCullViewport = undefined;
     this.#paletteTexture.destroy(true);
     this.#paletteData = new Float32Array();
     this.#submittedGlyphs = 0;
@@ -333,7 +343,11 @@ export class RenderSurface {
         ? draw
         : this.#buildDrawSegments(
             view,
-            this.#visibleCullRecords(computeCull.records, computeCull.viewport),
+            this.#visibleCullRecords(
+              computeCull.records,
+              computeCull.viewport,
+              computeCull.recordCount,
+            ),
           );
     this.#syncCompactMeshes(data, compactDraw.segments);
     this.#submittedGlyphs = compactDraw.count;
@@ -400,8 +414,11 @@ export class RenderSurface {
     return { segments, naturalOrder, count };
   }
 
-  #visibleCullRecords(records: ArrayBuffer, viewport: CullViewport): Uint8Array {
-    const recordCount = records.byteLength / CULL_RECORD_STRIDE;
+  #visibleCullRecords(
+    records: ArrayBuffer,
+    viewport: CullViewport,
+    recordCount: number,
+  ): Uint8Array {
     const states = this.#coordinator.getDrawStates();
     if (recordCount !== states.length) {
       throw new Error("Cull record count differs from draw state count");
@@ -621,7 +638,10 @@ export class RenderSurface {
     const draw =
       update.records === undefined
         ? this.#buildDrawSegments(view)
-        : this.#buildDrawSegments(view, this.#visibleCullRecords(update.records, update.viewport));
+        : this.#buildDrawSegments(
+            view,
+            this.#visibleCullRecords(update.records, update.viewport, update.recordCount),
+          );
     this.#syncCompactMeshes(store.buffer, draw.segments);
     this.#submittedGlyphs = draw.count;
   }
@@ -631,6 +651,7 @@ export class RenderSurface {
       this.#cullPass?.untrackGeometry(surface.mesh.geometry);
     }
     this.#cullPath = "cpu-grid";
+    this.#lastCullViewport = undefined;
     return this.#cullPath;
   }
 

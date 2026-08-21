@@ -8,6 +8,7 @@ import {
   cullResidency,
   expandWorkingSet,
   packCullRecords,
+  patchCullRecordAabbAt,
   resolveCullPath,
   shouldRefreshResidency,
   workingSetContains,
@@ -151,7 +152,6 @@ describe("compute cull host reference", () => {
     expect(
       shouldRefreshResidency({
         cullPath: "compute-cull",
-        hasLabelChanges: false,
         visibilityDirty: false,
         instanced,
         draw: { ...draw, x: 40 },
@@ -160,7 +160,6 @@ describe("compute cull host reference", () => {
     expect(
       shouldRefreshResidency({
         cullPath: "compute-cull",
-        hasLabelChanges: false,
         visibilityDirty: false,
         instanced,
         draw: { ...draw, x: 950 },
@@ -169,16 +168,14 @@ describe("compute cull host reference", () => {
     expect(
       shouldRefreshResidency({
         cullPath: "compute-cull",
-        hasLabelChanges: true,
         visibilityDirty: false,
         instanced,
         draw,
       }),
-    ).toBe(true);
+    ).toBe(false);
     expect(
       shouldRefreshResidency({
         cullPath: "compute-cull",
-        hasLabelChanges: false,
         visibilityDirty: true,
         instanced,
         draw,
@@ -187,11 +184,24 @@ describe("compute cull host reference", () => {
     expect(
       shouldRefreshResidency({
         cullPath: "cpu-grid",
-        hasLabelChanges: false,
         visibilityDirty: false,
         instanced,
         draw,
       }),
     ).toBe(true);
+  });
+
+  test("patches a packed AABB without rewriting instance ranges", () => {
+    const records = packCullRecords([
+      { minX: 1, minY: 2, maxX: 3, maxY: 4, instanceOffset: 5, instanceCount: 6 },
+    ]);
+    patchCullRecordAabbAt(new Float32Array(records), 0, 10, 20, 30, 40);
+    const view = new DataView(records);
+    expect(view.getFloat32(0, true)).toBe(10);
+    expect(view.getFloat32(4, true)).toBe(20);
+    expect(view.getFloat32(8, true)).toBe(30);
+    expect(view.getFloat32(12, true)).toBe(40);
+    expect(view.getUint32(16, true)).toBe(5);
+    expect(view.getUint32(20, true)).toBe(6);
   });
 });

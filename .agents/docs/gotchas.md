@@ -30,6 +30,15 @@ Do not instance only the tight draw viewport either. Every camera frame would cr
 edge and run the CPU grid again. Query the expanded working viewport with zero query padding, then
 let compute culling compact those resident instances against the tight padded draw viewport.
 
+Do not treat a position storm as a residency refresh. A Chrome trace of the homepage demo spent
+most of the storm frame in `RenderSurface.#buildDrawSegments` and `GlyphInstanceStore.getRange`
+(`Object.freeze({ ...range })` per label) because `hasLabelChanges` re-queried the working set and
+repacked every draw state. Position-only commits inside the working set patch resident AABBs and
+the palette. Re-query only on show/hide/add/remove or when the camera leaves the working set.
+
+`getRange` must return the live range. Copying and freezing it on every pack or segment walk is the
+hot leaf.
+
 ## Live atlas keys omit `glyphText` when a glyph id is present
 
 Packed identities are family intern + glyph id + size bucket + weight class + mode + font revision. Rasterize must use the same size bucket as the key. String keys stay valid for `atlas-pressure` (`glyph-${index}`), prebuilt pages, non-BMP text with glyph id 0, and unusual weights. Do not put `glyphText` back into the packed key, and do not fall back to `float16x4` instance attributes.

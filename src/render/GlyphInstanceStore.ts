@@ -149,8 +149,7 @@ export class GlyphInstanceStore {
 
   getRange(labelId: number): Readonly<GlyphInstanceRange> | undefined {
     this.#assertActive();
-    const range = this.#ranges.get(labelId);
-    return range === undefined ? undefined : Object.freeze({ ...range });
+    return this.#ranges.get(labelId);
   }
 
   consumeDirty(): readonly Readonly<DirtyByteRange>[] {

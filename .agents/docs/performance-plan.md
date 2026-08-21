@@ -67,9 +67,10 @@ The published 128 MiB store and 64-byte transform ceilings stay until new M1 Pro
 
 Compute culling separates CPU residency from the submitted draw set. The CPU grid shapes and
 instances an expanded viewport. Camera motion inside that box uploads one tight viewport uniform
-and dispatches stable prefix-sum compaction without rebuilding instances. Crossing the working-set
-edge refreshes residency through another expanded grid query. WebGL and multi-segment meshes keep
-the tight CPU-grid path.
+and dispatches stable prefix-sum compaction without rebuilding instances. Position-only storms
+inside the same box patch resident cull AABBs and palette texels. They do not re-query or rebuild
+draw segments. Crossing the working-set edge, or a show/hide/add/remove, refreshes residency
+through another expanded grid query. WebGL and multi-segment meshes keep the tight CPU-grid path.
 
 ### The million-glyph GPU path is not the product path
 

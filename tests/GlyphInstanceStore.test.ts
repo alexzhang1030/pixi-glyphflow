@@ -18,6 +18,7 @@ describe("GlyphInstanceStore", () => {
 
     expect(store.set(100, first)).toBe(true);
     expect(store.getRange(100)).toEqual({ offset: 0, count: 2, capacity: 2 });
+    expect(store.getRange(100)).toBe(store.getRange(100));
     expect(store.buffer).toBe(buffer);
     expect(readInstance(store.buffer, 0)).toEqual({
       x: 10,

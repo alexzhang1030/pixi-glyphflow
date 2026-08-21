@@ -33,7 +33,6 @@ export interface CompactInstancesResult {
 
 export interface ResidencyRefreshInput {
   readonly cullPath: CullPath;
-  readonly hasLabelChanges: boolean;
   readonly visibilityDirty: boolean;
   readonly instanced: CullViewport | undefined;
   readonly draw: CullViewport | undefined;
@@ -67,7 +66,7 @@ export function computeCullStructurallyEligible(input: {
 }
 
 export function shouldRefreshResidency(input: ResidencyRefreshInput): boolean {
-  if (input.hasLabelChanges || input.visibilityDirty) return true;
+  if (input.visibilityDirty) return true;
   switch (input.cullPath) {
     case "cpu-grid":
       return true;
@@ -82,6 +81,52 @@ export function shouldRefreshResidency(input: ResidencyRefreshInput): boolean {
       return _exhaustive;
     }
   }
+}
+
+export function cullViewportsEqual(
+  left: CullViewport | undefined,
+  right: CullViewport | undefined,
+): boolean {
+  return (
+    left === right ||
+    (left !== undefined &&
+      right !== undefined &&
+      left.x === right.x &&
+      left.y === right.y &&
+      left.width === right.width &&
+      left.height === right.height &&
+      left.padding === right.padding)
+  );
+}
+
+export function writeCullRecordAt(
+  floats: Float32Array,
+  uints: Uint32Array,
+  index: number,
+  record: CullRecordInput,
+): void {
+  const base = index * FLOATS_PER_RECORD;
+  floats[base] = record.minX;
+  floats[base + 1] = record.minY;
+  floats[base + 2] = record.maxX;
+  floats[base + 3] = record.maxY;
+  uints[base + 4] = record.instanceOffset;
+  uints[base + 5] = record.instanceCount;
+}
+
+export function patchCullRecordAabbAt(
+  floats: Float32Array,
+  index: number,
+  minX: number,
+  minY: number,
+  maxX: number,
+  maxY: number,
+): void {
+  const base = index * FLOATS_PER_RECORD;
+  floats[base] = minX;
+  floats[base + 1] = minY;
+  floats[base + 2] = maxX;
+  floats[base + 3] = maxY;
 }
 
 export function aabbVisible(
@@ -105,13 +150,7 @@ export function packCullRecords(records: readonly CullRecordInput[]): ArrayBuffe
   for (let index = 0; index < records.length; index += 1) {
     const record = records[index];
     if (record === undefined) continue;
-    const base = index * FLOATS_PER_RECORD;
-    floats[base] = record.minX;
-    floats[base + 1] = record.minY;
-    floats[base + 2] = record.maxX;
-    floats[base + 3] = record.maxY;
-    uints[base + 4] = record.instanceOffset;
-    uints[base + 5] = record.instanceCount;
+    writeCullRecordAt(floats, uints, index, record);
   }
   return buffer;
 }

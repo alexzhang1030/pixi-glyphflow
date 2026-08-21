@@ -44,6 +44,7 @@ export class ComputeCullPass {
   #labelCapacity = 0;
   #instanceBytes = 0;
   #recordCount = 0;
+  #bindGroup: GPUBindGroup | undefined;
   #ready = false;
 
   constructor(renderer: WebGPURenderer) {
@@ -124,6 +125,7 @@ export class ComputeCullPass {
     const labels = Math.max(CULL_WORKGROUP, nextPowerOfTwo(Math.max(1, labelCount)));
     const bytes = Math.max(24, nextPowerOfTwo(Math.max(24, instanceBytes)));
     if (labels > this.#labelCapacity) {
+      this.#bindGroup = undefined;
       this.#records?.destroy();
       this.#counts?.destroy();
       this.#prefix?.destroy();
@@ -151,6 +153,7 @@ export class ComputeCullPass {
       this.#labelCapacity = labels;
     }
     if (bytes > this.#instanceBytes) {
+      this.#bindGroup = undefined;
       this.#instancesIn?.destroy();
       this.#instancesOut?.destroy();
       this.#instancesIn = createBuffer(
@@ -219,19 +222,22 @@ export class ComputeCullPass {
     floats[4] = viewport.padding;
     ints[5] = this.#recordCount;
     device.queue.writeBuffer(this.#uniform, 0, uniforms);
-    const bindGroup = device.createBindGroup({
-      layout,
-      entries: [
-        { binding: 0, resource: { buffer: this.#uniform } },
-        { binding: 1, resource: { buffer: this.#records } },
-        { binding: 2, resource: { buffer: this.#counts } },
-        { binding: 3, resource: { buffer: this.#prefix } },
-        { binding: 4, resource: { buffer: this.#groupSums } },
-        { binding: 5, resource: { buffer: this.#instancesIn } },
-        { binding: 6, resource: { buffer: this.#instancesOut } },
-        { binding: 7, resource: { buffer: indirect } },
-      ],
-    });
+    const bindGroup =
+      this.#bindGroup ??
+      device.createBindGroup({
+        layout,
+        entries: [
+          { binding: 0, resource: { buffer: this.#uniform } },
+          { binding: 1, resource: { buffer: this.#records } },
+          { binding: 2, resource: { buffer: this.#counts } },
+          { binding: 3, resource: { buffer: this.#prefix } },
+          { binding: 4, resource: { buffer: this.#groupSums } },
+          { binding: 5, resource: { buffer: this.#instancesIn } },
+          { binding: 6, resource: { buffer: this.#instancesOut } },
+          { binding: 7, resource: { buffer: indirect } },
+        ],
+      });
+    this.#bindGroup = bindGroup;
     const groups = Math.max(1, Math.ceil(this.#recordCount / CULL_WORKGROUP));
     const encoder = device.createCommandEncoder({ label: "pixi-glyphflow-compute-cull" });
     const mark = encoder.beginComputePass();
@@ -307,6 +313,7 @@ export class ComputeCullPass {
     this.#instancesIn?.destroy();
     this.#instancesOut?.destroy();
     this.#uniform?.destroy();
+    this.#bindGroup = undefined;
     this.indirectBuffer.destroy();
     this.#geometries.clear();
     this.#ready = false;

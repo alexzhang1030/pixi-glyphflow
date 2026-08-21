@@ -153,6 +153,8 @@ export class RenderCoordinator {
   #removedLabels = 0;
   #lastAddedOrder = 0;
   #needsDrawSort = false;
+  #drawStateList: Readonly<RenderDrawState>[] = [];
+  #drawStatesDirty = true;
   #lastLayoutMs = 0;
   #lastInstanceWriteMs = 0;
   #lastPaletteWriteMs = 0;
@@ -201,7 +203,10 @@ export class RenderCoordinator {
       const { change, run } = item;
       if (change.snapshot === undefined) {
         this.#runs.delete(change.slot);
-        drawOrderChanged = this.#drawStates.delete(change.slot) || drawOrderChanged;
+        if (this.#drawStates.delete(change.slot)) {
+          drawOrderChanged = true;
+          this.#drawStatesDirty = true;
+        }
         const instanceStart = performance.now();
         this.instances.remove(change.slot);
         this.#lastInstanceWriteMs += performance.now() - instanceStart;
@@ -239,6 +244,7 @@ export class RenderCoordinator {
           }),
         );
         drawOrderChanged = true;
+        this.#drawStatesDirty = true;
       }
       const sourceChanged =
         (change.mask & (TextDirty.Content | TextDirty.Style)) !== 0 ||
@@ -293,10 +299,14 @@ export class RenderCoordinator {
 
   getDrawStates(): readonly Readonly<RenderDrawState>[] {
     this.#assertActive();
+    if (!this.#drawStatesDirty && !this.#needsDrawSort) return this.#drawStateList;
     const states = Array.from(this.#drawStates.values());
     if (this.#needsDrawSort) {
       states.sort((left, right) => left.zIndex - right.zIndex || left.order - right.order);
+      this.#needsDrawSort = false;
     }
+    this.#drawStateList = states;
+    this.#drawStatesDirty = false;
     return states;
   }
 
