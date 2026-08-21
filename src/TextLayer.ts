@@ -127,8 +127,6 @@ export class TextLayer extends Container {
   #dirtyLength = 0;
   #visibleSlots: Uint32Array;
   #visibleCount = 0;
-  #drawVisibleCount = 0;
-  #drawVisibleCountStale = false;
   #renderedEpochs: Uint32Array;
   #renderedSlots: Uint32Array;
   #renderedCount = 0;
@@ -758,15 +756,7 @@ export class TextLayer extends Container {
     if (refreshResidency) {
       this.#visibleCount = this.#queryVisible(cullPath, drawViewport);
       this.#visibilityDirty = false;
-      if (cullPath === "compute-cull" && drawViewport !== undefined) {
-        this.#drawVisibleCountStale = true;
-      } else {
-        this.#drawVisibleCount = this.#visibleCount;
-        this.#drawVisibleCountStale = false;
-      }
       if (coordinator !== undefined) changes = this.#buildRenderChanges();
-    } else {
-      this.#drawVisibleCountStale = drawViewport !== undefined;
     }
     this.#lastSpatialUpdateMs = performance.now() - spatialStart;
     this.#lastLayoutMs = 0;
@@ -888,14 +878,6 @@ export class TextLayer extends Container {
 
   /** Read an immutable diagnostics snapshot. */
   get stats(): Readonly<TextLayerStats> {
-    if (this.#drawVisibleCountStale) {
-      this.#ensureScratchCapacity();
-      this.#drawVisibleCount =
-        this.#cullingEnabled && this.#viewportBounds !== undefined
-          ? this.#spatial.query(this.#viewportBounds, this.#bulkSlots, this.#cullingPadding)
-          : this.#visibleCount;
-      this.#drawVisibleCountStale = false;
-    }
     const store = this.#store.stats;
     const pendingDirty = this.#store.pendingDirty;
     const render = this.#renderCoordinator?.stats;
@@ -932,8 +914,8 @@ export class TextLayer extends Container {
       transformOnlyLabels: render?.transformOnlyLabels ?? 0,
       removedRenderLabels: render?.removedLabels ?? 0,
       staleRenderRevisions: render?.staleRevisions ?? 0,
-      visibleLabelCount: this.#drawVisibleCount,
-      culledLabelCount: Math.max(0, store.size - this.#drawVisibleCount),
+      visibleLabelCount: this.#visibleCount,
+      culledLabelCount: Math.max(0, store.size - this.#visibleCount),
       spatialIndexBytes: spatial.allocatedBytes,
       cullingQueries: spatial.queries,
       rendererAdapter: this.#renderer === undefined ? "detached" : (surface?.adapter ?? "unknown"),

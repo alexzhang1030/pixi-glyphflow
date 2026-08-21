@@ -122,4 +122,6 @@ tight CPU-grid path.
 `TextLayer.stats` allocates one immutable snapshot at read time. It reports CPU capacity, dirty
 domains, revisions, shaping, visible labels, spatial queries, renderer backend, cull path, draw
 calls, glyphs, pending glyphs, upload bytes, and last-commit layout, instance-write, palette-write,
-spatial, and upload milliseconds.
+spatial, and upload milliseconds. `visibleLabelCount` is the instanced working set. On the CPU grid
+that set is the tight padded viewport. On compute cull it is the expanded residency query. The
+getter does not walk the grid.
