@@ -134,6 +134,13 @@ export class RenderSurface {
     return "compute-cull";
   }
 
+  dropIdleMeshes(): void {
+    this.#assertActive();
+    if (this.#coordinator.getDrawStates().length !== 0) return;
+    this.#destroyMeshes();
+    this.#submittedGlyphs = 0;
+  }
+
   refreshComputeCull(update: Readonly<RenderComputeCullUpdate>): CullPath {
     this.#assertActive();
     const uploadStart = performance.now();
@@ -146,7 +153,10 @@ export class RenderSurface {
     if (this.prepareCullPath() !== "compute-cull") {
       return this.#useCpuCull();
     }
-    if (!this.#hasDirectComputeMesh()) this.#syncMeshes([], update);
+    if (update.records !== undefined && update.recordCount === 0) {
+      this.#destroyMeshes();
+      this.#submittedGlyphs = 0;
+    } else if (!this.#hasDirectComputeMesh()) this.#syncMeshes([], update);
     const pass = this.#cullPass;
     const surface = this.#meshes.get(0);
     if (pass === undefined || surface === undefined || !this.#hasDirectComputeMesh()) {

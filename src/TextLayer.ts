@@ -781,6 +781,7 @@ export class TextLayer extends Container {
     const needsComputeDispatch = cullPath === "compute-cull";
     if (coordinator === undefined || (changes.length === 0 && !needsComputeDispatch)) {
       this.#pendingAdmissionCount = 0;
+      if (this.#visibleCount === 0) this.#renderSurface?.dropIdleMeshes();
       this.#lastCommitDurationMs = performance.now() - start;
       this.#lastCommitPromise = this.#renderTail.then(() => {
         this.emit(TEXT_LAYER_COMMIT_EVENT, revision);
@@ -1261,18 +1262,15 @@ export class TextLayer extends Container {
       if (change === undefined) throw new Error("Visible label snapshot is unavailable");
       changes.push(change);
     }
-    for (let index = 0; index < this.#renderedCount; index += 1) {
-      const slot = this.#renderedSlots[index];
-      if (slot === undefined) throw new Error("Rendered slot list is incomplete");
-      if (this.#renderedEpochs[slot] !== nextEpoch) {
-        const gone = this.#store.snapshotAt(slot) === undefined;
-        changes.push({
-          slot,
-          mask: ALL_DIRTY,
-          snapshot: undefined,
-          ...(cullPath === "compute-cull" && !gone ? { retainResources: true } : {}),
-        });
-      }
+    for (const state of coordinator?.getDrawStates() ?? []) {
+      if (this.#renderedEpochs[state.slot] === nextEpoch) continue;
+      const gone = this.#store.snapshotAt(state.slot) === undefined;
+      changes.push({
+        slot: state.slot,
+        mask: ALL_DIRTY,
+        snapshot: undefined,
+        ...(cullPath === "compute-cull" && !gone ? { retainResources: true } : {}),
+      });
     }
     this.#renderedSlots.set(this.#visibleSlots.subarray(0, this.#visibleCount));
     this.#renderedCount = this.#visibleCount;
