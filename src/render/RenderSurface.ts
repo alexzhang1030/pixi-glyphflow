@@ -191,7 +191,10 @@ export class RenderSurface {
       this.#hasDirectComputeMesh() &&
       instanceRanges.length === 0 &&
       !this.#needsComputeMeshRebuild(computeCull);
-    if (
+    if (this.#coordinator.getDrawStates().length === 0) {
+      this.#destroyMeshes();
+      this.#submittedGlyphs = 0;
+    } else if (
       !skipSegmentWalk &&
       (instanceRanges.length > 0 ||
         result.drawOrderChanged ||
@@ -326,7 +329,7 @@ export class RenderSurface {
   ): void {
     const store = this.#coordinator.instances;
     const storeStats = store.stats;
-    if (storeStats.activeInstances === 0) {
+    if (storeStats.activeInstances === 0 || this.#coordinator.getDrawStates().length === 0) {
       this.#destroyMeshes();
       this.#submittedGlyphs = 0;
       return;

@@ -4,6 +4,33 @@ import type { Renderer } from "pixi.js";
 
 import { TextLayer, type PositionedRun } from "../src";
 
+const RUN: PositionedRun = Object.freeze({
+  source: "bitmap",
+  text: "A",
+  fontFamily: "sans-serif",
+  fontRevision: 0,
+  direction: "ltr",
+  glyphCount: 1,
+  glyphIds: new Uint32Array([65]),
+  glyphKeys: Object.freeze(["A"]),
+  clusters: new Uint32Array([0]),
+  x: new Float32Array([0]),
+  y: new Float32Array([8]),
+  xAdvance: new Float32Array([8]),
+  yAdvance: new Float32Array([0]),
+  lineIndices: new Uint32Array([0]),
+  bounds: Object.freeze({ x: 0, y: 0, width: 8, height: 10 }),
+});
+
+function alphaRaster() {
+  return {
+    mode: "alpha" as const,
+    width: 8,
+    height: 10,
+    pixels: new Uint8Array(80).fill(255),
+  };
+}
+
 describe("TextLayer commit and maintenance", () => {
   test("publishes coalesced dirty domains and reports zero work for no-op commits", async () => {
     const layer = new TextLayer();
@@ -66,42 +93,20 @@ describe("TextLayer commit and maintenance", () => {
   test("serializes complete render revisions and reuses glyph work for transform updates", async () => {
     let layouts = 0;
     let rasters = 0;
-    const run: PositionedRun = Object.freeze({
-      source: "bitmap",
-      text: "A",
-      fontFamily: "sans-serif",
-      fontRevision: 0,
-      direction: "ltr",
-      glyphCount: 1,
-      glyphIds: new Uint32Array([65]),
-      glyphKeys: Object.freeze(["A"]),
-      clusters: new Uint32Array([0]),
-      x: new Float32Array([0]),
-      y: new Float32Array([8]),
-      xAdvance: new Float32Array([8]),
-      yAdvance: new Float32Array([0]),
-      lineIndices: new Uint32Array([0]),
-      bounds: Object.freeze({ x: 0, y: 0, width: 8, height: 10 }),
-    });
     const layer = new TextLayer({
       renderer: {} as Renderer,
       rendering: {
         layoutEngine: {
           async layout() {
             layouts += 1;
-            return run;
+            return RUN;
           },
           destroy() {},
         },
         glyphProvider: {
           async rasterize() {
             rasters += 1;
-            return {
-              mode: "alpha" as const,
-              width: 8,
-              height: 10,
-              pixels: new Uint8Array(80).fill(255),
-            };
+            return alphaRaster();
           },
           destroy() {},
         },
@@ -140,41 +145,19 @@ describe("TextLayer commit and maintenance", () => {
 
   test("reuses glyph work for packed position storms", async () => {
     let layouts = 0;
-    const run: PositionedRun = Object.freeze({
-      source: "bitmap",
-      text: "A",
-      fontFamily: "sans-serif",
-      fontRevision: 0,
-      direction: "ltr",
-      glyphCount: 1,
-      glyphIds: new Uint32Array([65]),
-      glyphKeys: Object.freeze(["A"]),
-      clusters: new Uint32Array([0]),
-      x: new Float32Array([0]),
-      y: new Float32Array([8]),
-      xAdvance: new Float32Array([8]),
-      yAdvance: new Float32Array([0]),
-      lineIndices: new Uint32Array([0]),
-      bounds: Object.freeze({ x: 0, y: 0, width: 8, height: 10 }),
-    });
     const layer = new TextLayer({
       renderer: {} as Renderer,
       rendering: {
         layoutEngine: {
           async layout() {
             layouts += 1;
-            return run;
+            return RUN;
           },
           destroy() {},
         },
         glyphProvider: {
           async rasterize() {
-            return {
-              mode: "alpha" as const,
-              width: 8,
-              height: 10,
-              pixels: new Uint8Array(80).fill(255),
-            };
+            return alphaRaster();
           },
           destroy() {},
         },
@@ -276,23 +259,6 @@ describe("TextLayer commit and maintenance", () => {
 
   test("admits first-seen labels across commits when the prepare budget is one wave", async () => {
     let layouts = 0;
-    const run: PositionedRun = Object.freeze({
-      source: "bitmap",
-      text: "A",
-      fontFamily: "sans-serif",
-      fontRevision: 0,
-      direction: "ltr",
-      glyphCount: 1,
-      glyphIds: new Uint32Array([65]),
-      glyphKeys: Object.freeze(["A"]),
-      clusters: new Uint32Array([0]),
-      x: new Float32Array([0]),
-      y: new Float32Array([8]),
-      xAdvance: new Float32Array([8]),
-      yAdvance: new Float32Array([0]),
-      lineIndices: new Uint32Array([0]),
-      bounds: Object.freeze({ x: 0, y: 0, width: 8, height: 10 }),
-    });
     const layer = new TextLayer({
       renderer: {} as Renderer,
       rendering: {
@@ -301,18 +267,13 @@ describe("TextLayer commit and maintenance", () => {
         layoutEngine: {
           async layout() {
             layouts += 1;
-            return run;
+            return RUN;
           },
           destroy() {},
         },
         glyphProvider: {
           async rasterize() {
-            return {
-              mode: "alpha" as const,
-              width: 8,
-              height: 10,
-              pixels: new Uint8Array(80).fill(255),
-            };
+            return alphaRaster();
           },
           destroy() {},
         },
@@ -344,6 +305,47 @@ describe("TextLayer commit and maintenance", () => {
     await layer.commit();
     expect(layouts).toBe(10);
     expect(layer.stats.pendingAdmissionCount).toBe(0);
+
+    layer.destroy();
+  });
+
+  test("hideAll after a partial admission wave drops leftover glyphs", async () => {
+    let layouts = 0;
+    const layer = new TextLayer({
+      renderer: {} as Renderer,
+      rendering: {
+        prepareBudgetMs: 0,
+        prepareWave: 3,
+        layoutEngine: {
+          async layout() {
+            layouts += 1;
+            return RUN;
+          },
+          destroy() {},
+        },
+        glyphProvider: {
+          async rasterize() {
+            return alphaRaster();
+          },
+          destroy() {},
+        },
+        atlasOptions: { pageWidth: 32, pageHeight: 32, maxBytes: 4_096 },
+      },
+    });
+    layer.createMany(
+      Array.from({ length: 10 }, (_, index) => ({ text: "A", x: index * 12, y: 0 })),
+    );
+
+    await layer.commit();
+    expect(layouts).toBe(3);
+    expect(layer.stats.glyphCount).toBe(3);
+
+    layer.hideAll();
+    await layer.commit();
+    expect(layer.stats.visibleLabelCount).toBe(0);
+    expect(layer.stats.pendingAdmissionCount).toBe(0);
+    expect(layer.stats.glyphCount).toBe(0);
+    expect(layouts).toBe(3);
 
     layer.destroy();
   });

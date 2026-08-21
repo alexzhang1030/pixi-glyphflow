@@ -70,8 +70,8 @@ export interface GlyphProviderLike {
   destroy(): void | Promise<void>;
 }
 
-export const DEFAULT_PREPARE_BUDGET_MS = 8;
-export const DEFAULT_PREPARE_WAVE = 8;
+const DEFAULT_PREPARE_BUDGET_MS = 8;
+const DEFAULT_PREPARE_WAVE = 8;
 
 export interface RenderCoordinatorOptions {
   readonly registry: FontRegistry;
@@ -133,6 +133,7 @@ const EMPTY_ATLAS_COMMIT: Readonly<AtlasCommit> = Object.freeze({
   uploads: Object.freeze([]),
   evictedKeys: Object.freeze([]),
 });
+const EMPTY_DEFERRED_SLOTS: readonly number[] = Object.freeze([]);
 
 export class RenderCoordinator {
   readonly instances: GlyphInstanceStore;
@@ -207,7 +208,7 @@ export class RenderCoordinator {
     this.#lastLayoutMs = performance.now() - prepareStart;
     if (ticket !== this.#ticket) {
       this.#staleRevisions += 1;
-      return this.#result(revision, true, 0, EMPTY_ATLAS_COMMIT, false, []);
+      return this.#result(revision, true, 0, EMPTY_ATLAS_COMMIT, false, EMPTY_DEFERRED_SLOTS);
     }
 
     const atlasCommit = this.atlas.commitFrame();
@@ -264,9 +265,7 @@ export class RenderCoordinator {
         drawOrderChanged = true;
         this.#drawStatesDirty = true;
       }
-      const sourceChanged =
-        (change.mask & (TextDirty.Content | TextDirty.Style)) !== 0 ||
-        this.#runs.get(change.slot) === undefined;
+      const sourceChanged = this.#sourceChanged(change);
       if (sourceChanged) {
         this.#runs.set(change.slot, run);
         const instanceStart = performance.now();
@@ -368,7 +367,7 @@ export class RenderCoordinator {
   async #prepareChanges(
     changes: readonly RenderChange[],
     ticket: number,
-  ): Promise<{ prepared: PreparedChange[]; deferredSlots: number[] }> {
+  ): Promise<{ prepared: PreparedChange[]; deferredSlots: readonly number[] }> {
     const cheap: RenderChange[] = [];
     const expensive: RenderChange[] = [];
     for (const change of changes) {
@@ -388,14 +387,17 @@ export class RenderCoordinator {
       prepared.push(...(await Promise.all(wave.map((change) => this.#prepare(change, ticket)))));
       index += wave.length;
     }
-    return { prepared, deferredSlots: [] };
+    return { prepared, deferredSlots: EMPTY_DEFERRED_SLOTS };
   }
 
   #needsGlyphPrepare(change: RenderChange): boolean {
+    return change.snapshot !== undefined && this.#sourceChanged(change);
+  }
+
+  #sourceChanged(change: RenderChange): boolean {
     return (
-      change.snapshot !== undefined &&
-      ((change.mask & (TextDirty.Content | TextDirty.Style)) !== 0 ||
-        this.#runs.get(change.slot) === undefined)
+      (change.mask & (TextDirty.Content | TextDirty.Style)) !== 0 ||
+      this.#runs.get(change.slot) === undefined
     );
   }
 
@@ -404,9 +406,7 @@ export class RenderCoordinator {
     if (snapshot === undefined) {
       return { change };
     }
-    const sourceChanged =
-      (change.mask & (TextDirty.Content | TextDirty.Style)) !== 0 ||
-      this.#runs.get(change.slot) === undefined;
+    const sourceChanged = this.#sourceChanged(change);
     if (!sourceChanged) {
       const run = this.#runs.get(change.slot);
       if (run === undefined) {
@@ -564,7 +564,8 @@ export class RenderCoordinator {
       atlasUploads: atlasCommit.uploads.length,
       atlasCommit,
       drawOrderChanged,
-      deferredSlots: Object.freeze([...deferredSlots]),
+      deferredSlots:
+        deferredSlots.length === 0 ? EMPTY_DEFERRED_SLOTS : Object.freeze([...deferredSlots]),
     });
   }
 

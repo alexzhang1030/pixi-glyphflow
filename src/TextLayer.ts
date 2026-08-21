@@ -1320,7 +1320,8 @@ export class TextLayer extends Container {
     let count = 0;
     for (let index = 0; index < this.#renderedCount; index += 1) {
       const slot = this.#renderedSlots[index];
-      if (slot !== undefined && this.#renderedEpochs[slot] === epoch) {
+      if (slot === undefined) throw new Error("Rendered slot list is incomplete");
+      if (this.#renderedEpochs[slot] === epoch) {
         this.#renderedSlots[count] = slot;
         count += 1;
       }
