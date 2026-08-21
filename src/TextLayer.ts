@@ -120,6 +120,10 @@ export class TextLayer extends Container {
   #instancedViewport: CullViewport | undefined;
   #viewDirty = false;
   #visibilityDirty = true;
+  #admissionPending = false;
+  #admissionScheduled = false;
+  #admissionCancel: (() => void) | undefined;
+  #pendingAdmissionCount = 0;
   #dirtyMasks: Uint8Array;
   #positionOnly: Uint8Array;
   #dirtySlots: Uint32Array;
@@ -704,7 +708,8 @@ export class TextLayer extends Container {
   commit(): Promise<TextRevision> {
     this.#assertActive();
     const hasLabelChanges = this.#store.pendingDirty.labels > 0;
-    if (!hasLabelChanges && !this.#viewDirty) {
+    this.#cancelAdmissionSchedule();
+    if (!hasLabelChanges && !this.#viewDirty && !this.#admissionPending) {
       this.#lastCommitDurationMs = 0;
       this.#lastCommitDirtyLabels = 0;
       this.#lastCommitContentLabels = 0;
@@ -750,12 +755,14 @@ export class TextLayer extends Container {
     this.#lastCommitStyleLabels = dirty.style;
     const cullPath = this.#resolveCullPath();
     const drawViewport = this.#drawViewport();
-    const refreshResidency = shouldRefreshResidency({
-      cullPath,
-      visibilityDirty: this.#visibilityDirty,
-      instanced: this.#instancedViewport,
-      draw: drawViewport,
-    });
+    const refreshResidency =
+      this.#admissionPending ||
+      shouldRefreshResidency({
+        cullPath,
+        visibilityDirty: this.#visibilityDirty,
+        instanced: this.#instancedViewport,
+        draw: drawViewport,
+      });
     this.#viewDirty = false;
     const spatialStart = performance.now();
     let changes: LayerRenderChange[] = [];
@@ -775,6 +782,7 @@ export class TextLayer extends Container {
 
     const needsComputeDispatch = cullPath === "compute-cull";
     if (coordinator === undefined || (changes.length === 0 && !needsComputeDispatch)) {
+      this.#clearAdmission();
       this.#lastCommitDurationMs = performance.now() - start;
       this.#lastCommitPromise = this.#renderTail.then(() => {
         this.emit(TEXT_LAYER_COMMIT_EVENT, revision);
@@ -834,9 +842,15 @@ export class TextLayer extends Container {
               mirrorInstances: refreshResidency,
             }
           : undefined;
-      if (result !== undefined) surface?.apply(result, computeUpdate);
-      else if (computeUpdate !== undefined) surface?.refreshComputeCull(computeUpdate);
+      if (result !== undefined) {
+        this.#deferAdmissions(changes, result.deferredSlots);
+        surface?.apply(result, computeUpdate);
+      } else {
+        this.#clearAdmission();
+        if (computeUpdate !== undefined) surface?.refreshComputeCull(computeUpdate);
+      }
       this.#lastUploadMs = surface?.stats.lastUploadMs ?? 0;
+      if (this.#admissionPending) this.#scheduleAdmission();
     });
     this.#renderTail = renderWork.then(
       () => undefined,
@@ -869,6 +883,7 @@ export class TextLayer extends Container {
     this.#renderSurface?.destroy();
     this.#renderSurface = undefined;
     this.#renderCoordinator?.destroy();
+    this.#cancelAdmissionSchedule();
     this.#resetRenderedSet();
     this.#renderer = renderer;
     this.#activateRendering();
@@ -883,6 +898,7 @@ export class TextLayer extends Container {
     this.#renderCoordinator?.destroy();
     this.#renderCoordinator = undefined;
     this.#renderer = undefined;
+    this.#cancelAdmissionSchedule();
     this.#resetRenderedSet();
     this.#renderTail = Promise.resolve();
     this.#lastCommitPromise = Promise.resolve(this.#revision as TextRevision);
@@ -922,6 +938,7 @@ export class TextLayer extends Container {
       lastUploadMs: this.#lastUploadMs,
       glyphCount: render?.glyphs ?? 0,
       pendingGlyphCount: render?.pendingGlyphs ?? 0,
+      pendingAdmissionCount: this.#pendingAdmissionCount,
       shapedLabels: render?.shapedLabels ?? 0,
       transformOnlyLabels: render?.transformOnlyLabels ?? 0,
       removedRenderLabels: render?.removedLabels ?? 0,
@@ -947,6 +964,7 @@ export class TextLayer extends Container {
       return;
     }
 
+    this.#cancelAdmissionSchedule();
     this.#renderer = undefined;
     this.#renderSurface?.destroy();
     this.#renderSurface = undefined;
@@ -1279,11 +1297,78 @@ export class TextLayer extends Container {
   }
 
   #resetRenderedSet(): void {
+    this.#cancelAdmissionSchedule();
+    this.#clearAdmission();
     this.#renderedEpochs.fill(0);
     this.#renderedCount = 0;
     this.#renderEpoch = 0;
     this.#instancedViewport = undefined;
     this.#clearCullRecordIndex();
+  }
+
+  #deferAdmissions(changes: readonly LayerRenderChange[], deferredSlots: readonly number[]): void {
+    if (deferredSlots.length === 0) {
+      this.#clearAdmission();
+      return;
+    }
+    const deferred = new Set(deferredSlots);
+    for (const change of changes) {
+      if (!deferred.has(change.slot)) continue;
+      this.#dirtyMasks[change.slot] = change.mask;
+      if (this.#renderCoordinator?.getRun(change.slot) === undefined) {
+        this.#renderedEpochs[change.slot] = 0;
+      }
+    }
+    this.#compactRenderedSlots();
+    this.#pendingAdmissionCount = deferredSlots.length;
+    this.#admissionPending = true;
+  }
+
+  #compactRenderedSlots(): void {
+    const epoch = this.#renderEpoch;
+    let count = 0;
+    for (let index = 0; index < this.#renderedCount; index += 1) {
+      const slot = this.#renderedSlots[index];
+      if (slot !== undefined && this.#renderedEpochs[slot] === epoch) {
+        this.#renderedSlots[count] = slot;
+        count += 1;
+      }
+    }
+    this.#renderedCount = count;
+  }
+
+  #scheduleAdmission(): void {
+    if (this.#admissionScheduled) return;
+    this.#admissionScheduled = true;
+    const finish = (): void => {
+      this.#admissionCancel = undefined;
+      this.#admissionScheduled = false;
+      if (this.destroyed || !this.#admissionPending) return;
+      void this.commit();
+    };
+    const raf = globalThis.requestAnimationFrame;
+    if (typeof raf === "function") {
+      const handle = raf(finish);
+      this.#admissionCancel = () => {
+        globalThis.cancelAnimationFrame(handle);
+      };
+      return;
+    }
+    const handle = setTimeout(finish, 0);
+    this.#admissionCancel = () => {
+      clearTimeout(handle);
+    };
+  }
+
+  #cancelAdmissionSchedule(): void {
+    this.#admissionCancel?.();
+    this.#admissionCancel = undefined;
+    this.#admissionScheduled = false;
+  }
+
+  #clearAdmission(): void {
+    this.#admissionPending = false;
+    this.#pendingAdmissionCount = 0;
   }
 
   #renderChangeForSlot(

@@ -67,6 +67,11 @@ converts the shared horizontal run into upright top-to-bottom columns before atl
 Trusted glyph runs let an upstream layout system supply immutable typed arrays with explicit
 ownership and revision stamps.
 
+`RenderCoordinator` prepares removals and transform-only updates immediately. First-seen labels and
+content or style dirty labels run in waves of `prepareWave`. After `prepareBudgetMs` the rest stay
+deferred. `TextLayer` restores those dirty masks, keeps already-shaped glyphs on screen, and continues
+on the next animation frame.
+
 ## Atlas and instances
 
 `GlyphAtlas` stages raster results and publishes a complete generation at a frame boundary. Visible
@@ -123,7 +128,7 @@ when CPU instance order is not spatial order. PixiJS devices keep the 128 MiB st
 
 `TextLayer.stats` allocates one immutable snapshot at read time. It reports CPU capacity, dirty
 domains, revisions, shaping, visible labels, spatial queries, renderer backend, cull path, draw
-calls, glyphs, pending glyphs, upload bytes, and last-commit layout, instance-write, palette-write,
-spatial, and upload milliseconds. `visibleLabelCount` is the instanced working set. On the CPU grid
-that set is the tight padded viewport. On compute cull it is the expanded residency query. The
-getter does not walk the grid.
+calls, glyphs, pending glyphs, pending admissions, upload bytes, and last-commit layout,
+instance-write, palette-write, spatial, and upload milliseconds. `visibleLabelCount` is the instanced
+working set. On the CPU grid that set is the tight padded viewport. On compute cull it is the
+expanded residency query. The getter does not walk the grid.

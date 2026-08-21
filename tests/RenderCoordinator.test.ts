@@ -249,6 +249,60 @@ describe("RenderCoordinator", () => {
     coordinator.destroy();
     registry.destroy();
   });
+
+  test("admits first-seen labels in prepare waves when the budget is zero", async () => {
+    const registry = new FontRegistry();
+    await registry.register({ family: "Fixture" });
+    let layoutCalls = 0;
+    const coordinator = new RenderCoordinator({
+      registry,
+      prepareBudgetMs: 0,
+      prepareWave: 3,
+      layoutEngine: {
+        async layout(_slot, _revision, input) {
+          layoutCalls += 1;
+          return run(input.text);
+        },
+        destroy() {},
+      },
+      glyphProvider: {
+        async rasterize(): Promise<GlyphRaster> {
+          return {
+            mode: "alpha",
+            width: 4,
+            height: 6,
+            pixels: new Uint8Array(24).fill(255),
+            metrics: { bearingX: 0, bearingY: 5, advance: 4 },
+          };
+        },
+        destroy() {},
+      },
+      atlasOptions: { pageWidth: 64, pageHeight: 64, maxBytes: 4_096 },
+      instanceOptions: { initialCapacity: 32 },
+      transformOptions: { initialCapacity: 16, textureWidth: 16 },
+    });
+    const firstSeen = Array.from({ length: 10 }, (_, slot) => ({
+      slot,
+      mask: CONTENT | TRANSFORM | STYLE,
+      snapshot: label(1, slot * 10, 0, `L${String(slot)}`),
+    }));
+
+    const first = await coordinator.commit(1, firstSeen);
+    expect(first).toMatchObject({ stale: false, appliedLabels: 3 });
+    expect(first.deferredSlots).toEqual([3, 4, 5, 6, 7, 8, 9]);
+    expect(layoutCalls).toBe(3);
+    expect(coordinator.getRun(0)).toBeDefined();
+    expect(coordinator.getRun(3)).toBeUndefined();
+
+    const rest = firstSeen.filter((change) => first.deferredSlots.includes(change.slot));
+    const second = await coordinator.commit(2, rest);
+    expect(second.appliedLabels).toBe(3);
+    expect(second.deferredSlots).toEqual([6, 7, 8, 9]);
+    expect(layoutCalls).toBe(6);
+
+    coordinator.destroy();
+    registry.destroy();
+  });
 });
 
 function label(

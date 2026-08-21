@@ -273,4 +273,78 @@ describe("TextLayer commit and maintenance", () => {
 
     layer.destroy();
   });
+
+  test("admits first-seen labels across commits when the prepare budget is one wave", async () => {
+    let layouts = 0;
+    const run: PositionedRun = Object.freeze({
+      source: "bitmap",
+      text: "A",
+      fontFamily: "sans-serif",
+      fontRevision: 0,
+      direction: "ltr",
+      glyphCount: 1,
+      glyphIds: new Uint32Array([65]),
+      glyphKeys: Object.freeze(["A"]),
+      clusters: new Uint32Array([0]),
+      x: new Float32Array([0]),
+      y: new Float32Array([8]),
+      xAdvance: new Float32Array([8]),
+      yAdvance: new Float32Array([0]),
+      lineIndices: new Uint32Array([0]),
+      bounds: Object.freeze({ x: 0, y: 0, width: 8, height: 10 }),
+    });
+    const layer = new TextLayer({
+      renderer: {} as Renderer,
+      rendering: {
+        prepareBudgetMs: 0,
+        prepareWave: 3,
+        layoutEngine: {
+          async layout() {
+            layouts += 1;
+            return run;
+          },
+          destroy() {},
+        },
+        glyphProvider: {
+          async rasterize() {
+            return {
+              mode: "alpha" as const,
+              width: 8,
+              height: 10,
+              pixels: new Uint8Array(80).fill(255),
+            };
+          },
+          destroy() {},
+        },
+        atlasOptions: { pageWidth: 32, pageHeight: 32, maxBytes: 4_096 },
+      },
+    });
+    layer.createMany(
+      Array.from({ length: 10 }, (_, index) => ({ text: "A", x: index * 12, y: 0 })),
+    );
+
+    await layer.commit();
+    expect(layouts).toBe(3);
+    expect(layer.stats.pendingAdmissionCount).toBe(7);
+    expect(layer.stats.glyphCount).toBe(3);
+
+    await layer.commit();
+    expect(layouts).toBe(6);
+    expect(layer.stats.pendingAdmissionCount).toBe(4);
+
+    await layer.commit();
+    expect(layouts).toBe(9);
+    expect(layer.stats.pendingAdmissionCount).toBe(1);
+
+    await layer.commit();
+    expect(layouts).toBe(10);
+    expect(layer.stats.pendingAdmissionCount).toBe(0);
+    expect(layer.stats.glyphCount).toBe(10);
+
+    await layer.commit();
+    expect(layouts).toBe(10);
+    expect(layer.stats.pendingAdmissionCount).toBe(0);
+
+    layer.destroy();
+  });
 });
