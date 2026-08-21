@@ -237,17 +237,6 @@ export class ComputeCullPass {
     floats[4] = viewport.padding;
     ints[5] = this.#recordCount;
     device.queue.writeBuffer(this.#uniform, 0, uniforms);
-    const limit = Math.min(device.limits.maxStorageBufferBindingSize, device.limits.maxBufferSize);
-    if (
-      this.#records.size > limit ||
-      this.#counts.size > limit ||
-      this.#prefix.size > limit ||
-      this.#groupSums.size > limit ||
-      this.#instancesIn.size > limit ||
-      this.#instancesOut.size > limit
-    ) {
-      return false;
-    }
     const bindGroup =
       this.#bindGroup ??
       device.createBindGroup({

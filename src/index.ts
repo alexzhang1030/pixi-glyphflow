@@ -1,7 +1,7 @@
 export { FontRegistry } from "./FontRegistry";
 export { TextLayer } from "./TextLayer";
 export { requestComputeCullGpu } from "./culling/requestComputeCullGpu";
-export type { ComputeCullGpu, RequestComputeCullGpuOptions } from "./culling/requestComputeCullGpu";
+export type { ComputeCullGpu } from "./culling/requestComputeCullGpu";
 export type {
   CullPath,
   TextGroupId,

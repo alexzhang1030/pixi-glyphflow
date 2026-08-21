@@ -3,7 +3,6 @@ import { describe, expect, test } from "bun:test";
 import {
   aabbVisible,
   compactVisibleInstances,
-  computeCullRequiredLimits,
   computeCullStructurallyEligible,
   createIndirectArgs,
   cullResidency,
@@ -65,15 +64,6 @@ describe("compute cull host reference", () => {
     ).toBeUndefined();
     expect(planComputeCullStorageBytes(200_000_000, 210_000_000)).toBe(200_000_000);
     expect(planComputeCullStorageBytes(268_435_456, 4_294_967_292)).toBe(268_435_456);
-    expect(
-      computeCullRequiredLimits({
-        maxStorageBufferBindingSize: 4_294_967_292,
-        maxBufferSize: 4_294_967_296,
-      }),
-    ).toEqual({
-      maxStorageBufferBindingSize: 4_294_967_292,
-      maxBufferSize: 4_294_967_296,
-    });
   });
 
   test("enables compute cull only on a ready WebGPU device", () => {
