@@ -165,10 +165,6 @@ export function viewportFromBounds(bounds: BoundsData, padding: number): CullVie
   };
 }
 
-export function workingSetSlack(viewport: CullViewport): number {
-  return Math.max(viewport.width, viewport.height);
-}
-
 export function expandWorkingSet(draw: CullViewport, slack: number): CullViewport {
   const pad = draw.padding + slack;
   return {

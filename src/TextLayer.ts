@@ -12,7 +12,6 @@ import {
   packCullRecords,
   shouldRefreshResidency,
   viewportFromBounds,
-  workingSetSlack,
   type CullPath,
   type CullRecordInput,
   type CullViewport,
@@ -1100,7 +1099,7 @@ export class TextLayer extends Container {
             this.#instancedViewport = undefined;
             return this.#spatial.query(bounds, this.#visibleSlots, this.#cullingPadding);
           case "compute-cull": {
-            const working = expandWorkingSet(draw, workingSetSlack(draw));
+            const working = expandWorkingSet(draw, Math.max(draw.width, draw.height));
             this.#instancedViewport = working;
             return this.#spatial.query(working, this.#visibleSlots, 0);
           }
