@@ -8,6 +8,11 @@ Keep the 24-byte CPU layout (four `f16` local-rect components). Bind the rect as
 
 Do not revert to 32-byte `float32x4` rects to make CI green.
 
+## WGSL rejects `from` as an identifier
+
+`CreateShaderModule` failed on `let from = …` in the compute-cull scatter pass. Tint treats `from`
+as reserved. Use `src` / `dst`. Do not name locals `from` or `to`.
+
 ## A compact mesh is not a permanent compute-cull veto
 
 Late glyph allocation leaves instance ranges out of draw order, so the CPU path builds compact

@@ -12,6 +12,7 @@ import {
   shouldRefreshResidency,
   workingSetContains,
 } from "../src/culling/computeCull";
+import { COMPUTE_CULL_WGSL } from "../src/culling/computeCull.wgsl";
 import { GLYPH_INSTANCE_STRIDE } from "../src/render/types";
 
 describe("compute cull host reference", () => {
@@ -61,6 +62,11 @@ describe("compute cull host reference", () => {
     expect(resolveCullPath({ adapter: "webgpu", computeCull: false, deviceReady: true })).toBe(
       "cpu-grid",
     );
+  });
+
+  test("avoids WGSL reserved identifiers in the scatter pass", () => {
+    expect(COMPUTE_CULL_WGSL).not.toMatch(/\blet from\b/);
+    expect(COMPUTE_CULL_WGSL).not.toMatch(/\blet to\b/);
   });
 
   test("keeps axis-aligned overlap and rejects separated boxes", () => {
