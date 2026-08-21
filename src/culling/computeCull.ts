@@ -31,6 +31,14 @@ export interface CompactInstancesResult {
   readonly indirect: Uint32Array;
 }
 
+export interface ResidencyRefreshInput {
+  readonly cullPath: CullPath;
+  readonly hasLabelChanges: boolean;
+  readonly visibilityDirty: boolean;
+  readonly instanced: CullViewport | undefined;
+  readonly draw: CullViewport | undefined;
+}
+
 /**
  * Who is shaped and instanced. The million-label product keeps the CPU viewport set. Compute cull
  * must not switch this to the full world. The instance store caps at 16,777,216 glyphs.
@@ -48,6 +56,24 @@ export function resolveCullPath(input: {
     return "cpu-grid";
   }
   return "compute-cull";
+}
+
+export function shouldRefreshResidency(input: ResidencyRefreshInput): boolean {
+  if (input.hasLabelChanges || input.visibilityDirty) return true;
+  switch (input.cullPath) {
+    case "cpu-grid":
+      return true;
+    case "compute-cull":
+      return (
+        input.instanced === undefined ||
+        input.draw === undefined ||
+        !workingSetContains(input.instanced, input.draw)
+      );
+    default: {
+      const _exhaustive: never = input.cullPath;
+      return _exhaustive;
+    }
+  }
 }
 
 export function aabbVisible(

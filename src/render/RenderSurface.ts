@@ -9,6 +9,13 @@ import {
 } from "pixi.js";
 
 import type { AtlasCommit, AtlasPageInfo, GlyphMode } from "../atlas/types";
+import {
+  CULL_RECORD_STRIDE,
+  type CullPath,
+  type CullViewport,
+  resolveCullPath,
+} from "../culling/computeCull";
+import { ComputeCullPass } from "./ComputeCullPass";
 import { GlyphMesh } from "./GlyphMesh";
 import type { RenderCommitResult, RenderCoordinator } from "./RenderCoordinator";
 import { GLYPH_INSTANCE_STRIDE, GLYPH_TEXTURE_BANK_SIZE, type DirtyByteRange } from "./types";
@@ -47,8 +54,14 @@ interface DrawSegment {
   count: number;
 }
 
+export interface RenderComputeCullUpdate {
+  readonly records: ArrayBuffer | undefined;
+  readonly viewport: CullViewport;
+}
+
 export interface RenderSurfaceStats {
   readonly adapter: "webgl" | "webgpu" | "unknown";
+  readonly cullPath: CullPath;
   readonly meshes: number;
   readonly atlasTextures: number;
   readonly submittedGlyphs: number;
@@ -79,18 +92,79 @@ export class RenderSurface {
   #transformWrites = 0;
   #pageRebuilds = 0;
   #lastUploadMs = 0;
+  #cullPass: ComputeCullPass | undefined;
+  #cullPath: CullPath = "cpu-grid";
+  readonly #computeCull: boolean | "auto";
   #destroyed = false;
 
-  constructor(renderer: Renderer, owner: Container, coordinator: RenderCoordinator) {
+  constructor(
+    renderer: Renderer,
+    owner: Container,
+    coordinator: RenderCoordinator,
+    options: { readonly computeCull?: boolean | "auto" } = {},
+  ) {
     this.#renderer = renderer;
     this.#owner = owner;
     this.#coordinator = coordinator;
+    this.#computeCull = options.computeCull ?? "auto";
     this.#paletteData = coordinator.transforms.data;
     this.#paletteSource = createPaletteSource(coordinator);
     this.#paletteTexture = new Texture({ source: this.#paletteSource });
   }
 
-  apply(result: Readonly<RenderCommitResult>): void {
+  prepareCullPath(): CullPath {
+    if (!isWebGPURenderer(this.#renderer)) return "cpu-grid";
+    const path = resolveCullPath({
+      adapter: "webgpu",
+      computeCull: this.#computeCull,
+      deviceReady: this.#renderer.gpu?.device !== undefined,
+    });
+    if (path === "cpu-grid") return path;
+    const pass = this.#cullPass ?? new ComputeCullPass(this.#renderer);
+    if (!pass.initialize()) return "cpu-grid";
+    this.#cullPass = pass;
+    if (this.#meshes.size === 0) return "compute-cull";
+    const direct = this.#meshes.get(0);
+    return this.#meshes.size === 1 && direct !== undefined && !direct.compact
+      ? "compute-cull"
+      : "cpu-grid";
+  }
+
+  refreshComputeCull(update: Readonly<RenderComputeCullUpdate>): CullPath {
+    this.#assertActive();
+    const uploadStart = performance.now();
+    const path = this.#refreshComputeCull(update);
+    this.#lastUploadMs = performance.now() - uploadStart;
+    return path;
+  }
+
+  #refreshComputeCull(update: Readonly<RenderComputeCullUpdate>): CullPath {
+    if (this.prepareCullPath() !== "compute-cull") {
+      return this.#useCpuCull();
+    }
+    const pass = this.#cullPass;
+    const surface = this.#meshes.get(0);
+    if (pass === undefined || surface === undefined || this.#meshes.size !== 1 || surface.compact) {
+      return this.#useCpuCull();
+    }
+    const store = this.#coordinator.instances;
+    const instanceBytes = store.stats.highWater * GLYPH_INSTANCE_STRIDE;
+    if (update.records !== undefined) {
+      const recordCount = update.records.byteLength / CULL_RECORD_STRIDE;
+      pass.ensureCapacity(recordCount, instanceBytes);
+      pass.uploadRecords(update.records, recordCount);
+      pass.uploadInstances(store.buffer, instanceBytes);
+    }
+    pass.trackGeometry(surface.mesh.geometry);
+    if (!pass.dispatch(update.viewport)) return this.#useCpuCull();
+    this.#cullPath = "compute-cull";
+    return this.#cullPath;
+  }
+
+  apply(
+    result: Readonly<RenderCommitResult>,
+    computeCull: Readonly<RenderComputeCullUpdate> | undefined = undefined,
+  ): void {
     this.#assertActive();
     const uploadStart = performance.now();
     this.#applyAtlasCommit(result.atlasCommit);
@@ -100,12 +174,15 @@ export class RenderSurface {
     if (instanceRanges.length > 0 || result.drawOrderChanged || this.#meshes.size === 0) {
       this.#syncMeshes(instanceRanges);
     }
+    if (computeCull === undefined) this.#useCpuCull();
+    else this.#refreshComputeCull(computeCull);
     this.#lastUploadMs = performance.now() - uploadStart;
   }
 
   get stats(): Readonly<RenderSurfaceStats> {
     return Object.freeze({
       adapter: rendererKind(this.#renderer),
+      cullPath: this.#cullPath,
       meshes: this.#meshes.size,
       atlasTextures: this.#pages.size,
       submittedGlyphs: this.#submittedGlyphs,
@@ -122,12 +199,16 @@ export class RenderSurface {
   destroy(): void {
     if (this.#destroyed) return;
     for (const surface of this.#meshes.values()) {
+      this.#cullPass?.untrackGeometry(surface.mesh.geometry);
       surface.mesh.removeFromParent();
       surface.mesh.destroy();
     }
     this.#meshes.clear();
     for (const page of this.#pages.values()) page.texture.destroy(true);
     this.#pages.clear();
+    this.#cullPass?.destroy();
+    this.#cullPass = undefined;
+    this.#cullPath = "cpu-grid";
     this.#paletteTexture.destroy(true);
     this.#paletteData = new Float32Array();
     this.#submittedGlyphs = 0;
@@ -372,6 +453,7 @@ export class RenderSurface {
         );
       } else {
         this.#configureMesh(surface, segment.bank, segment.blendMode, key);
+        this.#cullPass?.untrackGeometry(surface.mesh.geometry);
         surface.data = buffer;
         surface.compact = true;
         surface.mesh.updateInstances(buffer, segment.count);
@@ -459,6 +541,7 @@ export class RenderSurface {
   }
 
   #destroyMesh(key: number, surface: SurfaceMesh): void {
+    this.#cullPass?.untrackGeometry(surface.mesh.geometry);
     surface.mesh.removeFromParent();
     surface.mesh.destroy();
     this.#meshes.delete(key);
@@ -466,6 +549,14 @@ export class RenderSurface {
 
   #destroyMeshes(): void {
     for (const [key, surface] of this.#meshes) this.#destroyMesh(key, surface);
+  }
+
+  #useCpuCull(): CullPath {
+    for (const surface of this.#meshes.values()) {
+      this.#cullPass?.untrackGeometry(surface.mesh.geometry);
+    }
+    this.#cullPath = "cpu-grid";
+    return this.#cullPath;
   }
 
   #assertActive(): void {

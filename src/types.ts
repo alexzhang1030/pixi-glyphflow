@@ -1,8 +1,11 @@
 import type { BLEND_MODES, PointData, Renderer, TextStyleOptions } from "pixi.js";
 
+import type { CullPath } from "./culling/computeCull";
 import type { BoundsData, MutableBoundsData, PointLike } from "./culling/types";
 import type { TextDirection, TextWritingMode } from "./layout/types";
 import type { RenderCoordinatorOptions } from "./render/RenderCoordinator";
+
+export type { CullPath } from "./culling/computeCull";
 
 declare const textIdBrand: unique symbol;
 declare const textGroupIdBrand: unique symbol;
@@ -36,6 +39,8 @@ export interface TextLayerCullingOptions {
   readonly enabled?: boolean;
   readonly padding?: number;
   readonly bounds?: BoundsData;
+  /** WebGPU compute culling policy. The default is automatic capability detection. */
+  readonly computeCull?: boolean | "auto";
 }
 
 /** Optional shaping controls for multilingual and variable-font labels. */
@@ -178,6 +183,7 @@ export interface TextLayerStats {
   readonly spatialIndexBytes: number;
   readonly cullingQueries: number;
   readonly rendererAdapter: "detached" | "webgl" | "webgpu" | "unknown";
+  readonly cullPath: CullPath;
   readonly drawCalls: number;
   readonly submittedGlyphs: number;
   readonly atlasTextureCount: number;

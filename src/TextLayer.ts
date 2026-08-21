@@ -6,6 +6,17 @@ import {
   type TextStyleOptions,
 } from "pixi.js";
 
+import {
+  cullResidency,
+  expandWorkingSet,
+  packCullRecords,
+  shouldRefreshResidency,
+  viewportFromBounds,
+  workingSetSlack,
+  type CullPath,
+  type CullRecordInput,
+  type CullViewport,
+} from "./culling/computeCull";
 import { SpatialIndex } from "./culling/SpatialIndex";
 import type { BoundsData, MutableBoundsData, PointLike } from "./culling/types";
 import { FontRegistry } from "./FontRegistry";
@@ -14,7 +25,7 @@ import {
   type RenderChange,
   type RenderLabelSnapshot,
 } from "./render/RenderCoordinator";
-import { RenderSurface } from "./render/RenderSurface";
+import { RenderSurface, type RenderComputeCullUpdate } from "./render/RenderSurface";
 import {
   assertTrustedGlyphRunOwner,
   createTrustedGlyphRun,
@@ -49,6 +60,13 @@ import type {
 
 const EMPTY_STYLE: Readonly<TextStyleOptions> = Object.freeze({});
 const ALL_DIRTY = TextDirty.Content | TextDirty.Transform | TextDirty.Style;
+const FULL_CULL_VIEWPORT: CullViewport = Object.freeze({
+  x: -1e9,
+  y: -1e9,
+  width: 2e9,
+  height: 2e9,
+  padding: 0,
+});
 export const TEXT_LAYER_COMMIT_EVENT = "glyphflow:commit";
 
 interface TextGroupState {
@@ -97,7 +115,9 @@ export class TextLayer extends Container {
   #lastCommitPromise: Promise<TextRevision> = Promise.resolve(0 as TextRevision);
   readonly #cullingEnabled: boolean;
   readonly #cullingPadding: number;
+  readonly #computeCull: boolean | "auto";
   #viewportBounds: Readonly<BoundsData> | undefined;
+  #instancedViewport: CullViewport | undefined;
   #viewDirty = false;
   #visibilityDirty = true;
   #dirtyMasks: Uint8Array;
@@ -107,6 +127,8 @@ export class TextLayer extends Container {
   #dirtyLength = 0;
   #visibleSlots: Uint32Array;
   #visibleCount = 0;
+  #drawVisibleCount = 0;
+  #drawVisibleCountStale = false;
   #renderedEpochs: Uint32Array;
   #renderedSlots: Uint32Array;
   #renderedCount = 0;
@@ -140,6 +162,7 @@ export class TextLayer extends Container {
     this.#spatial = new SpatialIndex({ initialCapacity: this.#store.capacity });
     this.#cullingEnabled = culling.enabled;
     this.#cullingPadding = culling.padding;
+    this.#computeCull = culling.computeCull;
     this.#viewportBounds = culling.bounds;
     this.#dirtyMasks = new Uint8Array(this.#store.capacity);
     this.#positionOnly = new Uint8Array(this.#store.capacity);
@@ -720,21 +743,40 @@ export class TextLayer extends Container {
     this.#lastCommitContentLabels = dirty.content;
     this.#lastCommitTransformLabels = dirty.transform;
     this.#lastCommitStyleLabels = dirty.style;
+    const cullPath = this.#resolveCullPath();
+    const drawViewport = this.#drawViewport();
+    const refreshResidency = shouldRefreshResidency({
+      cullPath,
+      hasLabelChanges,
+      visibilityDirty: this.#visibilityDirty,
+      instanced: this.#instancedViewport,
+      draw: drawViewport,
+    });
     this.#viewDirty = false;
     const spatialStart = performance.now();
-    if (this.#cullingEnabled || this.#visibilityDirty) {
-      this.#visibleCount = this.#queryVisible();
+    let changes: LayerRenderChange[] = [];
+    if (refreshResidency) {
+      this.#visibleCount = this.#queryVisible(cullPath, drawViewport);
       this.#visibilityDirty = false;
+      if (cullPath === "compute-cull" && drawViewport !== undefined) {
+        this.#drawVisibleCountStale = true;
+      } else {
+        this.#drawVisibleCount = this.#visibleCount;
+        this.#drawVisibleCountStale = false;
+      }
+      if (coordinator !== undefined) changes = this.#buildRenderChanges();
+    } else {
+      this.#drawVisibleCountStale = drawViewport !== undefined;
     }
     this.#lastSpatialUpdateMs = performance.now() - spatialStart;
     this.#lastLayoutMs = 0;
     this.#lastInstanceWriteMs = 0;
     this.#lastPaletteWriteMs = 0;
     this.#lastUploadMs = 0;
-    const changes = coordinator === undefined ? [] : this.#buildRenderChanges();
     this.#clearDirtyMasks();
 
-    if (coordinator === undefined || changes.length === 0) {
+    const needsComputeDispatch = cullPath === "compute-cull";
+    if (coordinator === undefined || (changes.length === 0 && !needsComputeDispatch)) {
       this.#lastCommitDurationMs = performance.now() - start;
       this.#lastCommitPromise = this.#renderTail.then(() => {
         this.emit(TEXT_LAYER_COMMIT_EVENT, revision);
@@ -743,40 +785,56 @@ export class TextLayer extends Container {
       return this.#lastCommitPromise;
     }
 
-    if (this.#renderSequence === Number.MAX_SAFE_INTEGER) {
-      throw new RangeError("TextLayer render sequence capacity exhausted");
+    let renderSequence = 0;
+    if (changes.length > 0) {
+      if (this.#renderSequence === Number.MAX_SAFE_INTEGER) {
+        throw new RangeError("TextLayer render sequence capacity exhausted");
+      }
+      this.#renderSequence += 1;
+      renderSequence = this.#renderSequence;
     }
-    this.#renderSequence += 1;
-    const renderSequence = this.#renderSequence;
     const renderWork = this.#renderTail.then(async () => {
-      const result = await coordinator.commit(renderSequence, changes);
-      this.#lastLayoutMs = coordinator.stats.lastLayoutMs;
-      this.#lastInstanceWriteMs = coordinator.stats.lastInstanceWriteMs;
-      this.#lastPaletteWriteMs = coordinator.stats.lastPaletteWriteMs;
-      surface?.apply(result);
-      this.#lastUploadMs = surface?.stats.lastUploadMs ?? 0;
+      const result =
+        changes.length === 0 ? undefined : await coordinator.commit(renderSequence, changes);
+      if (result !== undefined) {
+        this.#lastLayoutMs = coordinator.stats.lastLayoutMs;
+        this.#lastInstanceWriteMs = coordinator.stats.lastInstanceWriteMs;
+        this.#lastPaletteWriteMs = coordinator.stats.lastPaletteWriteMs;
+      }
       const spatialWriteStart = performance.now();
-      for (const change of changes) {
-        if (change.snapshot === undefined) continue;
-        const run = coordinator.getRun(change.slot);
-        const current = this.#store.snapshotAt(change.slot);
-        if (
-          run === undefined ||
-          current === undefined ||
-          change.labelId === undefined ||
-          current.id !== change.labelId ||
-          current.sourceRevision !== change.snapshot.sourceRevision
-        ) {
-          continue;
+      if (result !== undefined) {
+        for (const change of changes) {
+          if (change.snapshot === undefined) continue;
+          const run = coordinator.getRun(change.slot);
+          const current = this.#store.snapshotAt(change.slot);
+          if (
+            run === undefined ||
+            current === undefined ||
+            change.labelId === undefined ||
+            current.id !== change.labelId ||
+            current.sourceRevision !== change.snapshot.sourceRevision
+          ) {
+            continue;
+          }
+          this.#spatial.set(
+            change.slot,
+            transformedLabelBounds(current, run.bounds, this.#boundsScratch),
+            current.zIndex,
+            this.#isEffectivelyVisible(current.id, current.visible),
+          );
         }
-        this.#spatial.set(
-          change.slot,
-          transformedLabelBounds(current, run.bounds, this.#boundsScratch),
-          current.zIndex,
-          this.#isEffectivelyVisible(current.id, current.visible),
-        );
       }
       this.#lastSpatialUpdateMs += performance.now() - spatialWriteStart;
+      const computeUpdate: RenderComputeCullUpdate | undefined =
+        cullPath === "compute-cull"
+          ? {
+              records: refreshResidency ? this.#packCullRecords() : undefined,
+              viewport: drawViewport ?? FULL_CULL_VIEWPORT,
+            }
+          : undefined;
+      if (result !== undefined) surface?.apply(result, computeUpdate);
+      else if (computeUpdate !== undefined) surface?.refreshComputeCull(computeUpdate);
+      this.#lastUploadMs = surface?.stats.lastUploadMs ?? 0;
     });
     this.#renderTail = renderWork.then(
       () => undefined,
@@ -830,6 +888,13 @@ export class TextLayer extends Container {
 
   /** Read an immutable diagnostics snapshot. */
   get stats(): Readonly<TextLayerStats> {
+    if (this.#drawVisibleCountStale) {
+      this.#drawVisibleCount =
+        this.#cullingEnabled && this.#viewportBounds !== undefined
+          ? this.#spatial.query(this.#viewportBounds, this.#bulkSlots, this.#cullingPadding)
+          : this.#visibleCount;
+      this.#drawVisibleCountStale = false;
+    }
     const store = this.#store.stats;
     const pendingDirty = this.#store.pendingDirty;
     const render = this.#renderCoordinator?.stats;
@@ -866,11 +931,12 @@ export class TextLayer extends Container {
       transformOnlyLabels: render?.transformOnlyLabels ?? 0,
       removedRenderLabels: render?.removedLabels ?? 0,
       staleRenderRevisions: render?.staleRevisions ?? 0,
-      visibleLabelCount: this.#visibleCount,
-      culledLabelCount: Math.max(0, store.size - this.#visibleCount),
+      visibleLabelCount: this.#drawVisibleCount,
+      culledLabelCount: Math.max(0, store.size - this.#drawVisibleCount),
       spatialIndexBytes: spatial.allocatedBytes,
       cullingQueries: spatial.queries,
       rendererAdapter: this.#renderer === undefined ? "detached" : (surface?.adapter ?? "unknown"),
+      cullPath: surface?.cullPath ?? "cpu-grid",
       drawCalls: surface?.meshes ?? 0,
       submittedGlyphs: surface?.submittedGlyphs ?? 0,
       atlasTextureCount: surface?.atlasTextures ?? 0,
@@ -974,7 +1040,9 @@ export class TextLayer extends Container {
       registry: this.fonts,
     });
     if (this.#renderer !== undefined && ("gl" in this.#renderer || "gpu" in this.#renderer)) {
-      this.#renderSurface = new RenderSurface(this.#renderer, this, this.#renderCoordinator);
+      this.#renderSurface = new RenderSurface(this.#renderer, this, this.#renderCoordinator, {
+        computeCull: this.#computeCull,
+      });
     }
   }
 
@@ -1027,12 +1095,69 @@ export class TextLayer extends Container {
     this.#renderedSlots = growTypedArray(this.#renderedSlots, required);
   }
 
-  #queryVisible(): number {
-    if (this.#cullingEnabled && this.#viewportBounds !== undefined) {
-      return this.#spatial.query(this.#viewportBounds, this.#visibleSlots, this.#cullingPadding);
-    }
+  #drawViewport(): CullViewport | undefined {
+    return this.#viewportBounds === undefined
+      ? undefined
+      : viewportFromBounds(this.#viewportBounds, this.#cullingPadding);
+  }
 
-    return this.#spatial.queryAll(this.#visibleSlots);
+  #queryVisible(cullPath: CullPath, draw: CullViewport | undefined): number {
+    const residency = cullResidency(this.#cullingEnabled, this.#viewportBounds !== undefined);
+    switch (residency) {
+      case "all":
+        this.#instancedViewport = undefined;
+        return this.#spatial.queryAll(this.#visibleSlots);
+      case "viewport": {
+        const bounds = this.#viewportBounds;
+        if (bounds === undefined || draw === undefined) {
+          throw new Error("Viewport residency requires culling bounds");
+        }
+        switch (cullPath) {
+          case "cpu-grid":
+            this.#instancedViewport = undefined;
+            return this.#spatial.query(bounds, this.#visibleSlots, this.#cullingPadding);
+          case "compute-cull": {
+            const working = expandWorkingSet(draw, workingSetSlack(draw));
+            this.#instancedViewport = working;
+            return this.#spatial.query(working, this.#visibleSlots, 0);
+          }
+          default: {
+            const _exhaustive: never = cullPath;
+            return _exhaustive;
+          }
+        }
+      }
+      default: {
+        const _exhaustive: never = residency;
+        return _exhaustive;
+      }
+    }
+  }
+
+  #packCullRecords(): ArrayBuffer {
+    const coordinator = this.#renderCoordinator;
+    if (coordinator === undefined) return new ArrayBuffer(0);
+    const records: CullRecordInput[] = [];
+    const bounds: MutableBoundsData = { x: 0, y: 0, width: 0, height: 0 };
+    for (const state of coordinator.getDrawStates()) {
+      const range = coordinator.instances.getRange(state.slot);
+      const box = this.#spatial.get(state.slot, bounds);
+      if (range === undefined || box === undefined) continue;
+      records.push({
+        minX: box.x,
+        minY: box.y,
+        maxX: box.x + box.width,
+        maxY: box.y + box.height,
+        instanceOffset: range.offset,
+        instanceCount: range.count,
+      });
+    }
+    return packCullRecords(records);
+  }
+
+  #resolveCullPath(): CullPath {
+    if (!this.#cullingEnabled) return "cpu-grid";
+    return this.#renderSurface?.prepareCullPath() ?? "cpu-grid";
   }
 
   #buildRenderChanges(): LayerRenderChange[] {
@@ -1101,6 +1226,7 @@ export class TextLayer extends Container {
     this.#renderedEpochs.fill(0);
     this.#renderedCount = 0;
     this.#renderEpoch = 0;
+    this.#instancedViewport = undefined;
   }
 
   #assertTrustedRunSource(
@@ -1453,21 +1579,29 @@ function readPoint(
   return { x: value.x, y: value.y };
 }
 
-function resolveCullingOptions(
-  options: false | TextLayerCullingOptions | undefined,
-): Readonly<{ enabled: boolean; padding: number; bounds: Readonly<BoundsData> | undefined }> {
+function resolveCullingOptions(options: false | TextLayerCullingOptions | undefined): Readonly<{
+  enabled: boolean;
+  padding: number;
+  bounds: Readonly<BoundsData> | undefined;
+  computeCull: boolean | "auto";
+}> {
   if (options === false) {
-    return { enabled: false, padding: 0, bounds: undefined };
+    return { enabled: false, padding: 0, bounds: undefined, computeCull: false };
   }
   const padding = options?.padding ?? 0;
   if (!Number.isFinite(padding) || padding < 0) {
     throw new TypeError("Culling padding must be a finite non-negative number");
+  }
+  const computeCull = options?.computeCull ?? "auto";
+  if (computeCull !== true && computeCull !== false && computeCull !== "auto") {
+    throw new TypeError('Culling computeCull must be true, false, or "auto"');
   }
   if (options?.bounds !== undefined) assertBoundsData(options.bounds);
 
   return {
     enabled: options?.enabled ?? true,
     padding,
+    computeCull,
     bounds: options?.bounds === undefined ? undefined : Object.freeze({ ...options.bounds }),
   };
 }

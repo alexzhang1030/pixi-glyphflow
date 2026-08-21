@@ -207,7 +207,9 @@ The 1.1.0 suite already meets the formal million-label frame budgets. The next p
 - Wave 2: intern shared styles, position-only palette patches, `Float32` z-index, 32-byte
   fill-only GPU transforms, packed CPU store columns, and 24-byte live instances are in
   source. Published instance, transform, and store ceilings stay until new artifacts exist.
-- Wave 3: WebGPU compute cull and storage buffers; WebGL 2 keeps the CPU grid.
+- Wave 3: stable WebGPU compute compaction and indirect draw are in source for the direct
+  natural-order mesh. WebGL 2 and multi-segment meshes keep the CPU grid. Transform storage buffers
+  and atlas texture arrays remain follow-up work.
 - Wave 4: TinySDF / prebake / per-frame upload budget.
 - Wave 5: optional Slug outline mode, collision, SIMD, SharedArrayBuffer ring.
 

@@ -57,6 +57,7 @@ function assertFixture(
   expect(result.reattachedPixels).toBeGreaterThan(500);
   expect(result.initialStats).toMatchObject({
     rendererAdapter: renderer,
+    cullPath: renderer === "webgpu" ? "compute-cull" : "cpu-grid",
     drawCalls: 1,
     submittedGlyphs: 17,
     atlasTextureCount: 1,
@@ -68,6 +69,7 @@ function assertFixture(
   expect(result.reattachedStats).toMatchObject({
     revision: 2,
     rendererAdapter: renderer,
+    cullPath: renderer === "webgpu" ? "compute-cull" : "cpu-grid",
     drawCalls: 1,
     submittedGlyphs: 17,
   });

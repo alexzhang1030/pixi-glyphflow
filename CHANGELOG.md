@@ -35,6 +35,10 @@
 - Equal-height atlas cells pack along a next-fit shelf when they match the current row. Skyline
   still places the first cell of a new row and mixed sizes. Eviction holes still go through the
   waste map. Published `atlas-pressure` frame ceilings stay.
+- WebGPU can compact an expanded CPU working set against the tight draw viewport with a stable
+  prefix sum and indexed indirect draw. Camera motion inside that working set skips spatial queries
+  and instance writes. WebGL and unsupported mesh shapes retain the tight CPU grid. `cullPath`
+  reports the path that ran.
 
 ## 1.1.0 - 2026-08-15
 
