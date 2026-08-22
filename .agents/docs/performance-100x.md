@@ -45,11 +45,14 @@ writes, and remirroring the store.
   `RenderCoordinator` only awaits labels that still need shaping or raster.
 - Duplicate strings clone the prototype instance range and rewrite the palette index. They do not
   walk `#buildInstances`.
+- `tinySdf: true` builds HarfBuzz glyphs as a local SDF from the canvas mask. The homepage demo
+  turns this on so a new ideograph does not start `@zappar/msdf-generator`. MSDF stays the default
+  because the field changes pixels.
 
 ## Remaining slices, in order
 
-1. **TinySDF / prebaked pages.** Wave 4. The 2.65 s bars were raster, not compact. This is the
-   only way a true new glyph stays inside 16 ms.
+1. **Prebaked pages.** Known UI alphabets still miss on the first session if TinySDF has not run.
+   Default baked pages are Wave 4 leftovers.
 2. **LOD.** Drop glyphs whose projected height is below one pixel. Policy flag, default off.
    Changes pixels.
 3. **Palette storage buffer and atlas texture array.** Wave 3 leftovers. Binding cost, not the

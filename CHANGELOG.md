@@ -44,7 +44,8 @@
   labels that intersect the tight draw view plus a 0.25-viewport ring. There is no leftover
   admission wave. Unchanged visible labels keep their rendered epoch so a sibling z-index or blend
   change does not evict them. Shape-cache hits return a run on the same turn. Duplicate strings
-  clone instance ranges and only rewrite the palette index.
+  clone instance ranges and only rewrite the palette index. `tinySdf: true` builds HarfBuzz glyphs
+  with a local SDF from the canvas mask and skips the MSDF worker.
 
 ## 1.1.0 - 2026-08-15
 

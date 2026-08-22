@@ -155,7 +155,9 @@ Add `@zappar/msdf-generator@1.2.4` as a direct application dependency when the a
 asset entry points. The provider initializes workers lazily, runs separate workers in parallel, and
 serializes font loading plus atlas generation inside each worker.
 
-`distanceFieldMinFontSize` defaults to `48`. Smaller layout sizes generate a higher-resolution
+`tinySdf: true` builds HarfBuzz glyphs with a local SDF from the canvas mask. Binary fonts are
+installed as `FontFace` for that path. MSDF generation stays on `@zappar/msdf-generator` unless
+this flag is set. `distanceFieldMinFontSize` defaults to `48`. Smaller layout sizes generate a higher-resolution
 distance field and store its physical-to-logical raster scale with the atlas entry. Glyph geometry,
 stroke, and shadow effects remain in layout units while CJK strokes retain enough source detail for
 zooming. Raise the value for unusually intricate display fonts; the trade-off is atlas memory and

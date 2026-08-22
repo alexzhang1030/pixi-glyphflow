@@ -71,6 +71,13 @@ Do not bring back per-frame admission leftovers, `pendingAdmissionCount`, or ani
 continue. That path also remirrored the instance buffer every wave and made compute-cull slower
 than `cpu-grid`.
 
+## TinySDF binary fonts need FontFace
+
+`tinySdf: true` draws the glyph with canvas and runs a local EDT. Binary families are installed
+through `FontFace` from the registered bytes. Without `FontFace` (or a document font set) the
+canvas would paint a fallback family. Keep `@zappar/msdf-generator` for `mode: "msdf"` and for
+hosts that cannot install a face.
+
 ## Stamp the rendered epoch on unchanged visible labels
 
 `#buildRenderChanges` stamps `#renderedEpochs[slot] = nextEpoch` for every resident it intends to

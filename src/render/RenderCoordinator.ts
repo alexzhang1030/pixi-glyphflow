@@ -157,6 +157,7 @@ export class RenderCoordinator {
   #lastLayoutMs = 0;
   #lastInstanceWriteMs = 0;
   #lastPaletteWriteMs = 0;
+  readonly #tinySdf: boolean;
   #destroyed = false;
 
   constructor(options: RenderCoordinatorOptions) {
@@ -172,6 +173,7 @@ export class RenderCoordinator {
     this.#ownsAtlas = options.atlas === undefined;
     this.#ownsInstances = options.instances === undefined;
     this.#ownsTransforms = options.transforms === undefined;
+    this.#tinySdf = options.rasterizerOptions?.tinySdf === true;
   }
 
   async commit(
@@ -435,7 +437,7 @@ export class RenderCoordinator {
     index: number,
     snapshot: Readonly<RenderLabelSnapshot>,
   ): Promise<void> | undefined {
-    const mode = selectMode(run, index);
+    const mode = this.#glyphMode(run, index);
     const glyphText = resolveGlyphText(run, index);
     const glyphId = run.glyphIds[index] ?? 0;
     const identity = resolveGlyphIdentity({
@@ -532,7 +534,7 @@ export class RenderCoordinator {
     const modes = this.#batchModes.subarray(0, count);
     const rasterScales = this.#batchScales.subarray(0, count);
     for (let index = 0; index < count; index += 1) {
-      const mode = selectMode(run, index);
+      const mode = this.#glyphMode(run, index);
       const glyphText = resolveGlyphText(run, index);
       const glyphId = run.glyphIds[index] ?? 0;
       const identity = resolveGlyphIdentity({
@@ -605,6 +607,12 @@ export class RenderCoordinator {
       throw new Error("RenderCoordinator has been destroyed");
     }
   }
+
+  #glyphMode(run: Readonly<PositionedRun>, index: number): GlyphMode {
+    if (run.source === "harfbuzz") return this.#tinySdf ? "sdf" : "msdf";
+    const text = resolveGlyphText(run, index);
+    return /\p{Extended_Pictographic}/u.test(text) ? "color" : "alpha";
+  }
 }
 
 class LazyRasterGlyphProvider implements GlyphProviderLike {
@@ -676,12 +684,6 @@ function validateChanges(changes: readonly RenderChange[]): void {
       throw new TypeError("Render change mask contains unsupported domains");
     }
   }
-}
-
-function selectMode(run: Readonly<PositionedRun>, index: number): GlyphMode {
-  if (run.source === "harfbuzz") return "msdf";
-  const text = resolveGlyphText(run, index);
-  return /\p{Extended_Pictographic}/u.test(text) ? "color" : "alpha";
 }
 
 function resolveGlyphText(run: Readonly<PositionedRun>, index: number): string {

@@ -151,7 +151,9 @@ coordinator path packs numeric identities and still accepts diagnostic strings.
 
 `TextLayerOptions.rendering.rasterizerOptions` configures the default `RasterGlyphProvider`.
 `generatorConcurrency` controls the lazy MSDF worker pool. `distanceFieldMinFontSize` controls the
-minimum source resolution for dynamic MSDF/SDF glyphs and defaults to `48`. The renderer stores the
+minimum source resolution for dynamic MSDF/SDF glyphs and defaults to `48`. `tinySdf: true` builds
+those HarfBuzz glyphs as a local SDF from the canvas mask and skips `@zappar/msdf-generator`. That
+changes pixels. The renderer stores the
 physical-to-logical raster scale so layout, stroke, and shadow dimensions remain stable.
 `createMsdfGenerator` supplies explicit worker and WebAssembly URLs for production bundlers. Each
 worker serializes font loading and atlas generation; separate workers execute in parallel.

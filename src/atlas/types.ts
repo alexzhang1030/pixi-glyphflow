@@ -162,6 +162,11 @@ export interface RasterGlyphProviderOptions {
   readonly distanceFieldMinFontSize?: number;
   readonly canvasRasterizer?: (request: RasterGlyphRequest) => Promise<GlyphRaster>;
   readonly createMsdfGenerator?: () => Promise<MsdfGeneratorLike>;
+  /**
+   * Use a local TinySDF field for HarfBuzz glyphs instead of `@zappar/msdf-generator`. Changes
+   * pixels (MSDF → SDF). Default is false.
+   */
+  readonly tinySdf?: boolean;
 }
 
 export interface RasterGlyphProviderStats {
@@ -171,5 +176,6 @@ export interface RasterGlyphProviderStats {
   readonly misses: number;
   readonly canvasRasters: number;
   readonly distanceFieldRasters: number;
+  readonly tinySdfRasters: number;
   readonly generatorStarts: number;
 }

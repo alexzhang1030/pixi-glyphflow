@@ -1,5 +1,6 @@
 import type { FontRegistry } from "../FontRegistry";
 import { prepareGlyphFont } from "../fonts/cmap";
+import { encodeTinySdf, TINY_SDF_RADIUS } from "./tinySdf";
 import type {
   GlyphMetrics,
   GlyphMode,
@@ -45,7 +46,9 @@ export class RasterGlyphProvider {
   #misses = 0;
   #canvasRasters = 0;
   #distanceFieldRasters = 0;
+  #tinySdfRasters = 0;
   #generatorStarts = 0;
+  readonly #faces = new Map<string, FontFace>();
   #destroyed = false;
 
   constructor(registry: FontRegistry, options: RasterGlyphProviderOptions = {}) {
@@ -85,10 +88,8 @@ export class RasterGlyphProvider {
         `Font revision ${String(request.fontRevision)} is stale; current revision is ${String(registered.revision)}`,
       );
     }
-    if ((request.mode === "msdf" || request.mode === "sdf") && registered?.kind !== "binary") {
-      throw new RangeError(
-        `Distance-field rasterization requires a binary font: ${request.family}`,
-      );
+    if (request.mode === "msdf" && registered?.kind !== "binary") {
+      throw new RangeError(`MSDF rasterization requires a binary font: ${request.family}`);
     }
 
     const key = requestCacheKey(request);
@@ -136,6 +137,7 @@ export class RasterGlyphProvider {
       misses: this.#misses,
       canvasRasters: this.#canvasRasters,
       distanceFieldRasters: this.#distanceFieldRasters,
+      tinySdfRasters: this.#tinySdfRasters,
       generatorStarts: this.#generatorStarts,
     });
   }
@@ -145,6 +147,10 @@ export class RasterGlyphProvider {
     this.#destroyed = true;
     this.#cache.clear();
     this.#pending.clear();
+    for (const face of this.#faces.values()) {
+      globalThis.document?.fonts.delete(face);
+    }
+    this.#faces.clear();
     await Promise.all(this.#generatorTails.flatMap((tail) => (tail === undefined ? [] : [tail])));
     const generators = await Promise.all(
       this.#generatorPromises.flatMap((generator) => (generator === undefined ? [] : [generator])),
@@ -156,6 +162,9 @@ export class RasterGlyphProvider {
     if (request.mode === "alpha" || request.mode === "color") {
       this.#canvasRasters += 1;
       return this.#canvasRasterizer(request);
+    }
+    if (request.mode === "sdf") {
+      return this.#tinySdfRaster(request);
     }
 
     this.#distanceFieldRasters += 1;
@@ -178,6 +187,55 @@ export class RasterGlyphProvider {
     });
 
     return extractDistanceField(request, atlas, prepared.glyphText, rasterScale);
+  }
+
+  async #tinySdfRaster(request: RasterGlyphRequest): Promise<Readonly<GlyphRaster>> {
+    this.#tinySdfRasters += 1;
+    this.#canvasRasters += 1;
+    await this.#ensureDocumentFont(request.family);
+    const rasterFontSize = Math.max(request.fontSize, this.#distanceFieldMinFontSize);
+    const rasterScale = rasterFontSize / request.fontSize;
+    const alpha = await this.#canvasRasterizer({
+      ...request,
+      fontSize: rasterFontSize,
+      mode: "alpha",
+    });
+    if (alpha.mode !== "alpha") {
+      throw new TypeError("TinySDF requires an alpha canvas raster");
+    }
+    const pixels = encodeTinySdf(alpha.pixels, alpha.width, alpha.height, TINY_SDF_RADIUS);
+    const metrics = alpha.metrics;
+    return {
+      mode: "sdf",
+      width: alpha.width,
+      height: alpha.height,
+      pixels,
+      ...(metrics === undefined
+        ? {}
+        : {
+            metrics: {
+              ...metrics,
+              bearingX: metrics.bearingX / rasterScale,
+              bearingY: metrics.bearingY / rasterScale,
+              advance: metrics.advance / rasterScale,
+              fieldRange: TINY_SDF_RADIUS / rasterScale,
+              ...(rasterScale === 1 ? {} : { rasterScale }),
+            },
+          }),
+    };
+  }
+
+  async #ensureDocumentFont(family: string): Promise<void> {
+    if (this.#faces.has(family)) return;
+    const bytes = this.#registry.getBinaryData(family);
+    if (bytes === undefined) return;
+    if (typeof FontFace === "undefined") return;
+    const copy = new Uint8Array(bytes.byteLength);
+    copy.set(bytes);
+    const face = new FontFace(family, copy);
+    await face.load();
+    globalThis.document?.fonts.add(face);
+    this.#faces.set(family, face);
   }
 
   #generateAtlas(options: Readonly<Record<string, unknown>>): Promise<MsdfAtlasLike> {

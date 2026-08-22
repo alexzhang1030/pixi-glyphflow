@@ -343,6 +343,46 @@ describe("RenderCoordinator", () => {
     coordinator.destroy();
     registry.destroy();
   });
+
+  test("requests TinySDF for HarfBuzz glyphs when the option is on", async () => {
+    const registry = new FontRegistry();
+    await registry.register({ family: "Fixture" });
+    const modes: string[] = [];
+    const coordinator = new RenderCoordinator({
+      registry,
+      rasterizerOptions: { tinySdf: true },
+      layoutEngine: {
+        layout(_slot, _revision, input) {
+          return Object.freeze({ ...run(input.text), source: "harfbuzz" as const });
+        },
+        destroy() {},
+      },
+      glyphProvider: {
+        async rasterize(request: RasterGlyphRequest): Promise<GlyphRaster> {
+          modes.push(request.mode);
+          return {
+            mode: "sdf",
+            width: 4,
+            height: 6,
+            pixels: new Uint8Array(24).fill(200),
+            metrics: { bearingX: 0, bearingY: 5, advance: 4, fieldRange: 8 },
+          };
+        },
+        destroy() {},
+      },
+      atlasOptions: { pageWidth: 16, pageHeight: 16, maxBytes: 256 },
+      instanceOptions: { initialCapacity: 4 },
+      transformOptions: { initialCapacity: 4, textureWidth: 4 },
+    });
+
+    await coordinator.commit(1, [
+      { slot: 0, mask: CONTENT | TRANSFORM | STYLE, snapshot: label(1, 0, 0) },
+    ]);
+    expect(modes).toEqual(["sdf", "sdf"]);
+
+    coordinator.destroy();
+    registry.destroy();
+  });
 });
 
 function label(
