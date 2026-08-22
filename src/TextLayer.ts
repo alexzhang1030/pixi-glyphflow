@@ -148,6 +148,11 @@ export class TextLayer extends Container {
   readonly #cullRecordDirtyScratch: DirtyByteRange[] = [];
   #preparedRing: CullViewport | undefined;
   readonly #boundsScratch: MutableBoundsData = { x: 0, y: 0, width: 0, height: 0 };
+  // Broadcast mutations reuse one text/style reference across the batch; estimating once
+  // per identity pair removes an O(text) scan per label from bulk intake.
+  #estimateTextRef: string | undefined;
+  #estimateStyleRef: unknown;
+  readonly #estimateScratch: MutableBoundsData = { x: 0, y: 0, width: 0, height: 0 };
   readonly #matrixScratch = new Matrix();
   readonly #labelScratch: MutableTextStoreLabel = {
     text: "",
@@ -1079,7 +1084,7 @@ export class TextLayer extends Container {
   ): void {
     this.#spatial.set(
       slot,
-      transformedLabelBounds(label, runBounds, this.#boundsScratch),
+      this.#labelBounds(label, runBounds),
       label.zIndex,
       this.#isEffectivelyVisible(id, label.visible),
     );
@@ -1093,10 +1098,25 @@ export class TextLayer extends Container {
   ): void {
     this.#spatial.updateCurrent(
       slot,
-      transformedLabelBounds(label, runBounds, this.#boundsScratch),
+      this.#labelBounds(label, runBounds),
       label.zIndex,
       this.#isEffectivelyVisible(id, label.visible),
     );
+  }
+
+  #labelBounds(
+    label: Readonly<TextStoreSnapshot> | Parameters<TextStore["create"]>[0],
+    runBounds?: BoundsData,
+  ): Readonly<BoundsData> {
+    if (runBounds !== undefined) {
+      return transformedLabelBounds(label, runBounds, this.#boundsScratch);
+    }
+    if (label.text !== this.#estimateTextRef || label.style !== this.#estimateStyleRef) {
+      estimateTextBounds(label.text, label.style, this.#estimateScratch);
+      this.#estimateTextRef = label.text;
+      this.#estimateStyleRef = label.style;
+    }
+    return transformedLabelBounds(label, this.#estimateScratch, this.#boundsScratch);
   }
 
   #ensureScratchCapacity(): void {
@@ -1887,6 +1907,18 @@ function transformedLabelBounds(
   const top = bounds.y - label.anchorY * bounds.height;
   const right = left + bounds.width;
   const bottom = top + bounds.height;
+  if (label.rotation === 0) {
+    const x0 = label.x + left * label.scaleX;
+    const x1 = label.x + right * label.scaleX;
+    const y0 = label.y + top * label.scaleY;
+    const y1 = label.y + bottom * label.scaleY;
+    output.x = Math.min(x0, x1);
+    output.y = Math.min(y0, y1);
+    output.width = Math.max(x0, x1) - output.x;
+    output.height = Math.max(y0, y1) - output.y;
+
+    return output;
+  }
   const sine = Math.sin(label.rotation);
   const cosine = Math.cos(label.rotation);
   const scaledLeft = left * label.scaleX;

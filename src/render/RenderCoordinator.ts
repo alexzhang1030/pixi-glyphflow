@@ -222,8 +222,8 @@ export class RenderCoordinator {
         this.#forgetPrototype(change.slot);
         const instanceStart = performance.now();
         this.instances.remove(change.slot);
-        this.#lastInstanceWriteMs += performance.now() - instanceStart;
         const paletteStart = performance.now();
+        this.#lastInstanceWriteMs += paletteStart - instanceStart;
         this.transforms.remove(change.slot);
         this.#lastPaletteWriteMs += performance.now() - paletteStart;
         this.#removedLabels += 1;
@@ -266,16 +266,18 @@ export class RenderCoordinator {
         this.#drawStatesDirty = true;
       }
       const sourceChanged = this.#sourceChanged(change);
+      let paletteStart: number;
       if (sourceChanged) {
         this.#runs.set(change.slot, run);
         const instanceStart = performance.now();
         this.#writeInstances(change.slot, run, change.snapshot);
-        this.#lastInstanceWriteMs += performance.now() - instanceStart;
+        paletteStart = performance.now();
+        this.#lastInstanceWriteMs += paletteStart - instanceStart;
         this.#shapedLabels += 1;
       } else {
         this.#transformOnlyLabels += 1;
+        paletteStart = performance.now();
       }
-      const paletteStart = performance.now();
       if (change.positionOnly === true && !sourceChanged) {
         this.transforms.setPosition(change.slot, change.snapshot.x, change.snapshot.y);
       } else {
