@@ -21,7 +21,7 @@ import {
 const SLOT_RADIX = 0x100_0000;
 const NAMESPACE_RADIX = 0x2_0000_0000;
 const MAX_GENERATION = 0x1ff;
-const MAX_SOURCE_REVISION = 0xffff;
+const MAX_SOURCE_REVISION = 0xffff_ffff;
 const MAX_NAMESPACE = 0xf_ffff;
 const MAX_CAPACITY = 0x100_0000;
 const DEFAULT_CAPACITY = 16;
@@ -51,7 +51,7 @@ export class TextStore {
   #highWater = 0;
   #generations: Uint16Array;
   #flags: Uint8Array;
-  #sourceRevisions: Uint16Array;
+  #sourceRevisions: Uint32Array;
   #x: Float32Array;
   #y: Float32Array;
   #scaleX: Uint16Array;
@@ -83,7 +83,7 @@ export class TextStore {
     this.#capacity = nextPowerOfTwo(requestedCapacity);
     this.#generations = new Uint16Array(this.#capacity);
     this.#flags = new Uint8Array(this.#capacity);
-    this.#sourceRevisions = new Uint16Array(this.#capacity);
+    this.#sourceRevisions = new Uint32Array(this.#capacity);
     this.#x = new Float32Array(this.#capacity);
     this.#y = new Float32Array(this.#capacity);
     this.#scaleX = new Uint16Array(this.#capacity);
@@ -633,7 +633,7 @@ export class TextStore {
     this.#highWater = 0;
     this.#generations = new Uint16Array();
     this.#flags = new Uint8Array();
-    this.#sourceRevisions = new Uint16Array();
+    this.#sourceRevisions = new Uint32Array();
     this.#x = new Float32Array();
     this.#y = new Float32Array();
     this.#scaleX = new Uint16Array();

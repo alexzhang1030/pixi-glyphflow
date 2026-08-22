@@ -56,6 +56,8 @@ export async function runGlyphflowWorkload(
       return runMillionLive(app, configuration);
     case "million-viewport":
       return runMillionViewport(configuration);
+    case "first-seen":
+      return runFirstSeen(app, configuration);
     case "dynamic-counters":
       return runDynamicCounters(configuration);
     case "viewport-drag":
@@ -184,6 +186,66 @@ async function runMillionLive(
     nonTransparentOutput: nonTransparentPixels > 0,
     liveCoordinatorMesh: true,
     splitCpuGpuSamples: split.cpuMs.length === split.frameMs.length,
+  });
+}
+
+const FIRST_SEEN_SAMPLES = Object.freeze([
+  "Alpha",
+  "Beta",
+  "Gamma",
+  "Delta",
+  "Epsilon",
+  "Zeta",
+  "Eta",
+  "Theta",
+  "Iota",
+  "Kappa",
+  "Lambda",
+  "Sigma",
+]);
+
+/** The 100x target moment: every sampled frame jumps onto labels never rendered before. */
+async function runFirstSeen(
+  app: Application,
+  configuration: Readonly<BrowserBenchmarkConfiguration>,
+): Promise<Readonly<BrowserFixtureResult>> {
+  const setupStart = performance.now();
+  const dense = await createDenseLayer(
+    configuration,
+    {
+      rendering: true,
+      culling: { x: 0, y: 0, width: configuration.width, height: 320 },
+      text: (index) => FIRST_SEEN_SAMPLES[index % FIRST_SEEN_SAMPLES.length] ?? "g",
+    },
+    app.renderer,
+  );
+  app.stage.addChild(dense.layer);
+  await completeFrame(app);
+  const setupMs = performance.now() - setupStart;
+  const commitMs: number[] = [];
+  const frameMs = await sampleFrames(configuration, async (frame) => {
+    const start = performance.now();
+    dense.layer.setViewportBounds({
+      x: (frame + 1) * configuration.width,
+      y: 0,
+      width: configuration.width,
+      height: 320,
+    });
+    const commitStart = performance.now();
+    await dense.layer.commit();
+    const commitDuration = performance.now() - commitStart;
+    await completeFrame(app);
+    if (frame >= configuration.warmupFrames) commitMs.push(commitDuration);
+    return performance.now() - start;
+  });
+  const stats = dense.layer.stats;
+  const counters = layerCounters(stats, stats.glyphCount / Math.max(1, stats.labelCount));
+  dense.layer.destroy();
+
+  return result({ setupMs, frameMs, commitMs }, counters, {
+    exactResidentLabels: counters.residentLabels === configuration.labelCount,
+    boundedVisibleSet: counters.submittedLabels < counters.residentLabels,
+    freshRegionRendered: counters.submittedLabels > 0,
   });
 }
 

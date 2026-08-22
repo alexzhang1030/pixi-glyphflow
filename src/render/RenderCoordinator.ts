@@ -153,7 +153,7 @@ export class RenderCoordinator {
   #removedLabels = 0;
   #lastAddedOrder = 0;
   #needsDrawSort = false;
-  #hasNonZeroZIndex = false;
+  #nonZeroZStates = 0;
   #drawStateList: Readonly<RenderDrawState>[] = [];
   #drawStatesDirty = true;
   #drawListEpoch = 0;
@@ -209,7 +209,10 @@ export class RenderCoordinator {
     for (const item of prepared) {
       const { change, run } = item;
       if (change.snapshot === undefined) {
-        if (this.#drawStates.delete(change.slot)) {
+        const removedState = this.#drawStates.get(change.slot);
+        if (removedState !== undefined) {
+          this.#drawStates.delete(change.slot);
+          if (removedState.zIndex !== 0) this.#nonZeroZStates -= 1;
           drawOrderChanged = true;
           this.#drawStatesDirty = true;
           this.#drawListEpoch += 1;
@@ -240,10 +243,21 @@ export class RenderCoordinator {
         previousDrawState.order !== change.snapshot.order ||
         previousDrawState.blendMode !== change.snapshot.blendMode
       ) {
-        if (change.snapshot.zIndex !== 0) this.#hasNonZeroZIndex = true;
+        if (
+          change.snapshot.zIndex !== 0 &&
+          (previousDrawState === undefined || previousDrawState.zIndex === 0)
+        ) {
+          this.#nonZeroZStates += 1;
+        } else if (
+          change.snapshot.zIndex === 0 &&
+          previousDrawState !== undefined &&
+          previousDrawState.zIndex !== 0
+        ) {
+          this.#nonZeroZStates -= 1;
+        }
         if (previousDrawState === undefined) {
           // Ascending zero-z inserts append in sorted position; anything else must re-sort.
-          if (change.snapshot.order < this.#lastAddedOrder || this.#hasNonZeroZIndex) {
+          if (change.snapshot.order < this.#lastAddedOrder || this.#nonZeroZStates > 0) {
             this.#needsDrawSort = true;
           }
           this.#lastAddedOrder = Math.max(this.#lastAddedOrder, change.snapshot.order);
@@ -376,6 +390,7 @@ export class RenderCoordinator {
     this.#ticket += 1;
     this.#runs.clear();
     this.#drawStates.clear();
+    this.#nonZeroZStates = 0;
     this.#pendingGlyphs.clear();
     this.#prototypeSlots.clear();
     this.#slotPrototypeKeys.clear();

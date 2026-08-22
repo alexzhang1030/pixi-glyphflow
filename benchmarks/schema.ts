@@ -15,6 +15,7 @@ export type BrowserBenchmarkFixture = "bitmap-text" | "glyphflow" | "html-text" 
 export type BrowserBenchmarkWorkload =
   | "atlas-pressure"
   | "dynamic-counters"
+  | "first-seen"
   | "million-full"
   | "million-live"
   | "million-viewport"
@@ -108,6 +109,8 @@ export interface BrowserBenchmarkArtifact {
   readonly runtime: Readonly<BenchmarkRuntime>;
   readonly workload: BrowserBenchmarkWorkload;
   readonly status: "capacity-limit" | "complete";
+  /** Scale overrides mark the artifact exploratory; it never replaces the formal file. */
+  readonly exploratory?: boolean;
   readonly samples: readonly Readonly<BrowserBenchmarkSample>[];
   readonly failures: readonly Readonly<BrowserBenchmarkFailure>[];
   readonly summaries: Readonly<
