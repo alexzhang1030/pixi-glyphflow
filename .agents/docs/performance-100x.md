@@ -37,25 +37,22 @@ writes, and remirroring the store.
 - No `prepareBudgetMs`, `prepareWave`, leftover slot list, or rAF continue. On-screen text appears
   in the commit that first sees it.
 - `shouldInstanceUnshaped`: compute-cull layouts an unshaped resident only when its AABB hits the
-  tight draw view. The expanded working set stays for retain and GPU compact.
-- Camera motion inside the working set queries the tight view and prepares newly visible unshaped
+  prepare ring (tight draw plus 0.25×`max(w,h)`). The expanded working set stays for retain and
+  GPU compact.
+- Camera motion inside the working set queries that ring and prepares newly visible unshaped
   labels. It does not remirror the instance buffer when nothing new is shaped.
+- `LayoutEngine.layout` is not `async`. A `#shapeCache` hit returns the run on the same turn.
+  `RenderCoordinator` only awaits labels that still need shaping or raster.
+- Duplicate strings clone the prototype instance range and rewrite the palette index. They do not
+  walk `#buildInstances`.
 
 ## Remaining slices, in order
 
-1. **Sync cache hits.** `LayoutEngine.layout` returns a `Promise` even when `#shapeCache` hits.
-   First-seen of a known string should write instances from the cached run on the same turn, no
-   microtask per label.
-2. **Prototype instances.** After one label of `"简体中文 · 上海字流"` exists, the next 3,000
-   copies only need a palette slot and a cloned instance range, not `#buildInstances` from scratch.
-3. **Smaller slack, same retain.** Keep a prepared ring around the tight view, smaller than one
-   full viewport of slack. Crossing that ring prepares the next ring. Crossing the big working set
-   still remirrors.
-4. **TinySDF / prebaked pages.** Wave 4. The 2.65 s bars were raster, not compact. This is the
+1. **TinySDF / prebaked pages.** Wave 4. The 2.65 s bars were raster, not compact. This is the
    only way a true new glyph stays inside 16 ms.
-5. **LOD.** Drop glyphs whose projected height is below one pixel. Policy flag, default off.
+2. **LOD.** Drop glyphs whose projected height is below one pixel. Policy flag, default off.
    Changes pixels.
-6. **Palette storage buffer and atlas texture array.** Wave 3 leftovers. Binding cost, not the
+3. **Palette storage buffer and atlas texture array.** Wave 3 leftovers. Binding cost, not the
    zoom hitch.
 
 Reject: drip-feed admission, `queryAll()` for compute-cull, BVH rebuilds on the 100k storm, and

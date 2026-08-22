@@ -41,8 +41,10 @@
   CPU store out of draw order. WebGL and multi-segment meshes retain the tight CPU grid. `cullPath`
   reports the path that ran.
 - First-seen layout and raster run in the commit that first sees the label. Compute-cull prepares
-  only labels that intersect the tight draw view. There is no leftover admission wave. Unchanged
-  visible labels keep their rendered epoch so a sibling z-index or blend change does not evict them.
+  labels that intersect the tight draw view plus a 0.25-viewport ring. There is no leftover
+  admission wave. Unchanged visible labels keep their rendered epoch so a sibling z-index or blend
+  change does not evict them. Shape-cache hits return a run on the same turn. Duplicate strings
+  clone instance ranges and only rewrite the palette index.
 
 ## 1.1.0 - 2026-08-15
 

@@ -63,8 +63,9 @@ the commit that first sees it.
 The hitch those waves were papering over is still real. A homepage pan after a working-set miss
 spent 1.89s then 2.65s in layout and raster because compute-cull prepared the padded working set,
 not the tight draw view. `retainResources` only helps revisits. New glyphs still need layout and
-raster. Do that for labels that intersect the tight draw view, in one `Promise.all`. Off-screen
-working-set residents stay unshaped until the camera reaches them.
+raster. Do that for labels that intersect the tight draw view plus a 0.25-viewport ring. Cache
+hits stay on the same turn. Off-screen working-set residents stay unshaped until the camera
+reaches them.
 
 Do not bring back per-frame admission leftovers, `pendingAdmissionCount`, or animation-frame
 continue. That path also remirrored the instance buffer every wave and made compute-cull slower

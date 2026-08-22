@@ -60,6 +60,7 @@ export type {
   LayoutCacheStats,
   LayoutEngineOptions,
   LayoutEngineStats,
+  LayoutResult,
   PositionedRunShaper,
   TextLayoutInput,
 } from "../layout/types";

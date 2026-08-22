@@ -13,7 +13,7 @@ import type {
 import type { AtlasCommit } from "../atlas/types";
 import type { FontRegistry } from "../FontRegistry";
 import { LayoutEngine } from "../layout/LayoutEngine";
-import type { PositionedRun, TextLayoutInput } from "../layout/types";
+import type { LayoutResult, PositionedRun, TextLayoutInput } from "../layout/types";
 import type { TrustedGlyphRun } from "../shaping/TrustedGlyphRun";
 import { TextDirty } from "../store/types";
 import type { TextLayoutOptions, TextShapingOptions } from "../types";
@@ -57,11 +57,7 @@ export interface RenderChange {
 }
 
 export interface RenderLayoutEngineLike {
-  layout(
-    labelId: number,
-    sourceRevision: number,
-    input: TextLayoutInput,
-  ): Promise<Readonly<PositionedRun>>;
+  layout(labelId: number, sourceRevision: number, input: TextLayoutInput): LayoutResult;
   destroy(): void;
 }
 
@@ -139,6 +135,8 @@ export class RenderCoordinator {
   readonly #runs = new Map<number, Readonly<PositionedRun>>();
   readonly #drawStates = new Map<number, Readonly<RenderDrawState>>();
   readonly #pendingGlyphs = new Map<GlyphCacheKey, Promise<void>>();
+  readonly #prototypeSlots = new Map<string, number>();
+  readonly #slotPrototypeKeys = new Map<number, string>();
   #batchPositions = new Float32Array(0);
   #batchUvs = new Float32Array(0);
   #batchPalette = new Uint32Array(0);
@@ -190,7 +188,8 @@ export class RenderCoordinator {
     this.#lastPaletteWriteMs = 0;
     const ticket = ++this.#ticket;
     const prepareStart = performance.now();
-    const prepared = await this.#prepareChanges(changes, ticket);
+    const preparedOrPending = this.#prepareChanges(changes, ticket);
+    const prepared = isPromise(preparedOrPending) ? await preparedOrPending : preparedOrPending;
     this.#lastLayoutMs = performance.now() - prepareStart;
     if (ticket !== this.#ticket) {
       this.#staleRevisions += 1;
@@ -212,6 +211,7 @@ export class RenderCoordinator {
           continue;
         }
         this.#runs.delete(change.slot);
+        this.#forgetPrototype(change.slot);
         const instanceStart = performance.now();
         this.instances.remove(change.slot);
         this.#lastInstanceWriteMs += performance.now() - instanceStart;
@@ -255,9 +255,7 @@ export class RenderCoordinator {
       if (sourceChanged) {
         this.#runs.set(change.slot, run);
         const instanceStart = performance.now();
-        this.instances.set(change.slot, this.#buildInstances(change.slot, run, change.snapshot), {
-          skipEquality: true,
-        });
+        this.#writeInstances(change.slot, run, change.snapshot);
         this.#lastInstanceWriteMs += performance.now() - instanceStart;
         this.#shapedLabels += 1;
       } else {
@@ -335,6 +333,8 @@ export class RenderCoordinator {
     this.#runs.clear();
     this.#drawStates.clear();
     this.#pendingGlyphs.clear();
+    this.#prototypeSlots.clear();
+    this.#slotPrototypeKeys.clear();
     if (this.#ownsLayout) this.#layout.destroy();
     if (this.#ownsProvider) void this.#provider.destroy();
     if (this.#ownsAtlas) this.atlas.destroy();
@@ -343,8 +343,29 @@ export class RenderCoordinator {
     this.#destroyed = true;
   }
 
-  #prepareChanges(changes: readonly RenderChange[], ticket: number): Promise<PreparedChange[]> {
-    return Promise.all(changes.map((change) => this.#prepare(change, ticket)));
+  #prepareChanges(
+    changes: readonly RenderChange[],
+    ticket: number,
+  ): PreparedChange[] | Promise<PreparedChange[]> {
+    const prepared: PreparedChange[] = [];
+    const pending: Promise<void>[] = [];
+    for (let index = 0; index < changes.length; index += 1) {
+      const change = changes[index];
+      if (change === undefined) throw new Error("Render change list is incomplete");
+      const item = this.#prepare(change, ticket);
+      if (isPromise(item)) {
+        const slot = index;
+        pending.push(
+          item.then((ready) => {
+            prepared[slot] = ready;
+          }),
+        );
+        continue;
+      }
+      prepared[index] = item;
+    }
+    if (pending.length === 0) return prepared;
+    return Promise.all(pending).then(() => prepared);
   }
 
   #sourceChanged(change: RenderChange): boolean {
@@ -354,7 +375,7 @@ export class RenderCoordinator {
     );
   }
 
-  async #prepare(change: RenderChange, ticket: number): Promise<PreparedChange> {
+  #prepare(change: RenderChange, ticket: number): PreparedChange | Promise<PreparedChange> {
     const snapshot = change.snapshot;
     if (snapshot === undefined) {
       return { change };
@@ -368,29 +389,52 @@ export class RenderCoordinator {
       return { change, run };
     }
 
-    const run =
-      change.trustedRun ??
-      (await this.#layout.layout(change.slot, snapshot.sourceRevision, {
-        text: snapshot.text,
-        style: snapshot.style,
-        ...snapshot.layout,
-        ...snapshot.shaping,
-      }));
-    if (ticket !== this.#ticket) {
-      return { change, run };
+    if (change.trustedRun !== undefined) {
+      return this.#finishPrepare(change, ticket, change.trustedRun);
     }
-    await Promise.all(
-      Array.from({ length: run.glyphCount }, (_, index) => this.#ensureGlyph(run, index, snapshot)),
-    );
-
-    return { change, run };
+    const laidOut = this.#layout.layout(change.slot, snapshot.sourceRevision, {
+      text: snapshot.text,
+      style: snapshot.style,
+      ...snapshot.layout,
+      ...snapshot.shaping,
+    });
+    if (isPromise(laidOut)) {
+      return laidOut.then((run) => this.#finishPrepare(change, ticket, run));
+    }
+    return this.#finishPrepare(change, ticket, laidOut);
   }
 
-  async #ensureGlyph(
+  #finishPrepare(
+    change: RenderChange,
+    ticket: number,
+    run: Readonly<PositionedRun>,
+  ): PreparedChange | Promise<PreparedChange> {
+    if (ticket !== this.#ticket) return { change, run };
+    const snapshot = change.snapshot;
+    if (snapshot === undefined) return { change, run };
+    const missing = this.#ensureMissingGlyphs(run, snapshot);
+    if (missing === undefined) return { change, run };
+    return missing.then(() => ({ change, run }));
+  }
+
+  #ensureMissingGlyphs(
+    run: Readonly<PositionedRun>,
+    snapshot: Readonly<RenderLabelSnapshot>,
+  ): Promise<void> | undefined {
+    const missing: Promise<void>[] = [];
+    for (let index = 0; index < run.glyphCount; index += 1) {
+      const pending = this.#ensureGlyph(run, index, snapshot);
+      if (pending !== undefined) missing.push(pending);
+    }
+    if (missing.length === 0) return undefined;
+    return Promise.all(missing).then(() => undefined);
+  }
+
+  #ensureGlyph(
     run: Readonly<PositionedRun>,
     index: number,
     snapshot: Readonly<RenderLabelSnapshot>,
-  ): Promise<void> {
+  ): Promise<void> | undefined {
     const mode = selectMode(run, index);
     const glyphText = resolveGlyphText(run, index);
     const glyphId = run.glyphIds[index] ?? 0;
@@ -413,9 +457,9 @@ export class RenderCoordinator {
       return pending;
     }
 
-    const promise = (async () => {
-      const request = this.atlas.request(key);
-      const raster = await this.#provider.rasterize({
+    const request = this.atlas.request(key);
+    const promise = this.#provider
+      .rasterize({
         family: run.fontFamily,
         ...(run.fontFamilies === undefined ? {} : { fontFamilies: run.fontFamilies }),
         fontRevision: run.fontRevision,
@@ -424,16 +468,53 @@ export class RenderCoordinator {
         fontSize: identity.fontSize,
         fontWeight: identity.fontWeight,
         mode,
+      })
+      .then((raster) => {
+        if (!this.atlas.stage(request, raster) && this.atlas.get(key) === undefined) {
+          throw new Error(`Glyph atlas capacity rejected: ${String(key)}`);
+        }
+      })
+      .finally(() => {
+        this.#pendingGlyphs.delete(key);
       });
-      if (!this.atlas.stage(request, raster) && this.atlas.get(key) === undefined) {
-        throw new Error(`Glyph atlas capacity rejected: ${String(key)}`);
-      }
-    })();
     this.#pendingGlyphs.set(key, promise);
-    try {
-      await promise;
-    } finally {
-      this.#pendingGlyphs.delete(key);
+    return promise;
+  }
+
+  #writeInstances(
+    slot: number,
+    run: Readonly<PositionedRun>,
+    snapshot: Readonly<RenderLabelSnapshot>,
+  ): void {
+    const key = prototypeKey(run, snapshot);
+    const prototype = this.#prototypeSlots.get(key);
+    if (
+      prototype !== undefined &&
+      prototype !== slot &&
+      this.instances.getRange(prototype) !== undefined &&
+      this.instances.clone(prototype, slot)
+    ) {
+      this.#rememberPrototype(slot, key);
+      return;
+    }
+    this.instances.set(slot, this.#buildInstances(slot, run, snapshot), { skipEquality: true });
+    this.#rememberPrototype(slot, key);
+  }
+
+  #rememberPrototype(slot: number, key: string): void {
+    const previous = this.#slotPrototypeKeys.get(slot);
+    if (previous !== undefined && previous !== key && this.#prototypeSlots.get(previous) === slot) {
+      this.#prototypeSlots.delete(previous);
+    }
+    this.#slotPrototypeKeys.set(slot, key);
+    if (this.#prototypeSlots.get(key) === undefined) this.#prototypeSlots.set(key, slot);
+  }
+
+  #forgetPrototype(slot: number): void {
+    const key = this.#slotPrototypeKeys.get(slot);
+    this.#slotPrototypeKeys.delete(slot);
+    if (key !== undefined && this.#prototypeSlots.get(key) === slot) {
+      this.#prototypeSlots.delete(key);
     }
   }
 
@@ -564,6 +645,26 @@ class LazyRasterGlyphProvider implements GlyphProviderLike {
 
     return pending;
   }
+}
+
+function isPromise<T>(value: T | Promise<T>): value is Promise<T> {
+  return value instanceof Promise;
+}
+
+function prototypeKey(
+  run: Readonly<PositionedRun>,
+  snapshot: Readonly<RenderLabelSnapshot>,
+): string {
+  return [
+    run.source,
+    run.fontFamily,
+    String(run.fontRevision),
+    run.text,
+    String(resolveFontSize(snapshot.style.fontSize)),
+    String(snapshot.style.fontWeight ?? "normal"),
+    snapshot.layout?.writingMode ?? "horizontal-tb",
+    String(run.glyphCount),
+  ].join("\0");
 }
 
 function validateChanges(changes: readonly RenderChange[]): void {

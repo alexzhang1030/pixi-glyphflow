@@ -220,7 +220,7 @@ The packer is no longer the limiter; generation and upload are.
 
 - Add a TinySDF-style local SDF path for system and CJK fallback so `@zappar/msdf-generator` is not on the first miss for every ideograph. Keep exact HarfBuzz glyph IDs for registered binary fonts.
 - Support prebaked MSDF/SDF pages as the default for known UI alphabets (TMP hybrid model; Mapbox PBF ranges). Dynamic pages handle the long tail.
-- Budget atlas uploads per frame and resume across frames. A 20,000-glyph first miss must not hitch a single commit. First-seen layout runs in the seeing commit for the tight draw view only. Do not drip-feed on-screen labels.
+- Budget atlas uploads per frame and resume across frames. A 20,000-glyph first miss must not hitch a single commit. First-seen layout runs in the seeing commit for the tight draw view plus a 0.25-viewport ring. Do not drip-feed on-screen labels.
 - Optional persistent cache is a product decision (IndexedDB, as in Mapbox local glyphs). Do not add it without a human license and privacy pass.
 - Pin the visible set and a small predictive ring around the current viewport/zoom, so zoom does not evict the glyphs it will need on the next wheel tick.
 

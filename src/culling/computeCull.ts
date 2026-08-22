@@ -81,6 +81,8 @@ export function computeCullStructurallyEligible(input: {
   );
 }
 
+export const PREPARE_RING_SLACK = 0.25;
+
 export function shouldInstanceUnshaped(input: {
   readonly cullPath: CullPath;
   readonly draw: CullViewport | undefined;
@@ -95,13 +97,17 @@ export function shouldInstanceUnshaped(input: {
     case "compute-cull":
       return (
         input.draw !== undefined &&
-        aabbVisible(input.minX, input.minY, input.maxX, input.maxY, input.draw)
+        aabbVisible(input.minX, input.minY, input.maxX, input.maxY, expandPrepareRing(input.draw))
       );
     default: {
       const _exhaustive: never = input.cullPath;
       return _exhaustive;
     }
   }
+}
+
+export function expandPrepareRing(draw: CullViewport): CullViewport {
+  return expandWorkingSet(draw, Math.max(draw.width, draw.height) * PREPARE_RING_SLACK);
 }
 
 export function shouldRefreshResidency(input: ResidencyRefreshInput): boolean {

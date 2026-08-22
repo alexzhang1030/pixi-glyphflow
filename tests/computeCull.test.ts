@@ -6,6 +6,7 @@ import {
   computeCullStructurallyEligible,
   createIndirectArgs,
   cullResidency,
+  expandPrepareRing,
   expandWorkingSet,
   packCullRecords,
   patchCullRecordAabbAt,
@@ -219,8 +220,10 @@ describe("compute cull host reference", () => {
     ).toBe(false);
   });
 
-  test("instances unshaped compute-cull labels only against the tight draw view", () => {
+  test("instances unshaped compute-cull labels against the prepare ring", () => {
     const draw = { x: 0, y: 0, width: 100, height: 100, padding: 0 };
+    const ring = expandPrepareRing(draw);
+    expect(ring).toEqual({ x: -25, y: -25, width: 150, height: 150, padding: 0 });
     expect(
       shouldInstanceUnshaped({
         cullPath: "cpu-grid",
@@ -238,6 +241,16 @@ describe("compute cull host reference", () => {
         minX: 10,
         minY: 10,
         maxX: 18,
+        maxY: 20,
+      }),
+    ).toBe(true);
+    expect(
+      shouldInstanceUnshaped({
+        cullPath: "compute-cull",
+        draw,
+        minX: 110,
+        minY: 10,
+        maxX: 118,
         maxY: 20,
       }),
     ).toBe(true);

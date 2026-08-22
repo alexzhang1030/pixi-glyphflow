@@ -8,6 +8,7 @@ import {
 
 import {
   cullResidency,
+  expandPrepareRing,
   expandWorkingSet,
   CULL_RECORD_STRIDE,
   patchCullRecordAabbAt,
@@ -1234,13 +1235,18 @@ export class TextLayer extends Container {
   }
 
   #buildTightFirstSeen(): LayerRenderChange[] {
-    const bounds = this.#viewportBounds;
-    if (bounds === undefined) return [];
+    const draw = this.#drawViewport();
+    if (draw === undefined) return [];
+    const ring = expandPrepareRing(draw);
     this.#ensureScratchCapacity();
     if (this.#bulkSlots.length < this.#spatial.capacity) {
       this.#bulkSlots = growTypedArray(this.#bulkSlots, this.#spatial.capacity);
     }
-    const count = this.#spatial.query(bounds, this.#bulkSlots, this.#cullingPadding);
+    const count = this.#spatial.query(
+      { x: ring.x, y: ring.y, width: ring.width, height: ring.height },
+      this.#bulkSlots,
+      0,
+    );
     const coordinator = this.#renderCoordinator;
     const epoch = this.#renderEpoch;
     const changes: LayerRenderChange[] = [];

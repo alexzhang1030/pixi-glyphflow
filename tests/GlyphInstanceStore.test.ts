@@ -83,6 +83,33 @@ describe("GlyphInstanceStore", () => {
     store.destroy();
   });
 
+  test("clones a range and remaps the palette index", () => {
+    const store = new GlyphInstanceStore({ initialCapacity: 8 });
+    store.set(10, batch(2, 10));
+    expect(store.clone(10, 20)).toBe(true);
+    expect(store.getRange(20)).toEqual({ offset: 2, count: 2, capacity: 2 });
+    expect(readInstance(store.buffer, 2)).toMatchObject({
+      x: 10,
+      y: 11,
+      width: 12,
+      height: 13,
+      paletteIndex: 20,
+      page: 0,
+      active: true,
+    });
+    expect(readInstance(store.buffer, 3)).toMatchObject({
+      x: 11,
+      y: 12,
+      paletteIndex: 20,
+      page: 1,
+      active: true,
+    });
+    expect(store.clone(10, 10)).toBe(false);
+    expect(store.clone(99, 21)).toBe(false);
+
+    store.destroy();
+  });
+
   test("reuses a leftover hole from a larger power-of-two range", () => {
     const store = new GlyphInstanceStore({ initialCapacity: 16 });
     store.set(1, batch(8, 1));

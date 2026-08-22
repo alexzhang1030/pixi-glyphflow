@@ -113,6 +113,7 @@ storage budgets stay until a human accepts new numbers.
   instance storage larger than the 128 MiB WebGPU default.
 - Reuse styles and fonts to maximize shaping and layout cache hits.
 - Set an atlas ceiling that matches the product glyph working set.
-- Compute-cull layouts first-seen labels in the tight draw view only. The expanded working set is
-  residency slack, not a prepare batch.
+- Compute-cull layouts first-seen labels in the tight draw view plus a 0.25-viewport ring. The
+  expanded working set is residency slack, not a prepare batch. Known strings hit the shape cache
+  on the same turn and clone instance ranges.
 - Read diagnostics at telemetry cadence.

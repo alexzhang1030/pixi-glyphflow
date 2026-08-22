@@ -4,6 +4,7 @@ import type {
   BitmapLayoutInput,
   LayoutEngineOptions,
   LayoutEngineStats,
+  LayoutResult,
   PositionedRun,
   PositionedRunShaper,
   TextDirection,
@@ -15,7 +16,7 @@ export class LayoutEngine {
   readonly #bitmap: NonNullable<LayoutEngineOptions["bitmapAdapter"]>;
   readonly #harfbuzz: PositionedRunShaper;
   readonly #ownsHarfBuzz: boolean;
-  readonly #shapeCache = new Map<string, Promise<Readonly<PositionedRun>>>();
+  readonly #shapeCache = new Map<string, LayoutResult>();
   #layouts = 0;
   #bitmapLayouts = 0;
   #harfbuzzLayouts = 0;
@@ -28,26 +29,31 @@ export class LayoutEngine {
     this.#ownsHarfBuzz = options.harfbuzzShaper === undefined;
   }
 
-  async layout(
-    labelId: number,
-    sourceRevision: number,
-    input: TextLayoutInput,
-  ): Promise<Readonly<PositionedRun>> {
+  layout(labelId: number, sourceRevision: number, input: TextLayoutInput): LayoutResult {
     this.#assertActive();
     assertIdentity("labelId", labelId);
     assertIdentity("sourceRevision", sourceRevision);
     assertInput(input);
-    const direction = input.direction ?? detectDirection(input.text);
-    const families = this.#resolveFamilies(input.style.fontFamily);
     this.#layouts += 1;
-    let missingRun: Readonly<PositionedRun> | undefined;
+    return this.#layoutFrom({
+      labelId,
+      sourceRevision,
+      input,
+      direction: input.direction ?? detectDirection(input.text),
+      families: this.#resolveFamilies(input.style.fontFamily),
+      startIndex: 0,
+      missingRun: undefined,
+    });
+  }
 
-    for (let index = 0; index < families.length; index += 1) {
+  #layoutFrom(walk: LayoutWalk): LayoutResult {
+    const { input, direction, families } = walk;
+    for (let index = walk.startIndex; index < families.length; index += 1) {
       const family = families[index];
       if (family === undefined) continue;
       const registered = this.#registry.get(family);
       if (registered?.kind === "binary") {
-        const shapeInput: HarfBuzzShapeInput = {
+        const shaped = this.#shape(walk.labelId, walk.sourceRevision, {
           family,
           text: input.text,
           fontSize: resolveFontSize(input.style.fontSize),
@@ -57,10 +63,19 @@ export class LayoutEngine {
           ...(input.script === undefined ? {} : { script: input.script }),
           ...(input.features === undefined ? {} : { features: input.features }),
           ...(input.variations === undefined ? {} : { variations: input.variations }),
-        };
-        const run = await this.#shape(labelId, sourceRevision, shapeInput);
-        if (hasCompleteGlyphCoverage(run)) return applyWritingMode(run, input);
-        missingRun ??= run;
+        });
+        if (isPromise(shaped)) {
+          return shaped.then((run) => {
+            if (hasCompleteGlyphCoverage(run)) return applyWritingMode(run, input);
+            return this.#layoutFrom({
+              ...walk,
+              startIndex: index + 1,
+              missingRun: walk.missingRun ?? run,
+            });
+          });
+        }
+        if (hasCompleteGlyphCoverage(shaped)) return applyWritingMode(shaped, input);
+        walk.missingRun ??= shaped;
         continue;
       }
 
@@ -70,7 +85,7 @@ export class LayoutEngine {
       const primary = bitmapFamilies[0] ?? family;
       const primaryFont = this.#registry.get(primary);
       this.#bitmapLayouts += 1;
-      const run = await this.#bitmap.layout({
+      const laidOut = this.#bitmap.layout({
         text: input.text,
         style: {
           ...input.style,
@@ -83,10 +98,11 @@ export class LayoutEngine {
         ...(input.maxLines === undefined ? {} : { maxLines: input.maxLines }),
         ...(input.ellipsis === undefined ? {} : { ellipsis: input.ellipsis }),
       });
-      return applyWritingMode(run, input);
+      if (isPromise(laidOut)) return laidOut.then((run) => applyWritingMode(run, input));
+      return applyWritingMode(laidOut, input);
     }
 
-    if (missingRun !== undefined) return applyWritingMode(missingRun, input);
+    if (walk.missingRun !== undefined) return applyWritingMode(walk.missingRun, input);
     throw new Error("Font fallback resolution produced no layout candidate");
   }
 
@@ -109,11 +125,7 @@ export class LayoutEngine {
     this.#destroyed = true;
   }
 
-  #shape(
-    labelId: number,
-    sourceRevision: number,
-    input: HarfBuzzShapeInput,
-  ): Promise<Readonly<PositionedRun>> {
+  #shape(labelId: number, sourceRevision: number, input: HarfBuzzShapeInput): LayoutResult {
     const key = shapeCacheKey(input);
     const cached = this.#shapeCache.get(key);
     if (cached !== undefined) {
@@ -125,11 +137,19 @@ export class LayoutEngine {
     this.#harfbuzzLayouts += 1;
     const pending = this.#harfbuzz.shape(labelId, sourceRevision, input);
     this.#shapeCache.set(key, pending);
-    void pending.catch(() => {
-      if (this.#shapeCache.get(key) === pending) this.#shapeCache.delete(key);
-    });
+    void pending.then(
+      (run) => {
+        if (this.#shapeCache.get(key) === pending) {
+          this.#shapeCache.delete(key);
+          this.#shapeCache.set(key, run);
+        }
+      },
+      () => {
+        if (this.#shapeCache.get(key) === pending) this.#shapeCache.delete(key);
+      },
+    );
     while (this.#shapeCache.size > 1_000) {
-      const oldest = this.#shapeCache.keys().next().value as string | undefined;
+      const oldest = this.#shapeCache.keys().next().value;
       if (oldest === undefined) break;
       this.#shapeCache.delete(oldest);
     }
@@ -169,19 +189,23 @@ export class LayoutEngine {
 }
 
 class LazyBitmapLayoutAdapter {
+  #adapter: { layout(input: BitmapLayoutInput): Readonly<PositionedRun> } | undefined;
   #pending: Promise<{ layout(input: BitmapLayoutInput): Readonly<PositionedRun> }> | undefined;
 
-  async layout(input: BitmapLayoutInput): Promise<Readonly<PositionedRun>> {
-    const adapter = await this.#get();
-    return adapter.layout(input);
+  layout(input: BitmapLayoutInput): LayoutResult {
+    if (this.#adapter !== undefined) return this.#adapter.layout(input);
+    return this.#get().then((adapter) => adapter.layout(input));
   }
 
   #get(): Promise<{ layout(input: BitmapLayoutInput): Readonly<PositionedRun> }> {
+    if (this.#adapter !== undefined) return Promise.resolve(this.#adapter);
     const current = this.#pending;
     if (current !== undefined) return current;
-    const pending = import("../pixi/compat/bitmapLayout").then(
-      ({ BitmapLayoutAdapter }) => new BitmapLayoutAdapter(),
-    );
+    const pending = import("../pixi/compat/bitmapLayout").then(({ BitmapLayoutAdapter }) => {
+      const adapter = new BitmapLayoutAdapter();
+      this.#adapter = adapter;
+      return adapter;
+    });
     this.#pending = pending;
     void pending.catch(() => {
       if (this.#pending === pending) this.#pending = undefined;
@@ -232,6 +256,20 @@ class LazyHarfBuzzWorkerShaper implements PositionedRunShaper {
 
     return pending;
   }
+}
+
+interface LayoutWalk {
+  readonly labelId: number;
+  readonly sourceRevision: number;
+  readonly input: TextLayoutInput;
+  readonly direction: TextDirection;
+  readonly families: readonly string[];
+  readonly startIndex: number;
+  missingRun: Readonly<PositionedRun> | undefined;
+}
+
+function isPromise<T>(value: T | Promise<T>): value is Promise<T> {
+  return value instanceof Promise;
 }
 
 function hasCompleteGlyphCoverage(run: Readonly<PositionedRun>): boolean {

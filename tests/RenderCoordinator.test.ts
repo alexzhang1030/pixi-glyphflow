@@ -294,6 +294,55 @@ describe("RenderCoordinator", () => {
     coordinator.destroy();
     registry.destroy();
   });
+
+  test("clones instance ranges for duplicate strings after the first raster", async () => {
+    const registry = new FontRegistry();
+    await registry.register({ family: "Fixture" });
+    let layoutCalls = 0;
+    let rasterCalls = 0;
+    const shared = run("AB");
+    const coordinator = new RenderCoordinator({
+      registry,
+      layoutEngine: {
+        layout(_slot, _revision, input) {
+          layoutCalls += 1;
+          return input.text === "AB" ? shared : run(input.text);
+        },
+        destroy() {},
+      },
+      glyphProvider: {
+        async rasterize(): Promise<GlyphRaster> {
+          rasterCalls += 1;
+          return {
+            mode: "alpha",
+            width: 4,
+            height: 6,
+            pixels: new Uint8Array(24).fill(255),
+            metrics: { bearingX: 0, bearingY: 5, advance: 4 },
+          };
+        },
+        destroy() {},
+      },
+      atlasOptions: { pageWidth: 64, pageHeight: 64, maxBytes: 4_096 },
+      instanceOptions: { initialCapacity: 32 },
+      transformOptions: { initialCapacity: 16, textureWidth: 16 },
+    });
+    const duplicates = Array.from({ length: 8 }, (_, slot) => ({
+      slot,
+      mask: CONTENT | TRANSFORM | STYLE,
+      snapshot: label(1, slot * 10, 0, "AB"),
+    }));
+
+    const first = await coordinator.commit(1, duplicates);
+    expect(first).toMatchObject({ stale: false, appliedLabels: 8, glyphs: 16, atlasUploads: 2 });
+    expect(layoutCalls).toBe(8);
+    expect(rasterCalls).toBe(2);
+    expect(coordinator.instances.getRange(0)).toEqual({ offset: 0, count: 2, capacity: 2 });
+    expect(coordinator.instances.getRange(7)).toEqual({ offset: 14, count: 2, capacity: 2 });
+
+    coordinator.destroy();
+    registry.destroy();
+  });
 });
 
 function label(

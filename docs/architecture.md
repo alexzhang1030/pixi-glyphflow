@@ -67,10 +67,12 @@ converts the shared horizontal run into upright top-to-bottom columns before atl
 Trusted glyph runs let an upstream layout system supply immutable typed arrays with explicit
 ownership and revision stamps.
 
-`RenderCoordinator` prepares every accepted change in one `Promise.all`. Compute-cull still
-instances an expanded working set for camera slack, but it only layouts and rasters first-seen
-labels that intersect the tight draw view. Off-screen residents stay unshaped until the camera
-reaches them. On-screen text appears in that commit. There is no leftover admission wave.
+`RenderCoordinator` prepares accepted changes without a microtask per label. Cache hits and atlas
+hits stay on the same turn. Duplicate strings clone a prototype instance range and rewrite the
+palette index. Compute-cull still instances an expanded working set for camera slack, but it only
+layouts and rasters first-seen labels that intersect the tight draw view plus a 0.25-viewport ring.
+Off-screen residents stay unshaped until the camera reaches them. On-screen text appears in that
+commit. There is no leftover admission wave.
 
 ## Atlas and instances
 
