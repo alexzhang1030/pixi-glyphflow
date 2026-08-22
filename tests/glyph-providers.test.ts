@@ -4,6 +4,7 @@ import { FontRegistry } from "../src";
 import {
   PrebuiltGlyphProvider,
   RasterGlyphProvider,
+  prebuiltGlyphKey,
   type GlyphMode,
   type GlyphRaster,
   type RasterGlyphRequest,
@@ -266,6 +267,54 @@ describe("glyph providers", () => {
 
     expect(maximumActive).toBe(1);
     expect(charsets).toEqual(["A", "B"]);
+    await provider.destroy();
+    registry.destroy();
+  });
+
+  test("serves prebuilt pages before TinySDF or MSDF generation", async () => {
+    const registry = new FontRegistry();
+    const font = await registry.register({ family: "Fixture", source: new Uint8Array([1, 2]) });
+    const request = {
+      family: "Fixture",
+      fontRevision: font.revision,
+      glyphId: 65,
+      glyphText: "A",
+      fontSize: 16,
+      mode: "msdf" as const,
+    };
+    let generatorStarts = 0;
+    const pixels = new Uint8Array([9, 8, 7, 255]);
+    const provider = new RasterGlyphProvider(registry, {
+      prebuilt: {
+        pages: [{ id: "latin", mode: "msdf", width: 1, height: 1, pixels }],
+        glyphs: [
+          {
+            key: prebuiltGlyphKey(request),
+            pageId: "latin",
+            x: 0,
+            y: 0,
+            width: 1,
+            height: 1,
+            metrics: { bearingX: 0, bearingY: 1, advance: 2, fieldRange: 4 },
+          },
+        ],
+      },
+      async createMsdfGenerator() {
+        generatorStarts += 1;
+        throw new Error("MSDF generator must not start for a prebuilt hit");
+      },
+    });
+
+    const raster = await provider.rasterize(request);
+    expect(raster.pixels).toEqual(pixels);
+    expect(raster.metrics).toEqual({ bearingX: 0, bearingY: 1, advance: 2, fieldRange: 4 });
+    expect(generatorStarts).toBe(0);
+    expect(provider.stats).toMatchObject({
+      prebuiltHits: 1,
+      distanceFieldRasters: 0,
+      tinySdfRasters: 0,
+    });
+
     await provider.destroy();
     registry.destroy();
   });

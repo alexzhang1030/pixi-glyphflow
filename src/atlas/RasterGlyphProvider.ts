@@ -1,5 +1,6 @@
 import type { FontRegistry } from "../FontRegistry";
 import { prepareGlyphFont } from "../fonts/cmap";
+import { PrebuiltGlyphProvider, prebuiltGlyphKey } from "./PrebuiltGlyphProvider";
 import { encodeTinySdf, TINY_SDF_RADIUS } from "./tinySdf";
 import type {
   GlyphMetrics,
@@ -47,8 +48,10 @@ export class RasterGlyphProvider {
   #canvasRasters = 0;
   #distanceFieldRasters = 0;
   #tinySdfRasters = 0;
+  #prebuiltHits = 0;
   #generatorStarts = 0;
   readonly #faces = new Map<string, FontFace>();
+  readonly #prebuilt: PrebuiltGlyphProvider | undefined;
   #destroyed = false;
 
   constructor(registry: FontRegistry, options: RasterGlyphProviderOptions = {}) {
@@ -71,6 +74,8 @@ export class RasterGlyphProvider {
     this.#generatorTails = Array.from({ length: this.#generatorConcurrency });
     this.#canvasRasterizer = options.canvasRasterizer ?? defaultCanvasRasterizer;
     this.#createMsdfGenerator = options.createMsdfGenerator ?? defaultMsdfGenerator;
+    this.#prebuilt =
+      options.prebuilt === undefined ? undefined : new PrebuiltGlyphProvider(options.prebuilt);
   }
 
   async rasterize(request: RasterGlyphRequest): Promise<Readonly<GlyphRaster>> {
@@ -138,6 +143,7 @@ export class RasterGlyphProvider {
       canvasRasters: this.#canvasRasters,
       distanceFieldRasters: this.#distanceFieldRasters,
       tinySdfRasters: this.#tinySdfRasters,
+      prebuiltHits: this.#prebuiltHits,
       generatorStarts: this.#generatorStarts,
     });
   }
@@ -147,6 +153,7 @@ export class RasterGlyphProvider {
     this.#destroyed = true;
     this.#cache.clear();
     this.#pending.clear();
+    this.#prebuilt?.destroy();
     for (const face of this.#faces.values()) {
       globalThis.document?.fonts.delete(face);
     }
@@ -159,6 +166,11 @@ export class RasterGlyphProvider {
   }
 
   async #createRaster(request: RasterGlyphRequest): Promise<Readonly<GlyphRaster>> {
+    const baked = this.#prebuilt?.lookup(prebuiltGlyphKey(request));
+    if (baked !== undefined) {
+      this.#prebuiltHits += 1;
+      return baked;
+    }
     if (request.mode === "alpha" || request.mode === "color") {
       this.#canvasRasters += 1;
       return this.#canvasRasterizer(request);

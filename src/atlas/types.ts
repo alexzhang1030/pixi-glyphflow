@@ -167,6 +167,11 @@ export interface RasterGlyphProviderOptions {
    * pixels (MSDF → SDF). Default is false.
    */
   readonly tinySdf?: boolean;
+  /**
+   * Serve known glyphs from packed pages before TinySDF or MSDF. Record keys use `prebuiltGlyphKey`
+   * and omit font revision.
+   */
+  readonly prebuilt?: PrebuiltGlyphProviderOptions;
 }
 
 export interface RasterGlyphProviderStats {
@@ -177,5 +182,6 @@ export interface RasterGlyphProviderStats {
   readonly canvasRasters: number;
   readonly distanceFieldRasters: number;
   readonly tinySdfRasters: number;
+  readonly prebuiltHits: number;
   readonly generatorStarts: number;
 }
