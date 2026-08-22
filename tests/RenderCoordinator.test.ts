@@ -443,6 +443,51 @@ describe("RenderCoordinator", () => {
     registry.destroy();
   });
 
+  test("pins live atlas entries and unpins them when the last user leaves", async () => {
+    const registry = new FontRegistry();
+    await registry.register({ family: "Fixture" });
+    const coordinator = new RenderCoordinator({
+      registry,
+      layoutEngine: {
+        layout(_slot, _revision, input) {
+          return run(input.text);
+        },
+        destroy() {},
+      },
+      glyphProvider: {
+        async rasterize(): Promise<GlyphRaster> {
+          return {
+            mode: "alpha",
+            width: 4,
+            height: 6,
+            pixels: new Uint8Array(24).fill(255),
+            metrics: { bearingX: 0, bearingY: 5, advance: 4 },
+          };
+        },
+        destroy() {},
+      },
+      atlasOptions: { pageWidth: 64, pageHeight: 64, maxBytes: 4_096 },
+      instanceOptions: { initialCapacity: 8 },
+      transformOptions: { initialCapacity: 4, textureWidth: 4 },
+    });
+
+    await coordinator.commit(1, [
+      { slot: 0, mask: CONTENT | TRANSFORM | STYLE, snapshot: label(1, 0, 0) },
+      { slot: 1, mask: CONTENT | TRANSFORM | STYLE, snapshot: { ...label(1, 10, 0), order: 2 } },
+    ]);
+    // "AB" shares two glyph entries between both labels.
+    expect(coordinator.atlas.stats.pinnedEntries).toBe(2);
+
+    await coordinator.commit(2, [{ slot: 0, mask: CONTENT, snapshot: undefined }]);
+    expect(coordinator.atlas.stats.pinnedEntries).toBe(2);
+
+    await coordinator.commit(3, [{ slot: 1, mask: CONTENT, snapshot: undefined }]);
+    expect(coordinator.atlas.stats.pinnedEntries).toBe(0);
+
+    coordinator.destroy();
+    registry.destroy();
+  });
+
   test("requests TinySDF for HarfBuzz glyphs when the option is on", async () => {
     const registry = new FontRegistry();
     await registry.register({ family: "Fixture" });

@@ -8,7 +8,7 @@ import {
   type WebGPURenderer,
 } from "pixi.js";
 
-import type { AtlasCommit, AtlasPageInfo, GlyphMode } from "../atlas/types";
+import type { AtlasCommit, AtlasPageInfo, AtlasUpload, GlyphMode } from "../atlas/types";
 import {
   aabbVisible,
   CULL_RECORD_STRIDE,
@@ -38,6 +38,7 @@ interface AtlasTexturePage {
   readonly pixels: Uint8Array;
   readonly source: BufferImageSource;
   readonly texture: Texture;
+  initialized: boolean;
 }
 
 interface SurfaceMesh {
@@ -281,7 +282,7 @@ export class RenderSurface {
   }
 
   #applyAtlasCommit(commit: Readonly<AtlasCommit>): void {
-    const dirtyPages = new Set<number>();
+    const dirtyPages = new Map<number, Readonly<AtlasUpload>[]>();
     for (const upload of commit.uploads) {
       const page = this.#ensureAtlasPage(upload.entry.page);
       copyAtlasUpload(
@@ -293,9 +294,28 @@ export class RenderSurface {
         upload.pixels,
       );
       this.#atlasUploadBytes += upload.pixels.byteLength;
-      dirtyPages.add(upload.entry.page);
+      const uploads = dirtyPages.get(upload.entry.page);
+      if (uploads === undefined) dirtyPages.set(upload.entry.page, [upload]);
+      else uploads.push(upload);
     }
-    for (const page of dirtyPages) this.#pages.get(page)?.source.update();
+    for (const [pageId, uploads] of dirtyPages) {
+      const page = this.#pages.get(pageId);
+      if (page === undefined) continue;
+      if (!page.initialized) {
+        initializeTexture(this.#renderer, page.source);
+        page.initialized = true;
+        continue;
+      }
+      // Four-channel pages keep the whole-page upload: PixiJS premultiplies their alpha on
+      // upload and a raw sub-rect write would not. Single-channel fields have no such step.
+      const singleChannel = page.info.mode === "alpha" || page.info.mode === "sdf";
+      const rectBytes = uploads.reduce((sum, upload) => sum + upload.pixels.byteLength, 0);
+      if (!singleChannel || rectBytes * 2 > page.pixels.byteLength) {
+        page.source.update();
+        continue;
+      }
+      uploadAtlasRects(this.#renderer, page, uploads);
+    }
   }
 
   #ensureAtlasPage(pageId: number): AtlasTexturePage {
@@ -319,6 +339,7 @@ export class RenderSurface {
       pixels,
       source,
       texture: new Texture({ source }),
+      initialized: false,
     };
     this.#pages.set(pageId, page);
 
@@ -790,6 +811,52 @@ function copyAtlasUpload(
     const targetOffset = (y + row) * targetRowBytes + x * bytesPerPixel;
     page.pixels.set(pixels.subarray(sourceOffset, sourceOffset + sourceRowBytes), targetOffset);
   }
+}
+
+/** One new glyph must not re-upload its whole page; write the staged rectangles instead. */
+function uploadAtlasRects(
+  renderer: Renderer,
+  page: AtlasTexturePage,
+  uploads: readonly Readonly<AtlasUpload>[],
+): void {
+  if (isWebGLRenderer(renderer)) {
+    const gl = renderer.gl;
+    const resource = renderer.texture.getGlSource(page.source);
+    const previousAlignment = gl.getParameter(gl.UNPACK_ALIGNMENT) as number;
+    gl.bindTexture(resource.target, resource.texture);
+    gl.pixelStorei(gl.UNPACK_ALIGNMENT, 1);
+    try {
+      for (const upload of uploads) {
+        gl.texSubImage2D(
+          resource.target,
+          0,
+          upload.entry.x,
+          upload.entry.y,
+          upload.entry.width,
+          upload.entry.height,
+          resource.format,
+          resource.type,
+          upload.pixels,
+        );
+      }
+    } finally {
+      gl.pixelStorei(gl.UNPACK_ALIGNMENT, previousAlignment);
+    }
+    return;
+  }
+  if (isWebGPURenderer(renderer)) {
+    const texture = renderer.texture.getGpuSource(page.source);
+    for (const upload of uploads) {
+      renderer.gpu.device.queue.writeTexture(
+        { texture, origin: { x: upload.entry.x, y: upload.entry.y } },
+        upload.pixels,
+        { bytesPerRow: upload.entry.width, rowsPerImage: upload.entry.height },
+        { width: upload.entry.width, height: upload.entry.height },
+      );
+    }
+    return;
+  }
+  page.source.update();
 }
 
 function initializeTexture(renderer: Renderer, source: BufferImageSource): void {

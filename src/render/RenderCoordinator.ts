@@ -138,6 +138,8 @@ export class RenderCoordinator {
   readonly #pendingGlyphs = new Map<GlyphCacheKey, Promise<void>>();
   readonly #prototypeSlots = new Map<string, number>();
   readonly #slotPrototypeKeys = new Map<number, string>();
+  readonly #slotAtlasKeys = new Map<number, readonly GlyphCacheKey[]>();
+  readonly #atlasKeyRefs = new Map<GlyphCacheKey, number>();
   #batchPositions = new Float32Array(0);
   #batchUvs = new Float32Array(0);
   #batchPalette = new Uint32Array(0);
@@ -223,6 +225,7 @@ export class RenderCoordinator {
         }
         this.#runs.delete(change.slot);
         this.#forgetPrototype(change.slot);
+        this.#releaseSlotKeys(change.slot);
         const instanceStart = performance.now();
         this.instances.remove(change.slot);
         const paletteStart = performance.now();
@@ -394,6 +397,8 @@ export class RenderCoordinator {
     this.#pendingGlyphs.clear();
     this.#prototypeSlots.clear();
     this.#slotPrototypeKeys.clear();
+    this.#slotAtlasKeys.clear();
+    this.#atlasKeyRefs.clear();
     this.#ensuredRuns.clear();
     if (this.#ownsLayout) this.#layout.destroy();
     if (this.#ownsProvider) void this.#provider.destroy();
@@ -567,10 +572,45 @@ export class RenderCoordinator {
   ): void {
     const key = prototypeKey(run, snapshot);
     const prototype = this.#prototypeSlots.get(key);
-    if (prototype === undefined || prototype === slot || !this.instances.clone(prototype, slot)) {
+    if (prototype !== undefined && prototype !== slot && this.instances.clone(prototype, slot)) {
+      const prototypeKeys = this.#slotAtlasKeys.get(prototype);
+      if (prototypeKeys !== undefined) this.#retainSlotKeys(slot, prototypeKeys);
+      else this.#releaseSlotKeys(slot);
+    } else {
       this.instances.set(slot, this.#buildInstances(slot, run, snapshot), { skipEquality: true });
     }
     this.#rememberPrototype(slot, key);
+  }
+
+  /** Pin the label's atlas entries so eviction cannot reuse rectangles live instances sample. */
+  #retainSlotKeys(slot: number, keys: readonly GlyphCacheKey[]): void {
+    for (const key of keys) {
+      const count = this.#atlasKeyRefs.get(key) ?? 0;
+      this.#atlasKeyRefs.set(key, count + 1);
+      if (count === 0) this.atlas.pin(key);
+    }
+    const previous = this.#slotAtlasKeys.get(slot);
+    this.#slotAtlasKeys.set(slot, keys);
+    if (previous !== undefined) this.#releaseKeys(previous);
+  }
+
+  #releaseSlotKeys(slot: number): void {
+    const keys = this.#slotAtlasKeys.get(slot);
+    if (keys === undefined) return;
+    this.#slotAtlasKeys.delete(slot);
+    this.#releaseKeys(keys);
+  }
+
+  #releaseKeys(keys: readonly GlyphCacheKey[]): void {
+    for (const key of keys) {
+      const count = this.#atlasKeyRefs.get(key) ?? 0;
+      if (count <= 1) {
+        this.#atlasKeyRefs.delete(key);
+        this.atlas.unpin(key);
+      } else {
+        this.#atlasKeyRefs.set(key, count - 1);
+      }
+    }
   }
 
   #rememberPrototype(slot: number, key: string): void {
@@ -603,6 +643,7 @@ export class RenderCoordinator {
     const pages = this.#batchPages.subarray(0, count);
     const modes = this.#batchModes.subarray(0, count);
     const rasterScales = this.#batchScales.subarray(0, count);
+    const uniqueKeys: GlyphCacheKey[] = [];
     for (let index = 0; index < count; index += 1) {
       const mode = this.#glyphMode(run, index);
       const glyphId = run.glyphIds[index] ?? 0;
@@ -618,6 +659,7 @@ export class RenderCoordinator {
         mode,
       });
       const key = identity.key;
+      if (!uniqueKeys.includes(key)) uniqueKeys.push(key);
       const entry = this.atlas.get(key);
       if (entry === undefined) {
         throw new Error(`Atlas entry missing for positioned glyph: ${String(key)}`);
@@ -638,6 +680,7 @@ export class RenderCoordinator {
       modes[index] = modeCode(entry.mode);
       rasterScales[index] = rasterScale;
     }
+    this.#retainSlotKeys(slot, uniqueKeys);
 
     return { positions, uvs, paletteIndices, pages, modes, rasterScales };
   }

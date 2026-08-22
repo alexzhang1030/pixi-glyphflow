@@ -107,6 +107,16 @@ export const BENCHMARK_WORKLOADS: readonly Readonly<BenchmarkWorkloadDefinition>
     300_000,
     false,
   ),
+  define(
+    "camera-live",
+    "Rendering camera pans with computeCull auto: compute-cull on WebGPU, CPU grid on WebGL",
+    200_000,
+    1,
+    5,
+    30,
+    300_000,
+    false,
+  ),
 ]);
 
 export function getBenchmarkWorkload(

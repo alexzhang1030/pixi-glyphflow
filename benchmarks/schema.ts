@@ -14,6 +14,7 @@ export type BrowserBenchmarkFixture = "bitmap-text" | "glyphflow" | "html-text" 
 
 export type BrowserBenchmarkWorkload =
   | "atlas-pressure"
+  | "camera-live"
   | "dynamic-counters"
   | "first-seen"
   | "million-full"

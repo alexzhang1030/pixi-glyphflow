@@ -40,6 +40,7 @@ interface DenseLayerOptions {
   readonly keepIds?: boolean;
   readonly rendering?: boolean;
   readonly culling?: false | Readonly<{ x: number; y: number; width: number; height: number }>;
+  readonly computeCull?: boolean | "auto";
   readonly spacing?: number;
   readonly text?: string | ((index: number) => string);
   readonly style?: Readonly<TextLabelSpec["style"]>;
@@ -58,6 +59,8 @@ export async function runGlyphflowWorkload(
       return runMillionViewport(configuration);
     case "first-seen":
       return runFirstSeen(app, configuration);
+    case "camera-live":
+      return runCameraLive(app, configuration);
     case "dynamic-counters":
       return runDynamicCounters(configuration);
     case "viewport-drag":
@@ -186,6 +189,54 @@ async function runMillionLive(
     nonTransparentOutput: nonTransparentPixels > 0,
     liveCoordinatorMesh: true,
     splitCpuGpuSamples: split.cpuMs.length === split.frameMs.length,
+  });
+}
+
+/** The Wave 3 acceptance probe: rendering camera pans on `computeCull: "auto"`. */
+async function runCameraLive(
+  app: Application,
+  configuration: Readonly<BrowserBenchmarkConfiguration>,
+): Promise<Readonly<BrowserFixtureResult>> {
+  const setupStart = performance.now();
+  const dense = await createDenseLayer(
+    configuration,
+    {
+      rendering: true,
+      culling: { x: 0, y: 0, width: configuration.width, height: configuration.height },
+      computeCull: "auto",
+      text: (index) => FIRST_SEEN_SAMPLES[index % FIRST_SEEN_SAMPLES.length] ?? "g",
+    },
+    app.renderer,
+  );
+  app.stage.addChild(dense.layer);
+  await completeFrame(app);
+  const setupMs = performance.now() - setupStart;
+  const cullingMs: number[] = [];
+  const frameMs = await sampleFrames(configuration, async (frame) => {
+    // Small pans stay inside the compute working set; the CPU grid re-queries instead.
+    dense.layer.setViewportBounds({
+      x: (frame % 16) * 4,
+      y: 0,
+      width: configuration.width,
+      height: configuration.height,
+    });
+    const start = performance.now();
+    await dense.layer.commit();
+    const commitDuration = performance.now() - start;
+    await completeFrame(app);
+    if (frame >= configuration.warmupFrames) cullingMs.push(commitDuration);
+    return performance.now() - start;
+  });
+  const stats = dense.layer.stats;
+  const cullPath = stats.cullPath;
+  const counters = layerCounters(stats, stats.glyphCount / Math.max(1, stats.labelCount));
+  dense.layer.destroy();
+
+  return result({ setupMs, frameMs, cullingMs }, counters, {
+    exactResidentLabels: counters.residentLabels === configuration.labelCount,
+    cullPath,
+    computeCullOnWebGpu: configuration.renderer !== "webgpu" || cullPath === "compute-cull",
+    submittedVisible: counters.submittedLabels > 0,
   });
 }
 
@@ -625,6 +676,7 @@ async function createDenseLayer(
         : {
             enabled: true,
             ...(options.culling === undefined ? {} : { bounds: options.culling }),
+            ...(options.computeCull === undefined ? {} : { computeCull: options.computeCull }),
           },
   });
   const ids = options.keepIds === true ? new Float64Array(configuration.labelCount) : undefined;

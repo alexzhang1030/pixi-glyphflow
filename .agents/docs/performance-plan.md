@@ -83,10 +83,16 @@ LRU, 52-bit keys, the 48 MiB store (test-pinned, 44.9 MiB measured), the sparse 
    slot/xy column copies at publish time; rendered movers skip the two frozen snapshots, the change
    object, and the prepared wrapper. Same-machine dynamic-counters returned to the 1.1.0 range
    (16.7 ms vs 15.1–16.6 baseline) while keeping the 48 MiB store and the hash grid.
-4. **Atlas upload shape — OPEN.** One new glyph re-uploads its whole 1–4 MiB page
-   (`source.update()`), commits await every missing raster, and the budgeted upload adapters in
-   `src/render/*Adapter.ts` are wired to nothing. Sub-rect uploads + a per-frame byte budget are
-   Wave 4's real content, together with wiring `evictedKeys`/pins (below).
+4. **Atlas upload shape — PARTLY LANDED.** Single-channel pages (alpha/SDF — the homepage TinySDF
+   path) now upload staged glyph rectangles instead of the whole 1 MiB page, promoting to a full
+   upload when rects exceed half the page. Four-channel pages (MSDF/color) keep the whole-page
+   upload because PixiJS premultiplies their alpha on upload and a raw sub-rect write would not;
+   fixing that means owning premultiplication CPU-side. Atlas residency is wired: the coordinator
+   refcounts each label's atlas keys and pins/unpins entries, so eviction can no longer reuse
+   rectangles that live instances sample — under all-pinned pressure the atlas now reports
+   capacity loudly instead of corrupting silently. Still open: a per-frame byte budget with
+   cross-frame resume must gate label admission, not texel uploads (deferring texels for
+   already-instanced labels would draw stale pixels, which the no-drip gotcha forbids).
 
 **Regressions and traps the audits confirmed:**
 
@@ -101,9 +107,10 @@ LRU, 52-bit keys, the 48 MiB store (test-pinned, 44.9 MiB measured), the sparse 
 - The dirty-range 8-range collapse degenerates scattered edits into a first-to-last span (a
   scattered 100k storm can balloon toward a 32 MB palette upload); the 256-byte-gap model is fine
   for dense edits.
-- `atlasCommit.evictedKeys` has no consumer and `pin`/`unpin` have no callers: under real atlas
-  pressure, evicted rectangles can be reused while live instances still sample them — silent glyph
-  corruption. Wave 4 must wire residency before it tunes anything.
+- `atlasCommit.evictedKeys` had no consumer and `pin`/`unpin` had no callers: under real atlas
+  pressure, evicted rectangles could be reused while live instances still sampled them. CLOSED the
+  same day: the coordinator refcounts per-label atlas keys and pins live entries (clones share the
+  prototype's key set). `evictedKeys` stays diagnostic-only.
 - One nonzero z-index used to set a permanent sort ratchet; the coordinator now keeps a live
   count of nonzero-z draw states, so a z-using scene that returns to all-zero z gets the
   append-only fast path back.
@@ -118,8 +125,10 @@ also unrunnable from Wave 0 until the `node:os` split (see gotchas). Landed sinc
 17.6 ms p95 for ~400 fresh labels per frame on the same-machine SwiftShader fixture — the first
 probe of the 100× moment), and `--labels`/`--frames` overrides now write
 `browser-<workload>-<version>-exploratory.json` with an `exploratory` marker instead of
-overwriting the formal artifact. Still missing: a rendering camera workload that reaches
-compute-cull on a WebGPU renderer.
+overwriting the formal artifact. A `camera-live` workload now exists (rendering camera pans with
+`computeCull: "auto"`, 200k labels; its invariants record which cull path ran, and
+`--renderer webgpu` on WebGPU hardware exercises compute-cull — Wave 3's acceptance finally has a
+probe; this VM's Chrome has no WebGPU, so only the CPU-grid side ran here at 5.1 ms p95).
 
 ## Structural diagnosis
 
