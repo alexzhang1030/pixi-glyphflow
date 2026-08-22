@@ -49,6 +49,7 @@ export class GlyphInstanceStore {
   readonly #ranges = new Map<number, MutableInstanceRange>();
   readonly #free = new InstanceFreeList();
   readonly #dirty = new DirtyRanges();
+  #segmentEpoch = 0;
   #capacity: number;
   #highWater = 0;
   #activeInstances = 0;
@@ -79,6 +80,16 @@ export class GlyphInstanceStore {
     return this.#buffer;
   }
 
+  /**
+   * Changes whenever existing ranges are disturbed: an in-place rewrite resizes a range or lands a
+   * glyph on a different page, a range is released or relocated, or the store compacts. Brand-new
+   * ranges do not bump it — their space was invalidated at release — so cached draw-segment
+   * prefixes survive pure appends.
+   */
+  get segmentEpoch(): number {
+    return this.#segmentEpoch;
+  }
+
   set(labelId: number, batch: GlyphInstanceBatch, options?: GlyphInstanceSetOptions): boolean {
     this.#assertActive();
     assertLabelId(labelId);
@@ -99,8 +110,9 @@ export class GlyphInstanceStore {
     if (current !== undefined && count <= current.capacity) {
       const dirtyCount = Math.max(current.count, count);
       this.#activeInstances += count - current.count;
-      this.#write(current.offset, batch);
+      const metadataChanged = this.#write(current.offset, batch);
       this.#clearMetadata(current.offset + count, current.count - count);
+      if (count !== current.count || metadataChanged) this.#segmentEpoch += 1;
       current.count = count;
       this.#dirty.record(
         current.offset * GLYPH_INSTANCE_STRIDE,
@@ -199,6 +211,7 @@ export class GlyphInstanceStore {
     this.#uint32 = views.uint32;
     this.#capacity = afterCapacity;
     this.#highWater = offset;
+    this.#segmentEpoch += 1;
     this.#free.clear();
     if (offset < afterCapacity) {
       this.#free.insert(offset, afterCapacity - offset);
@@ -285,10 +298,12 @@ export class GlyphInstanceStore {
     }
   }
 
-  #write(offset: number, batch: GlyphInstanceBatch): void {
+  /** Returns whether any metadata word (page and flag bits) changed, for segment caching. */
+  #write(offset: number, batch: GlyphInstanceBatch): boolean {
     const uint16 = this.#uint16;
     const uint32 = this.#uint32;
     const count = batch.paletteIndices.length;
+    let metadataChanged = false;
     for (let index = 0; index < count; index += 1) {
       const u16 = (offset + index) * UINT16_PER_INSTANCE;
       const u32 = (offset + index) * UINT32_PER_INSTANCE;
@@ -302,8 +317,12 @@ export class GlyphInstanceStore {
       uint16[u16 + UV_U16 + 2] = packUv(batch.uvs[inputOffset + 2] ?? 0);
       uint16[u16 + UV_U16 + 3] = packUv(batch.uvs[inputOffset + 3] ?? 0);
       uint32[u32 + PALETTE_U32] = batch.paletteIndices[index] ?? 0;
-      uint32[u32 + METADATA_U32] = metadata(batch, index);
+      const nextMetadata = metadata(batch, index);
+      if (uint32[u32 + METADATA_U32] !== nextMetadata) metadataChanged = true;
+      uint32[u32 + METADATA_U32] = nextMetadata;
     }
+
+    return metadataChanged;
   }
 
   #clearMetadata(offset: number, count: number): void {
@@ -336,6 +355,7 @@ export class GlyphInstanceStore {
     this.#activeInstances -= range.count;
     this.#ranges.delete(labelId);
     this.#releaseRange(range);
+    this.#segmentEpoch += 1;
   }
 
   #ensureCapacity(required: number): void {

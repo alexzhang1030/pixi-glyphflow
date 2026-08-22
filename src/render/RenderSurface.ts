@@ -21,13 +21,17 @@ import {
 } from "../culling/computeCull";
 import { ComputeCullPass } from "./ComputeCullPass";
 import { GlyphMesh } from "./GlyphMesh";
-import type { RenderCommitResult, RenderCoordinator } from "./RenderCoordinator";
+import type { RenderCommitResult, RenderCoordinator, RenderDrawState } from "./RenderCoordinator";
 import { GLYPH_INSTANCE_STRIDE, GLYPH_TEXTURE_BANK_SIZE, type DirtyByteRange } from "./types";
 
 const ACTIVE_BIT = 0x8000_0000;
 const PAGE_MASK = 0x0000_ffff;
 const PALETTE_BYTES_PER_TEXEL = 16;
 const EMPTY_DIRTY_RANGES: readonly Readonly<DirtyByteRange>[] = Object.freeze([]);
+
+function emptySegmentWalk(): SegmentWalk {
+  return { segments: [], naturalOrder: true, count: 0, lastSourceIndex: -1 };
+}
 
 interface AtlasTexturePage {
   readonly info: Readonly<AtlasPageInfo>;
@@ -49,6 +53,19 @@ interface SurfaceMesh {
 interface DrawSpan {
   readonly offset: number;
   count: number;
+}
+
+interface SegmentWalk {
+  segments: DrawSegment[];
+  naturalOrder: boolean;
+  count: number;
+  lastSourceIndex: number;
+}
+
+interface DrawSegmentCache extends SegmentWalk {
+  drawEpoch: number;
+  segmentEpoch: number;
+  stateCount: number;
 }
 
 interface DrawSegment {
@@ -105,6 +122,7 @@ export class RenderSurface {
   #computeEligible = true;
   readonly #computeCull: boolean | "auto";
   #lastCullViewport: CullViewport | undefined;
+  #segmentCache: DrawSegmentCache | undefined;
   #destroyed = false;
 
   constructor(
@@ -361,7 +379,14 @@ export class RenderSurface {
     if (this.#computeEligible && (draw.naturalOrder || computeCull !== undefined)) {
       const segment = draw.segments[0];
       if (segment === undefined) throw new Error("Active glyph segment is unavailable");
-      this.#syncDirectMesh(segment.bank, segment.blendMode, data, storeStats.highWater, ranges);
+      this.#syncDirectMesh(
+        segment.bank,
+        segment.blendMode,
+        data,
+        storeStats.highWater,
+        ranges,
+        computeCull !== undefined,
+      );
       this.#submittedGlyphs = storeStats.activeInstances;
       return;
     }
@@ -380,6 +405,7 @@ export class RenderSurface {
     this.#submittedGlyphs = compactDraw.count;
   }
 
+  /** Full walks are cached; while both epochs hold, states only append and pages are stable. */
   #buildDrawSegments(
     view: DataView,
     included: Uint8Array | undefined = undefined,
@@ -388,26 +414,64 @@ export class RenderSurface {
     naturalOrder: boolean;
     count: number;
   }> {
-    const segments: DrawSegment[] = [];
-    let lastSourceIndex = -1;
-    let naturalOrder = true;
-    let count = 0;
     const states = this.#coordinator.getDrawStates();
-    for (let stateIndex = 0; stateIndex < states.length; stateIndex += 1) {
+    if (included !== undefined) {
+      const walk = emptySegmentWalk();
+      this.#appendDrawSegments(walk, view, states, 0, included);
+      return walk;
+    }
+    const drawEpoch = this.#coordinator.drawListEpoch;
+    const segmentEpoch = this.#coordinator.instances.segmentEpoch;
+    const cached = this.#segmentCache;
+    if (
+      cached !== undefined &&
+      cached.drawEpoch === drawEpoch &&
+      cached.segmentEpoch === segmentEpoch &&
+      cached.stateCount <= states.length
+    ) {
+      if (cached.stateCount < states.length) {
+        this.#appendDrawSegments(cached, view, states, cached.stateCount, undefined);
+        cached.stateCount = states.length;
+      }
+      return cached;
+    }
+    const walk: DrawSegmentCache = {
+      ...emptySegmentWalk(),
+      drawEpoch,
+      segmentEpoch,
+      stateCount: states.length,
+    };
+    this.#appendDrawSegments(walk, view, states, 0, undefined);
+    if (walk.segments.reduce((sum, segment) => sum + segment.count, 0) !== walk.count) {
+      throw new Error("Draw segment glyph count differs from active instance count");
+    }
+    this.#segmentCache = walk;
+    return walk;
+  }
+
+  #appendDrawSegments(
+    walk: SegmentWalk,
+    view: DataView,
+    states: readonly Readonly<RenderDrawState>[],
+    startIndex: number,
+    included: Uint8Array | undefined,
+  ): void {
+    const segments = walk.segments;
+    for (let stateIndex = startIndex; stateIndex < states.length; stateIndex += 1) {
       if (included !== undefined && included[stateIndex] !== 1) continue;
       const state = states[stateIndex];
       if (state === undefined) throw new Error("Draw state list is incomplete");
       const range = this.#coordinator.instances.getRange(state.slot);
       if (range === undefined) continue;
-      count += range.count;
+      walk.count += range.count;
       for (let index = 0; index < range.count; index += 1) {
         const sourceIndex = range.offset + index;
         const metadata = view.getUint32(sourceIndex * GLYPH_INSTANCE_STRIDE + 20, true);
         if ((metadata & ACTIVE_BIT) === 0) {
           throw new Error(`Inactive glyph found in label range ${String(state.slot)}`);
         }
-        if (sourceIndex <= lastSourceIndex) naturalOrder = false;
-        lastSourceIndex = sourceIndex;
+        if (sourceIndex <= walk.lastSourceIndex) walk.naturalOrder = false;
+        walk.lastSourceIndex = sourceIndex;
         const page = metadata & PAGE_MASK;
         const bank = Math.floor(page / GLYPH_TEXTURE_BANK_SIZE);
         let segment = segments[segments.length - 1];
@@ -435,10 +499,6 @@ export class RenderSurface {
         segment.count += 1;
       }
     }
-    if (segments.reduce((sum, segment) => sum + segment.count, 0) !== count) {
-      throw new Error("Draw segment glyph count differs from active instance count");
-    }
-    return { segments, naturalOrder, count };
   }
 
   #visibleCullRecords(
@@ -474,6 +534,7 @@ export class RenderSurface {
     data: ArrayBuffer,
     instanceCount: number,
     ranges: readonly Readonly<DirtyByteRange>[],
+    computeCullActive: boolean,
   ): void {
     for (const [key, surface] of this.#meshes) {
       if (key !== 0) this.#destroyMesh(key, surface);
@@ -499,6 +560,12 @@ export class RenderSurface {
       return;
     }
     surface.mesh.setInstanceCount(instanceCount);
+    if (computeCullActive) {
+      // The indirect draw binds the compute pass's compacted buffer, so the mesh's own
+      // GPU copy is unread; leave it stale and let a cull fallback re-initialize it.
+      surface.initialized = false;
+      return;
+    }
     if (!surface.initialized) {
       initializeBuffer(this.#renderer, surface.mesh);
       surface.initialized = true;
@@ -675,6 +742,14 @@ export class RenderSurface {
       this.#cullPass?.untrackGeometry(surface.mesh.geometry);
     }
     this.#cullPass?.invalidateSync();
+    // A direct mesh skipped its uploads while the compute pass owned the draw.
+    const direct = this.#meshes.get(0);
+    if (direct !== undefined && !direct.compact && !direct.initialized) {
+      initializeBuffer(this.#renderer, direct.mesh);
+      direct.initialized = true;
+      this.#instanceUploadBytes += direct.data.byteLength;
+      this.#instanceWrites += 1;
+    }
     this.#cullPath = "cpu-grid";
     this.#lastCullViewport = undefined;
     return this.#cullPath;

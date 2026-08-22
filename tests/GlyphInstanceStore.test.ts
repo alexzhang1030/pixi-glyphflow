@@ -8,6 +8,41 @@ import {
 } from "../src/advanced";
 import { unpackF16 } from "../src/render/pack";
 
+describe("GlyphInstanceStore segment epoch", () => {
+  test("holds across appends and bumps when existing ranges are disturbed", () => {
+    const store = new GlyphInstanceStore({ initialCapacity: 16 });
+    const batch = (count: number, page = 0): GlyphInstanceBatch => ({
+      positions: new Float32Array(count * 4),
+      uvs: new Float32Array(count * 4),
+      paletteIndices: new Uint32Array(count),
+      pages: new Uint16Array(count).fill(page),
+      modes: new Uint8Array(count),
+      rasterScales: new Float32Array(count).fill(1),
+    });
+
+    store.set(0, batch(2));
+    const afterFirst = store.segmentEpoch;
+    store.set(1, batch(2));
+    expect(store.segmentEpoch).toBe(afterFirst);
+
+    store.set(0, batch(2));
+    expect(store.segmentEpoch).toBe(afterFirst);
+
+    store.set(0, batch(2, 3));
+    const afterPageChange = store.segmentEpoch;
+    expect(afterPageChange).toBeGreaterThan(afterFirst);
+
+    store.set(1, batch(1, 0));
+    const afterShrink = store.segmentEpoch;
+    expect(afterShrink).toBeGreaterThan(afterPageChange);
+
+    store.remove(0);
+    expect(store.segmentEpoch).toBeGreaterThan(afterShrink);
+
+    store.destroy();
+  });
+});
+
 describe("GlyphInstanceStore", () => {
   test("packs each glyph into 24 bytes and preserves a reserved buffer across updates", () => {
     expect(GLYPH_INSTANCE_STRIDE).toBe(24);
