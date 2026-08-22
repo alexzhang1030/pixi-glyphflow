@@ -156,6 +156,9 @@ export class RenderCoordinator {
   #hasNonZeroZIndex = false;
   #drawStateList: Readonly<RenderDrawState>[] = [];
   #drawStatesDirty = true;
+  #drawListEpoch = 0;
+  readonly #ensuredRuns = new Map<Readonly<PositionedRun>, Map<string, Promise<void> | "done">>();
+  #ensuredTicket = 0;
   #lastLayoutMs = 0;
   #lastInstanceWriteMs = 0;
   #lastPaletteWriteMs = 0;
@@ -209,6 +212,7 @@ export class RenderCoordinator {
         if (this.#drawStates.delete(change.slot)) {
           drawOrderChanged = true;
           this.#drawStatesDirty = true;
+          this.#drawListEpoch += 1;
         }
         if (change.retainResources === true) {
           appliedLabels += 1;
@@ -315,10 +319,19 @@ export class RenderCoordinator {
     if (this.#needsDrawSort) {
       states.sort((left, right) => left.zIndex - right.zIndex || left.order - right.order);
       this.#needsDrawSort = false;
+      this.#drawListEpoch += 1;
     }
     this.#drawStateList = states;
     this.#drawStatesDirty = false;
     return states;
+  }
+
+  /**
+   * Changes when the draw-state list is re-sorted or loses entries. While it holds still, new draw
+   * states only append, so packed cull-record prefixes stay valid.
+   */
+  get drawListEpoch(): number {
+    return this.#drawListEpoch;
   }
 
   get stats(): Readonly<RenderCoordinatorStats> {
@@ -345,6 +358,7 @@ export class RenderCoordinator {
     this.#pendingGlyphs.clear();
     this.#prototypeSlots.clear();
     this.#slotPrototypeKeys.clear();
+    this.#ensuredRuns.clear();
     if (this.#ownsLayout) this.#layout.destroy();
     if (this.#ownsProvider) void this.#provider.destroy();
     if (this.#ownsAtlas) this.atlas.destroy();
@@ -425,17 +439,38 @@ export class RenderCoordinator {
     return missing.then(() => ({ change, run }));
   }
 
+  /** Duplicate strings share one run object; ensure each (run, size, weight) once per commit. */
   #ensureMissingGlyphs(
     run: Readonly<PositionedRun>,
     snapshot: Readonly<RenderLabelSnapshot>,
   ): Promise<void> | undefined {
+    if (this.#ensuredTicket !== this.#ticket) {
+      this.#ensuredRuns.clear();
+      this.#ensuredTicket = this.#ticket;
+    }
+    const variantKey = `${String(resolveFontSize(snapshot.style.fontSize))}\u0000${String(
+      snapshot.style.fontWeight ?? "normal",
+    )}`;
+    let variants = this.#ensuredRuns.get(run);
+    const cached = variants?.get(variantKey);
+    if (cached === "done") return undefined;
+    if (cached !== undefined) return cached;
     const missing: Promise<void>[] = [];
     for (let index = 0; index < run.glyphCount; index += 1) {
       const pending = this.#ensureGlyph(run, index, snapshot);
       if (pending !== undefined) missing.push(pending);
     }
-    if (missing.length === 0) return undefined;
-    return Promise.all(missing).then(() => undefined);
+    if (variants === undefined) {
+      variants = new Map();
+      this.#ensuredRuns.set(run, variants);
+    }
+    if (missing.length === 0) {
+      variants.set(variantKey, "done");
+      return undefined;
+    }
+    const settled = Promise.all(missing).then(() => undefined);
+    variants.set(variantKey, settled);
+    return settled;
   }
 
   #ensureGlyph(
@@ -444,8 +479,8 @@ export class RenderCoordinator {
     snapshot: Readonly<RenderLabelSnapshot>,
   ): Promise<void> | undefined {
     const mode = this.#glyphMode(run, index);
-    const glyphText = resolveGlyphText(run, index);
     const glyphId = run.glyphIds[index] ?? 0;
+    const glyphText = lazyGlyphText(run, index, glyphId);
     const identity = resolveGlyphIdentity({
       fontFamily: run.fontFamily,
       ...(run.fontFamilies === undefined ? {} : { fontFamilies: run.fontFamilies }),
@@ -472,7 +507,7 @@ export class RenderCoordinator {
         ...(run.fontFamilies === undefined ? {} : { fontFamilies: run.fontFamilies }),
         fontRevision: run.fontRevision,
         glyphId,
-        glyphText,
+        glyphText: glyphText === "" ? resolveGlyphText(run, index) : glyphText,
         fontSize: identity.fontSize,
         fontWeight: identity.fontWeight,
         mode,
@@ -534,8 +569,8 @@ export class RenderCoordinator {
     const rasterScales = this.#batchScales.subarray(0, count);
     for (let index = 0; index < count; index += 1) {
       const mode = this.#glyphMode(run, index);
-      const glyphText = resolveGlyphText(run, index);
       const glyphId = run.glyphIds[index] ?? 0;
+      const glyphText = lazyGlyphText(run, index, glyphId);
       const identity = resolveGlyphIdentity({
         fontFamily: run.fontFamily,
         ...(run.fontFamilies === undefined ? {} : { fontFamilies: run.fontFamilies }),
@@ -683,6 +718,14 @@ function validateChanges(changes: readonly RenderChange[]): void {
       throw new TypeError("Render change mask contains unsupported domains");
     }
   }
+}
+
+/**
+ * Packed atlas identities ignore `glyphText` when a glyph id is present, and HarfBuzz runs carry no
+ * glyph keys, so deriving the text there would slice the remaining code points per glyph.
+ */
+function lazyGlyphText(run: Readonly<PositionedRun>, index: number, glyphId: number): string {
+  return glyphId > 0 && run.source === "harfbuzz" ? "" : resolveGlyphText(run, index);
 }
 
 function resolveGlyphText(run: Readonly<PositionedRun>, index: number): string {

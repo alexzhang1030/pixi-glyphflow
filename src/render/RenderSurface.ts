@@ -15,6 +15,7 @@ import {
   computeCullStructurallyEligible,
   cullViewportsEqual,
   type CullPath,
+  type CullRecordDirty,
   type CullViewport,
   resolveCullPath,
 } from "../culling/computeCull";
@@ -26,6 +27,7 @@ import { GLYPH_INSTANCE_STRIDE, GLYPH_TEXTURE_BANK_SIZE, type DirtyByteRange } f
 const ACTIVE_BIT = 0x8000_0000;
 const PAGE_MASK = 0x0000_ffff;
 const PALETTE_BYTES_PER_TEXEL = 16;
+const EMPTY_DIRTY_RANGES: readonly Readonly<DirtyByteRange>[] = Object.freeze([]);
 
 interface AtlasTexturePage {
   readonly info: Readonly<AtlasPageInfo>;
@@ -58,10 +60,11 @@ interface DrawSegment {
 }
 
 export interface RenderComputeCullUpdate {
-  readonly records: ArrayBuffer | undefined;
+  /** The complete packed record buffer, so a stale GPU mirror can always resync in full. */
+  readonly records: ArrayBuffer;
   readonly recordCount: number;
+  readonly recordDirty: CullRecordDirty;
   readonly viewport: CullViewport;
-  readonly mirrorInstances: boolean;
 }
 
 export interface RenderSurfaceStats {
@@ -143,16 +146,19 @@ export class RenderSurface {
   refreshComputeCull(update: Readonly<RenderComputeCullUpdate>): CullPath {
     this.#assertActive();
     const uploadStart = performance.now();
-    const path = this.#refreshComputeCull(update);
+    const path = this.#refreshComputeCull(update, EMPTY_DIRTY_RANGES);
     this.#lastUploadMs = performance.now() - uploadStart;
     return path;
   }
 
-  #refreshComputeCull(update: Readonly<RenderComputeCullUpdate>): CullPath {
+  #refreshComputeCull(
+    update: Readonly<RenderComputeCullUpdate>,
+    instanceRanges: readonly Readonly<DirtyByteRange>[],
+  ): CullPath {
     if (this.prepareCullPath() !== "compute-cull") {
       return this.#useCpuCull();
     }
-    if (update.records !== undefined && update.recordCount === 0) {
+    if (update.recordDirty === "all" && update.recordCount === 0) {
       this.#destroyMeshes();
     } else if (!this.#hasDirectComputeMesh()) this.#syncMeshes([], update);
     const pass = this.#cullPass;
@@ -160,21 +166,24 @@ export class RenderSurface {
     if (pass === undefined || surface === undefined || !this.#hasDirectComputeMesh()) {
       return this.#useCpuCull();
     }
-    const store = this.#coordinator.instances;
-    const instanceBytes = store.stats.highWater * GLYPH_INSTANCE_STRIDE;
-    if (update.records !== undefined) {
-      if (!pass.ensureCapacity(update.recordCount, instanceBytes)) {
-        return this.#useCpuCull();
-      }
-      pass.uploadRecords(update.records, update.recordCount);
-      if (update.mirrorInstances) pass.uploadInstances(store.buffer, instanceBytes);
-    }
     pass.trackGeometry(surface.mesh.geometry);
-    const viewportUnchanged = cullViewportsEqual(this.#lastCullViewport, update.viewport);
-    if (update.records === undefined && viewportUnchanged) {
+    // ensureCapacity resets the indirect args, so an idle frame must return before it.
+    if (
+      update.recordDirty === "none" &&
+      instanceRanges.length === 0 &&
+      pass.synced &&
+      cullViewportsEqual(this.#lastCullViewport, update.viewport)
+    ) {
       this.#cullPath = "compute-cull";
       return this.#cullPath;
     }
+    const store = this.#coordinator.instances;
+    const instanceBytes = store.stats.highWater * GLYPH_INSTANCE_STRIDE;
+    if (!pass.ensureCapacity(update.recordCount, instanceBytes)) {
+      return this.#useCpuCull();
+    }
+    pass.uploadRecords(update.records, update.recordCount, update.recordDirty);
+    pass.uploadInstances(store.buffer, instanceBytes, instanceRanges);
     if (!pass.dispatch(update.viewport)) {
       this.#syncCompactDraw(update);
       return this.#useCpuCull();
@@ -212,7 +221,7 @@ export class RenderSurface {
       this.#syncMeshes(instanceRanges, computeCull);
     }
     if (computeCull === undefined) this.#useCpuCull();
-    else this.#refreshComputeCull(computeCull);
+    else this.#refreshComputeCull(computeCull, instanceRanges);
     this.#lastUploadMs = performance.now() - uploadStart;
   }
 
@@ -357,7 +366,7 @@ export class RenderSurface {
       return;
     }
     const compactDraw =
-      computeCull?.records === undefined
+      computeCull === undefined
         ? draw
         : this.#buildDrawSegments(
             view,
@@ -653,13 +662,10 @@ export class RenderSurface {
       return;
     }
     const view = new DataView(store.buffer);
-    const draw =
-      update.records === undefined
-        ? this.#buildDrawSegments(view)
-        : this.#buildDrawSegments(
-            view,
-            this.#visibleCullRecords(update.records, update.viewport, update.recordCount),
-          );
+    const draw = this.#buildDrawSegments(
+      view,
+      this.#visibleCullRecords(update.records, update.viewport, update.recordCount),
+    );
     this.#syncCompactMeshes(store.buffer, draw.segments);
     this.#submittedGlyphs = draw.count;
   }
@@ -668,6 +674,7 @@ export class RenderSurface {
     for (const surface of this.#meshes.values()) {
       this.#cullPass?.untrackGeometry(surface.mesh.geometry);
     }
+    this.#cullPass?.invalidateSync();
     this.#cullPath = "cpu-grid";
     this.#lastCullViewport = undefined;
     return this.#cullPath;

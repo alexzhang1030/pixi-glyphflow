@@ -3,11 +3,13 @@ import { Buffer, BufferUsage, type Geometry, type Shader, type WebGPURenderer } 
 import {
   CULL_RECORD_STRIDE,
   CULL_WORKGROUP,
+  type CullRecordDirty,
   type CullViewport,
   createIndirectArgs,
   planComputeCullStorageBytes,
 } from "../culling/computeCull";
 import { COMPUTE_CULL_WGSL } from "../culling/computeCull.wgsl";
+import type { DirtyByteRange } from "./types";
 
 const UNIFORM_BYTES = 32;
 
@@ -46,6 +48,11 @@ export class ComputeCullPass {
   #instanceBytes = 0;
   #recordCount = 0;
   #bindGroup: GPUBindGroup | undefined;
+  #recordsSynced = false;
+  #instancesSynced = false;
+  readonly #uniformScratch = new ArrayBuffer(UNIFORM_BYTES);
+  readonly #uniformFloats = new Float32Array(this.#uniformScratch);
+  readonly #uniformInts = new Uint32Array(this.#uniformScratch);
   #ready = false;
 
   constructor(renderer: WebGPURenderer) {
@@ -60,6 +67,10 @@ export class ComputeCullPass {
 
   get ready(): boolean {
     return this.#ready;
+  }
+
+  get synced(): boolean {
+    return this.#recordsSynced && this.#instancesSynced;
   }
 
   trackGeometry(geometry: Geometry): void {
@@ -133,6 +144,7 @@ export class ComputeCullPass {
     const labels = recordBytes / CULL_RECORD_STRIDE;
     if (labels > this.#labelCapacity) {
       this.#bindGroup = undefined;
+      this.#recordsSynced = false;
       this.#records?.destroy();
       this.#counts?.destroy();
       this.#prefix?.destroy();
@@ -165,6 +177,7 @@ export class ComputeCullPass {
     }
     if (bytes > this.#instanceBytes) {
       this.#bindGroup = undefined;
+      this.#instancesSynced = false;
       this.#instancesIn?.destroy();
       this.#instancesOut?.destroy();
       this.#instancesIn = createBuffer(
@@ -193,17 +206,49 @@ export class ComputeCullPass {
     return true;
   }
 
-  uploadRecords(records: ArrayBuffer, recordCount: number): void {
+  /** `records` must always be the complete packed buffer so a resync can upload it whole. */
+  uploadRecords(records: ArrayBuffer, recordCount: number, dirty: CullRecordDirty): boolean {
     const device = this.#device;
     this.#recordCount = recordCount;
-    if (device === undefined || this.#records === undefined || recordCount === 0) return;
-    device.queue.writeBuffer(this.#records, 0, records, 0, recordCount * CULL_RECORD_STRIDE);
+    if (device === undefined || this.#records === undefined || recordCount === 0) return false;
+    if (!this.#recordsSynced || dirty === "all") {
+      device.queue.writeBuffer(this.#records, 0, records, 0, recordCount * CULL_RECORD_STRIDE);
+      this.#recordsSynced = true;
+      return true;
+    }
+    if (dirty === "none" || dirty.length === 0) return false;
+    for (const range of dirty) {
+      device.queue.writeBuffer(this.#records, range.offset, records, range.offset, range.length);
+    }
+    return true;
   }
 
-  uploadInstances(instances: ArrayBuffer, byteLength: number): void {
+  /** `instances` must always be the complete store buffer so a resync can upload it whole. */
+  uploadInstances(
+    instances: ArrayBuffer,
+    byteLength: number,
+    dirty: readonly Readonly<DirtyByteRange>[],
+  ): boolean {
     const device = this.#device;
-    if (device === undefined || this.#instancesIn === undefined || byteLength === 0) return;
-    device.queue.writeBuffer(this.#instancesIn, 0, instances, 0, byteLength);
+    if (device === undefined || this.#instancesIn === undefined || byteLength === 0) return false;
+    if (!this.#instancesSynced) {
+      device.queue.writeBuffer(this.#instancesIn, 0, instances, 0, byteLength);
+      this.#instancesSynced = true;
+      return true;
+    }
+    if (dirty.length === 0) return false;
+    for (const range of dirty) {
+      if (range.offset >= byteLength) continue;
+      const length = Math.min(range.length, byteLength - range.offset);
+      device.queue.writeBuffer(this.#instancesIn, range.offset, instances, range.offset, length);
+    }
+    return true;
+  }
+
+  /** The GPU mirrors go stale while another cull path runs; force full uploads on re-entry. */
+  invalidateSync(): void {
+    this.#recordsSynced = false;
+    this.#instancesSynced = false;
   }
 
   dispatch(viewport: CullViewport): boolean {
@@ -227,16 +272,14 @@ export class ComputeCullPass {
       return false;
     }
     const indirect = this.#renderer.buffer.getGPUBuffer(this.indirectBuffer);
-    const uniforms = new ArrayBuffer(UNIFORM_BYTES);
-    const floats = new Float32Array(uniforms);
-    const ints = new Uint32Array(uniforms);
+    const floats = this.#uniformFloats;
     floats[0] = viewport.x;
     floats[1] = viewport.y;
     floats[2] = viewport.width;
     floats[3] = viewport.height;
     floats[4] = viewport.padding;
-    ints[5] = this.#recordCount;
-    device.queue.writeBuffer(this.#uniform, 0, uniforms);
+    this.#uniformInts[5] = this.#recordCount;
+    device.queue.writeBuffer(this.#uniform, 0, this.#uniformScratch);
     const bindGroup =
       this.#bindGroup ??
       device.createBindGroup({
@@ -256,26 +299,18 @@ export class ComputeCullPass {
     this.#bindGroup = bindGroup;
     const groups = Math.max(1, Math.ceil(this.#recordCount / CULL_WORKGROUP));
     const encoder = device.createCommandEncoder({ label: "pixi-glyphflow-compute-cull" });
-    const mark = encoder.beginComputePass();
-    mark.setPipeline(this.#pipelineMark);
-    mark.setBindGroup(0, bindGroup);
-    mark.dispatchWorkgroups(groups);
-    mark.end();
-    const scan = encoder.beginComputePass();
-    scan.setPipeline(this.#pipelineScan);
-    scan.setBindGroup(0, bindGroup);
-    scan.dispatchWorkgroups(groups);
-    scan.end();
-    const scanGroups = encoder.beginComputePass();
-    scanGroups.setPipeline(this.#pipelineScanGroups);
-    scanGroups.setBindGroup(0, bindGroup);
-    scanGroups.dispatchWorkgroups(1);
-    scanGroups.end();
-    const scatter = encoder.beginComputePass();
-    scatter.setPipeline(this.#pipelineScatter);
-    scatter.setBindGroup(0, bindGroup);
-    scatter.dispatchWorkgroups(groups);
-    scatter.end();
+    // WebGPU orders dispatches within one pass, so the pipeline stages need no pass boundaries.
+    const pass = encoder.beginComputePass();
+    pass.setBindGroup(0, bindGroup);
+    pass.setPipeline(this.#pipelineMark);
+    pass.dispatchWorkgroups(groups);
+    pass.setPipeline(this.#pipelineScan);
+    pass.dispatchWorkgroups(groups);
+    pass.setPipeline(this.#pipelineScanGroups);
+    pass.dispatchWorkgroups(1);
+    pass.setPipeline(this.#pipelineScatter);
+    pass.dispatchWorkgroups(groups);
+    pass.end();
     device.queue.submit([encoder.finish()]);
     return true;
   }
@@ -330,6 +365,8 @@ export class ComputeCullPass {
     this.#instancesOut?.destroy();
     this.#uniform?.destroy();
     this.#bindGroup = undefined;
+    this.#recordsSynced = false;
+    this.#instancesSynced = false;
     this.indirectBuffer.destroy();
     this.#geometries.clear();
     this.#ready = false;

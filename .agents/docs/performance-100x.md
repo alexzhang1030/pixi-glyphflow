@@ -51,6 +51,20 @@ writes, and remirroring the store.
 - `rasterizerOptions.prebuilt` crops packed pages before TinySDF or MSDF. Keys omit font revision.
   The core package does not ship default alphabet pages.
 - `culling.lod` drops labels whose projected font height is below one pixel. Default is off.
+- Compute-cull GPU mirrors sync incrementally. Commits upload only dirty instance byte ranges and
+  changed or appended cull records; `RenderCoordinator.drawListEpoch` bumps on re-sorts and
+  removals, so TextLayer appends records while it holds and repacks in full when it moves. A cull
+  fallback invalidates the pass mirrors so re-entry uploads whole buffers. Before this, one
+  first-seen label re-mirrored the entire instance buffer (~20 MB per pan frame at homepage scale),
+  and a patch-path content edit left stale instance bytes and record offsets on the GPU.
+- New draw states no longer force a full re-sort. Zero-z ascending inserts append in sorted order;
+  the sort now triggers only on out-of-order inserts, z/order changes, or once any nonzero z-index
+  exists. The old `previousDrawState?.zIndex !== 0` check treated every insert as a sort.
+- Camera frames skip the first-seen ring query while the draw viewport (plus padding) stays inside
+  the last prepared ring. Ring escape re-queries before the labels reach the tight view.
+- HarfBuzz glyphs with ids skip `resolveGlyphText` on identity paths (it sliced the remaining
+  code points per glyph, O(N²) per label); the real character is derived only on an atlas miss.
+  Duplicate-string labels ensure glyphs once per (run, size, weight) per commit.
 
 ## Remaining slices, in order
 

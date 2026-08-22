@@ -224,6 +224,11 @@ export class TextStore {
     return this.#resolveSlot(id) !== undefined;
   }
 
+  /** Report whether a dense slot currently holds a label without building a snapshot. @internal */
+  occupiedAt(slot: number): boolean {
+    return slot < this.#highWater && this.#occupied(slot);
+  }
+
   update(id: TextId, patch: TextStoreLabelPatch): TextDirtyMask {
     assertPatch(patch);
     const slot = this.#requireSlot(id);

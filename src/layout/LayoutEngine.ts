@@ -17,6 +17,8 @@ export class LayoutEngine {
   readonly #harfbuzz: PositionedRunShaper;
   readonly #ownsHarfBuzz: boolean;
   readonly #shapeCache = new Map<string, LayoutResult>();
+  readonly #familyCache = new Map<string | readonly string[], readonly string[]>();
+  #familyCacheRevision = -1;
   #layouts = 0;
   #bitmapLayouts = 0;
   #harfbuzzLayouts = 0;
@@ -156,7 +158,16 @@ export class LayoutEngine {
     return pending;
   }
 
+  /** Interned styles keep stable references, so identity keys hit for repeated stacks. */
   #resolveFamilies(value: string | string[] | undefined): readonly string[] {
+    const revision = this.#registry.stats.revision;
+    if (revision !== this.#familyCacheRevision) {
+      this.#familyCache.clear();
+      this.#familyCacheRevision = revision;
+    }
+    const key = value ?? "Arial";
+    const cached = this.#familyCache.get(key);
+    if (cached !== undefined) return cached;
     const requested = Array.isArray(value) ? value : [value ?? "Arial"];
     const resolved: string[] = [];
     const seen = new Set<string>();
@@ -178,7 +189,10 @@ export class LayoutEngine {
       append(name);
     }
 
-    return Object.freeze(resolved.length > 0 ? resolved : [requested[0] ?? "Arial"]);
+    const families = Object.freeze(resolved.length > 0 ? resolved : [requested[0] ?? "Arial"]);
+    if (this.#familyCache.size >= 256) this.#familyCache.clear();
+    this.#familyCache.set(key, families);
+    return families;
   }
 
   #assertActive(): void {
@@ -277,10 +291,13 @@ function hasCompleteGlyphCoverage(run: Readonly<PositionedRun>): boolean {
 }
 
 function shapeCacheKey(input: HarfBuzzShapeInput): string {
-  const variations = Object.entries(input.variations ?? {})
-    .sort(([left], [right]) => left.localeCompare(right))
-    .map(([axis, value]) => `${axis}=${String(value)}`)
-    .join(",");
+  const variations =
+    input.variations === undefined
+      ? ""
+      : Object.entries(input.variations)
+          .sort(([left], [right]) => left.localeCompare(right))
+          .map(([axis, value]) => `${axis}=${String(value)}`)
+          .join(",");
   return [
     input.family,
     input.fontRevision ?? 0,

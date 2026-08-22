@@ -344,6 +344,105 @@ describe("RenderCoordinator", () => {
     registry.destroy();
   });
 
+  test("keeps the draw-list epoch while draw states only append", async () => {
+    const registry = new FontRegistry();
+    await registry.register({ family: "Fixture" });
+    const coordinator = new RenderCoordinator({
+      registry,
+      layoutEngine: {
+        layout(_slot, _revision, input) {
+          return run(input.text);
+        },
+        destroy() {},
+      },
+      glyphProvider: {
+        async rasterize(): Promise<GlyphRaster> {
+          return {
+            mode: "alpha",
+            width: 4,
+            height: 6,
+            pixels: new Uint8Array(24).fill(255),
+            metrics: { bearingX: 0, bearingY: 5, advance: 4 },
+          };
+        },
+        destroy() {},
+      },
+      atlasOptions: { pageWidth: 64, pageHeight: 64, maxBytes: 4_096 },
+      instanceOptions: { initialCapacity: 16 },
+      transformOptions: { initialCapacity: 8, textureWidth: 8 },
+    });
+
+    await coordinator.commit(1, [
+      { slot: 0, mask: CONTENT | TRANSFORM | STYLE, snapshot: label(1, 0, 0) },
+    ]);
+    expect(coordinator.getDrawStates().length).toBe(1);
+    const packedEpoch = coordinator.drawListEpoch;
+
+    await coordinator.commit(2, [
+      { slot: 1, mask: CONTENT | TRANSFORM | STYLE, snapshot: { ...label(1, 10, 0), order: 2 } },
+    ]);
+    expect(coordinator.getDrawStates().length).toBe(2);
+    expect(coordinator.drawListEpoch).toBe(packedEpoch);
+
+    await coordinator.commit(3, [{ slot: 0, mask: CONTENT, snapshot: undefined }]);
+    coordinator.getDrawStates();
+    const removedEpoch = coordinator.drawListEpoch;
+    expect(removedEpoch).not.toBe(packedEpoch);
+
+    await coordinator.commit(4, [
+      {
+        slot: 1,
+        mask: TRANSFORM,
+        snapshot: { ...label(1, 10, 0), order: 2, zIndex: 5 },
+      },
+    ]);
+    coordinator.getDrawStates();
+    expect(coordinator.drawListEpoch).not.toBe(removedEpoch);
+
+    coordinator.destroy();
+    registry.destroy();
+  });
+
+  test("rasterizes HarfBuzz misses with the real glyph text despite packed identities", async () => {
+    const registry = new FontRegistry();
+    await registry.register({ family: "Fixture" });
+    const rasterTexts: string[] = [];
+    const coordinator = new RenderCoordinator({
+      registry,
+      layoutEngine: {
+        layout(_slot, _revision, input) {
+          const { glyphKeys: _glyphKeys, ...shaped } = run(input.text);
+          return Object.freeze({ ...shaped, source: "harfbuzz" as const });
+        },
+        destroy() {},
+      },
+      glyphProvider: {
+        async rasterize(request: RasterGlyphRequest): Promise<GlyphRaster> {
+          rasterTexts.push(request.glyphText);
+          return {
+            mode: "msdf",
+            width: 4,
+            height: 6,
+            pixels: new Uint8Array(96).fill(255),
+            metrics: { bearingX: 0, bearingY: 5, advance: 4, fieldRange: 4 },
+          };
+        },
+        destroy() {},
+      },
+      atlasOptions: { pageWidth: 16, pageHeight: 16, maxBytes: 1_024 },
+      instanceOptions: { initialCapacity: 4 },
+      transformOptions: { initialCapacity: 4, textureWidth: 4 },
+    });
+
+    await coordinator.commit(1, [
+      { slot: 0, mask: CONTENT | TRANSFORM | STYLE, snapshot: label(1, 0, 0) },
+    ]);
+    expect(rasterTexts).toEqual(["A", "B"]);
+
+    coordinator.destroy();
+    registry.destroy();
+  });
+
   test("requests TinySDF for HarfBuzz glyphs when the option is on", async () => {
     const registry = new FontRegistry();
     await registry.register({ family: "Fixture" });

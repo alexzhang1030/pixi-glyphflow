@@ -11,13 +11,14 @@ import {
   expandPrepareRing,
   expandWorkingSet,
   CULL_RECORD_STRIDE,
-  patchCullRecordAabbAt,
   shouldDropSubpixelLod,
   shouldInstanceUnshaped,
   shouldRefreshResidency,
   viewportFromBounds,
+  workingSetContains,
   writeCullRecordAt,
   type CullPath,
+  type CullRecordDirty,
   type CullViewport,
 } from "./culling/computeCull";
 import { SpatialIndex } from "./culling/SpatialIndex";
@@ -26,9 +27,11 @@ import { FontRegistry } from "./FontRegistry";
 import {
   RenderCoordinator,
   type RenderChange,
+  type RenderDrawState,
   type RenderLabelSnapshot,
 } from "./render/RenderCoordinator";
 import { RenderSurface, type RenderComputeCullUpdate } from "./render/RenderSurface";
+import type { DirtyByteRange } from "./render/types";
 import {
   assertTrustedGlyphRunOwner,
   createTrustedGlyphRun,
@@ -141,6 +144,9 @@ export class TextLayer extends Container {
   #cullRecordSlots = new Uint32Array(0);
   #cullRecordIndex: Int32Array;
   #cullRecordCount = 0;
+  #cullRecordEpoch = -1;
+  readonly #cullRecordDirtyScratch: DirtyByteRange[] = [];
+  #preparedRing: CullViewport | undefined;
   readonly #boundsScratch: MutableBoundsData = { x: 0, y: 0, width: 0, height: 0 };
   readonly #matrixScratch = new Matrix();
   readonly #labelScratch: MutableTextStoreLabel = {
@@ -766,8 +772,6 @@ export class TextLayer extends Container {
     if (this.#lod) this.#lodWorldScaleY = worldScaleY;
     const spatialStart = performance.now();
     let changes: LayerRenderChange[] = [];
-    let unshapedAdded = 0;
-    let lodMutated = false;
     if (refreshResidency) {
       this.#visibleCount = this.#queryVisible(cullPath, drawViewport);
       this.#visibilityDirty = false;
@@ -775,17 +779,16 @@ export class TextLayer extends Container {
     } else if (coordinator !== undefined) {
       if (lodScaleChanged) {
         changes = this.#buildRenderChanges(cullPath, drawViewport);
-        lodMutated = changes.length > 0;
       } else {
-        if (hasLabelChanges) {
-          const dirty = this.#buildResidentDirtyChanges();
-          changes = dirty.changes;
-          lodMutated = dirty.lodPack;
-        }
-        if (cameraMoved && cullPath === "compute-cull" && drawViewport !== undefined) {
-          const extra = this.#buildTightFirstSeen();
-          unshapedAdded = extra.length;
-          changes.push(...extra);
+        if (hasLabelChanges) changes = this.#buildResidentDirtyChanges();
+        if (
+          cameraMoved &&
+          cullPath === "compute-cull" &&
+          drawViewport !== undefined &&
+          (this.#preparedRing === undefined ||
+            !workingSetContains(this.#preparedRing, drawViewport))
+        ) {
+          changes.push(...this.#buildTightFirstSeen());
         }
       }
     }
@@ -847,16 +850,9 @@ export class TextLayer extends Container {
         }
       }
       this.#lastSpatialUpdateMs += performance.now() - spatialWriteStart;
-      // Repacked records and a fresh instance mirror must stay in lockstep.
-      const remirror = refreshResidency || unshapedAdded > 0 || lodMutated;
       const computeUpdate: RenderComputeCullUpdate | undefined =
         cullPath === "compute-cull"
-          ? {
-              records: remirror ? this.#packCullRecords() : this.#patchCullRecordAabbs(changes),
-              recordCount: this.#cullRecordCount,
-              viewport: drawViewport ?? FULL_CULL_VIEWPORT,
-              mirrorInstances: remirror,
-            }
+          ? this.#buildComputeCullUpdate(coordinator, changes, drawViewport)
           : undefined;
       if (result !== undefined) surface?.apply(result, computeUpdate);
       else if (computeUpdate !== undefined) surface?.refreshComputeCull(computeUpdate);
@@ -1158,13 +1154,69 @@ export class TextLayer extends Container {
     }
   }
 
-  #packCullRecords(): ArrayBuffer {
-    const coordinator = this.#renderCoordinator;
-    if (coordinator === undefined) return new ArrayBuffer(0);
-    this.#clearCullRecordIndex();
+  #buildComputeCullUpdate(
+    coordinator: RenderCoordinator,
+    changes: readonly LayerRenderChange[],
+    draw: CullViewport | undefined,
+  ): RenderComputeCullUpdate {
     const states = coordinator.getDrawStates();
+    let recordDirty: CullRecordDirty = "none";
+    if (
+      coordinator.drawListEpoch !== this.#cullRecordEpoch ||
+      states.length < this.#cullRecordCount
+    ) {
+      this.#packCullRecords(coordinator, states);
+      recordDirty = "all";
+    } else {
+      const ranges = this.#cullRecordDirtyScratch;
+      ranges.length = 0;
+      const patched = this.#patchCullRecords(coordinator, changes);
+      if (patched !== undefined) ranges.push(patched);
+      if (states.length > this.#cullRecordCount) {
+        ranges.push(this.#appendCullRecords(coordinator, states));
+      }
+      if (ranges.length > 0) recordDirty = ranges;
+    }
+    return {
+      records: this.#cullRecords,
+      recordCount: this.#cullRecordCount,
+      recordDirty,
+      viewport: draw ?? FULL_CULL_VIEWPORT,
+    };
+  }
+
+  #packCullRecords(
+    coordinator: RenderCoordinator,
+    states: readonly Readonly<RenderDrawState>[],
+  ): void {
+    this.#clearCullRecordIndex();
     this.#ensureCullRecordCapacity(states.length);
-    for (let index = 0; index < states.length; index += 1) {
+    this.#writeCullRecords(coordinator, states, 0);
+    this.#cullRecordCount = states.length;
+    this.#cullRecordEpoch = coordinator.drawListEpoch;
+  }
+
+  /** While the draw-list epoch holds, states only append, so the packed prefix stays valid. */
+  #appendCullRecords(
+    coordinator: RenderCoordinator,
+    states: readonly Readonly<RenderDrawState>[],
+  ): DirtyByteRange {
+    const start = this.#cullRecordCount;
+    this.#ensureCullRecordCapacity(states.length);
+    this.#writeCullRecords(coordinator, states, start);
+    this.#cullRecordCount = states.length;
+    return {
+      offset: start * CULL_RECORD_STRIDE,
+      length: (states.length - start) * CULL_RECORD_STRIDE,
+    };
+  }
+
+  #writeCullRecords(
+    coordinator: RenderCoordinator,
+    states: readonly Readonly<RenderDrawState>[],
+    start: number,
+  ): void {
+    for (let index = start; index < states.length; index += 1) {
       const state = states[index];
       if (state === undefined) throw new Error("Draw state list is incomplete");
       const range = coordinator.instances.getRange(state.slot);
@@ -1186,39 +1238,55 @@ export class TextLayer extends Container {
       this.#cullRecordSlots[index] = state.slot;
       this.#cullRecordIndex[state.slot] = index;
     }
-    this.#cullRecordCount = states.length;
-    return this.#cullRecords;
   }
 
-  #patchCullRecordAabbs(changes: readonly LayerRenderChange[]): ArrayBuffer | undefined {
+  /** Content edits can relocate instance ranges, so patches rewrite the whole record. */
+  #patchCullRecords(
+    coordinator: RenderCoordinator,
+    changes: readonly LayerRenderChange[],
+  ): DirtyByteRange | undefined {
     if (this.#cullRecordCount === 0) return undefined;
-    let patched = 0;
+    let first = -1;
+    let last = -1;
     for (const change of changes) {
       if (change.snapshot === undefined) continue;
       const index = this.#cullRecordIndex[change.slot] ?? -1;
       if (index < 0) continue;
+      const range = coordinator.instances.getRange(change.slot);
+      if (range === undefined) continue;
       const box = this.#spatial.get(change.slot, this.#boundsScratch);
       if (box === undefined) continue;
-      patchCullRecordAabbAt(
-        this.#cullRecordFloats,
-        index,
-        box.x,
-        box.y,
-        box.x + box.width,
-        box.y + box.height,
-      );
-      patched += 1;
+      writeCullRecordAt(this.#cullRecordFloats, this.#cullRecordUints, index, {
+        minX: box.x,
+        minY: box.y,
+        maxX: box.x + box.width,
+        maxY: box.y + box.height,
+        instanceOffset: range.offset,
+        instanceCount: range.count,
+      });
+      if (first < 0 || index < first) first = index;
+      if (index > last) last = index;
     }
-    return patched === 0 ? undefined : this.#cullRecords;
+    if (first < 0) return undefined;
+    return {
+      offset: first * CULL_RECORD_STRIDE,
+      length: (last - first + 1) * CULL_RECORD_STRIDE,
+    };
   }
 
   #ensureCullRecordCapacity(count: number): void {
     if (this.#cullRecordSlots.length >= count) return;
-    const bytes = count * CULL_RECORD_STRIDE;
-    this.#cullRecords = new ArrayBuffer(bytes);
-    this.#cullRecordFloats = new Float32Array(this.#cullRecords);
-    this.#cullRecordUints = new Uint32Array(this.#cullRecords);
-    this.#cullRecordSlots = new Uint32Array(count);
+    let capacity = Math.max(64, this.#cullRecordSlots.length * 2);
+    while (capacity < count) capacity *= 2;
+    const next = new ArrayBuffer(capacity * CULL_RECORD_STRIDE);
+    const nextFloats = new Float32Array(next);
+    nextFloats.set(this.#cullRecordFloats);
+    this.#cullRecords = next;
+    this.#cullRecordFloats = nextFloats;
+    this.#cullRecordUints = new Uint32Array(next);
+    const nextSlots = new Uint32Array(capacity);
+    nextSlots.set(this.#cullRecordSlots);
+    this.#cullRecordSlots = nextSlots;
   }
 
   #clearCullRecordIndex(): void {
@@ -1234,15 +1302,14 @@ export class TextLayer extends Container {
     return this.#renderSurface?.prepareCullPath() ?? "cpu-grid";
   }
 
-  #buildResidentDirtyChanges(): { changes: LayerRenderChange[]; lodPack: boolean } {
+  #buildResidentDirtyChanges(): LayerRenderChange[] {
     const changes: LayerRenderChange[] = [];
     const epoch = this.#renderEpoch;
-    if (epoch === 0) return { changes, lodPack: false };
+    if (epoch === 0) return changes;
     const cullPath = this.#resolveCullPath();
     const draw = this.#drawViewport();
     const ring = draw === undefined ? undefined : expandPrepareRing(draw);
     const coordinator = this.#renderCoordinator;
-    let lodPack = false;
     for (let index = 0; index < this.#dirtyLength; index += 1) {
       const slot = this.#dirtySlots[index];
       if (slot === undefined) throw new Error("Dirty slot list is incomplete");
@@ -1250,7 +1317,6 @@ export class TextLayer extends Container {
       if (this.#shouldDropLod(slot)) {
         if (rendered) {
           this.#renderedEpochs[slot] = 0;
-          lodPack = true;
           changes.push({
             slot,
             mask: ALL_DIRTY,
@@ -1270,7 +1336,6 @@ export class TextLayer extends Container {
         );
         if (change !== undefined) {
           this.#renderedEpochs[slot] = epoch;
-          lodPack = true;
           changes.push(change);
         }
         continue;
@@ -1278,13 +1343,14 @@ export class TextLayer extends Container {
       const change = this.#renderChangeForSlot(slot, true);
       if (change !== undefined) changes.push(change);
     }
-    return { changes, lodPack };
+    return changes;
   }
 
   #buildTightFirstSeen(): LayerRenderChange[] {
     const draw = this.#drawViewport();
     if (draw === undefined) return [];
     const ring = expandPrepareRing(draw);
+    this.#preparedRing = ring;
     this.#ensureScratchCapacity();
     const count = this.#spatial.query(ring, this.#bulkSlots, 0);
     const coordinator = this.#renderCoordinator;
@@ -1313,6 +1379,7 @@ export class TextLayer extends Container {
     const coordinator = this.#renderCoordinator;
     const changes: LayerRenderChange[] = [];
     const ring = draw === undefined ? undefined : expandPrepareRing(draw);
+    this.#preparedRing = cullPath === "compute-cull" ? ring : undefined;
     for (let index = 0; index < this.#visibleCount; index += 1) {
       const slot = this.#visibleSlots[index];
       if (slot === undefined) throw new Error("Visible slot list is incomplete");
@@ -1329,7 +1396,7 @@ export class TextLayer extends Container {
     }
     for (const state of coordinator?.getDrawStates() ?? []) {
       if (this.#renderedEpochs[state.slot] === nextEpoch) continue;
-      const gone = this.#store.snapshotAt(state.slot) === undefined;
+      const gone = !this.#store.occupiedAt(state.slot);
       changes.push({
         slot: state.slot,
         mask: ALL_DIRTY,
@@ -1357,7 +1424,9 @@ export class TextLayer extends Container {
     this.#renderedEpochs.fill(0);
     this.#renderEpoch = 0;
     this.#instancedViewport = undefined;
+    this.#preparedRing = undefined;
     this.#clearCullRecordIndex();
+    this.#cullRecordEpoch = -1;
   }
 
   #renderChangeForSlot(

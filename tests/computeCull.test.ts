@@ -9,7 +9,6 @@ import {
   expandPrepareRing,
   expandWorkingSet,
   packCullRecords,
-  patchCullRecordAabbAt,
   planComputeCullStorageBytes,
   resolveCullPath,
   projectedFontHeightPx,
@@ -17,12 +16,13 @@ import {
   shouldInstanceUnshaped,
   shouldRefreshResidency,
   workingSetContains,
+  writeCullRecordAt,
 } from "../src/culling/computeCull";
+import { COMPUTE_CULL_WGSL } from "../src/culling/computeCull.wgsl";
+import { GLYPH_INSTANCE_STRIDE } from "../src/render/types";
 
 /** PixiJS `requestDevice()` default; see the storage-binding gotcha. */
 const WEBGPU_DEFAULT_MAX_STORAGE_BUFFER_BINDING_SIZE = 134_217_728;
-import { COMPUTE_CULL_WGSL } from "../src/culling/computeCull.wgsl";
-import { GLYPH_INSTANCE_STRIDE } from "../src/render/types";
 
 describe("compute cull host reference", () => {
   test("keeps million-label residency on the CPU viewport set", () => {
@@ -270,18 +270,25 @@ describe("compute cull host reference", () => {
     ).toBe(false);
   });
 
-  test("patches a packed AABB without rewriting instance ranges", () => {
+  test("rewrites one packed record in place, including a relocated instance range", () => {
     const records = packCullRecords([
       { minX: 1, minY: 2, maxX: 3, maxY: 4, instanceOffset: 5, instanceCount: 6 },
     ]);
-    patchCullRecordAabbAt(new Float32Array(records), 0, 10, 20, 30, 40);
+    writeCullRecordAt(new Float32Array(records), new Uint32Array(records), 0, {
+      minX: 10,
+      minY: 20,
+      maxX: 30,
+      maxY: 40,
+      instanceOffset: 7,
+      instanceCount: 8,
+    });
     const view = new DataView(records);
     expect(view.getFloat32(0, true)).toBe(10);
     expect(view.getFloat32(4, true)).toBe(20);
     expect(view.getFloat32(8, true)).toBe(30);
     expect(view.getFloat32(12, true)).toBe(40);
-    expect(view.getUint32(16, true)).toBe(5);
-    expect(view.getUint32(20, true)).toBe(6);
+    expect(view.getUint32(16, true)).toBe(7);
+    expect(view.getUint32(20, true)).toBe(8);
   });
 
   test("drops labels whose projected font height is below one pixel", () => {

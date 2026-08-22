@@ -1,8 +1,9 @@
-import { GLYPH_INSTANCE_STRIDE } from "../render/types";
+import { GLYPH_INSTANCE_STRIDE, type DirtyByteRange } from "../render/types";
 import type { BoundsData } from "./types";
 
 export type CullPath = "cpu-grid" | "compute-cull";
 export type CullResidency = "viewport" | "all";
+export type CullRecordDirty = "all" | "none" | readonly Readonly<DirtyByteRange>[];
 
 export const CULL_RECORD_STRIDE = 32;
 export const CULL_WORKGROUP = 256;
@@ -171,21 +172,6 @@ export function writeCullRecordAt(
   floats[base + 3] = record.maxY;
   uints[base + 4] = record.instanceOffset;
   uints[base + 5] = record.instanceCount;
-}
-
-export function patchCullRecordAabbAt(
-  floats: Float32Array,
-  index: number,
-  minX: number,
-  minY: number,
-  maxX: number,
-  maxY: number,
-): void {
-  const base = index * FLOATS_PER_RECORD;
-  floats[base] = minX;
-  floats[base + 1] = minY;
-  floats[base + 2] = maxX;
-  floats[base + 3] = maxY;
 }
 
 export function aabbVisible(

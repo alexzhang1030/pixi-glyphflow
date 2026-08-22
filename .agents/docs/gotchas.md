@@ -49,6 +49,14 @@ the palette. Re-query only on show/hide/add/remove or when the camera leaves the
 `getRange` must return the live range. Copying and freezing it on every pack or segment walk is the
 hot leaf.
 
+Mirror instance dirty ranges into the compute pass on every compute frame. A patch-path commit that
+skips the mirror leaves stale glyph bytes and stale record offsets in `instances_in`; content edits
+can relocate a range, so record patches must rewrite offset and count, not only the AABB.
+
+`ComputeCullPass.ensureCapacity` pushes the CPU-side indirect args (instance count 0) to the GPU.
+An idle compute frame must return before touching it, or the previous dispatch's draw count is
+clobbered without a new dispatch to restore it.
+
 Leaving the working set must not delete the run, instances, or palette. A later homepage trace
 spent the pan windows in `RenderCoordinator.#prepare` / `#ensureGlyph` / `#buildInstances` because
 re-entry used `ALL_DIRTY` after a full remove. Drop the draw state and cull records only. `remove()`
