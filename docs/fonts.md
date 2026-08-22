@@ -174,10 +174,12 @@ reuse the registered font bytes. Contextual forms, ligatures, and CJK `locl` alt
 temporary cmap mapping in a cloned font buffer, so raster output matches the exact shaped glyph.
 The registered source bytes remain immutable.
 
-Prebuilt MSDF/SDF pages provide deterministic startup and stable cache contents. Dynamic providers
-cover alpha and color glyphs plus binary-font outlines. `GlyphAtlas` publishes staged entries at
-frame boundaries, pins visible entries, evicts least-recently-used unpinned entries, and keeps
-allocation within its configured byte ceiling.
+Prebuilt MSDF/SDF pages provide deterministic startup and stable cache contents. Pass them through
+`rasterizerOptions.prebuilt` so `RasterGlyphProvider` crops those glyphs before TinySDF or MSDF.
+Keys are `prebuiltGlyphKey` identities and omit font revision. Dynamic providers cover the long
+tail: alpha and color glyphs plus binary-font outlines that are not on a page. `GlyphAtlas`
+publishes staged entries at frame boundaries, pins visible entries, evicts least-recently-used
+unpinned entries, and keeps allocation within its configured byte ceiling.
 
 ## Operational guidance
 

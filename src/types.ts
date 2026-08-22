@@ -41,6 +41,8 @@ export interface TextLayerCullingOptions {
   readonly bounds?: BoundsData;
   /** WebGPU compute culling policy. The default is automatic capability detection. */
   readonly computeCull?: boolean | "auto";
+  /** Drop labels whose projected font height is below one pixel. Changes pixels. Default is false. */
+  readonly lod?: boolean;
 }
 
 /** Optional shaping controls for multilingual and variable-font labels. */

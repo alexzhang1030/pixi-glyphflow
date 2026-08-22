@@ -68,6 +68,61 @@ describe("TextLayer culling and hit bounds", () => {
     layer.destroy();
   });
 
+  test("skips subpixel labels when lod is on and admits them after they grow", async () => {
+    let layouts = 0;
+    const layer = new TextLayer({
+      renderer: {} as Renderer,
+      culling: { enabled: true, lod: true, bounds: { x: 0, y: 0, width: 100, height: 100 } },
+      rendering: {
+        layoutEngine: {
+          async layout() {
+            layouts += 1;
+            return RUN;
+          },
+          destroy() {},
+        },
+        glyphProvider: {
+          async rasterize() {
+            return {
+              mode: "alpha" as const,
+              width: 8,
+              height: 10,
+              pixels: new Uint8Array(80).fill(255),
+            };
+          },
+          destroy() {},
+        },
+        atlasOptions: { pageWidth: 32, pageHeight: 32, maxBytes: 4_096 },
+      },
+    });
+    const tiny = layer.create({
+      text: "A",
+      x: 10,
+      y: 10,
+      scaleY: 0.01,
+      style: { fontSize: 16 },
+    });
+    const visible = layer.create({ text: "B", x: 20, y: 10, style: { fontSize: 16 } });
+
+    expect(Number(await layer.commit())).toBe(1);
+    expect(layouts).toBe(1);
+    expect(layer.stats).toMatchObject({ glyphCount: 1 });
+    expect(layer.hitTest({ x: 22, y: 12 })).toBe(visible);
+
+    layer.update(tiny, { scaleY: 1 });
+    expect(Number(await layer.commit())).toBe(2);
+    expect(layouts).toBe(2);
+    expect(layer.stats).toMatchObject({ glyphCount: 2 });
+    expect(layer.hitTest({ x: 12, y: 12 })).toBe(tiny);
+
+    layer.update(visible, { scaleY: 0.01 });
+    expect(Number(await layer.commit())).toBe(3);
+    expect(layouts).toBe(2);
+    expect(layer.stats).toMatchObject({ glyphCount: 1 });
+
+    layer.destroy();
+  });
+
   test("updates hit bounds through packed position storms", async () => {
     const layer = new TextLayer({ rendering: false });
     const ids = layer.createMany([

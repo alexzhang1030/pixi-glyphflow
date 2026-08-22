@@ -116,4 +116,8 @@ storage budgets stay until a human accepts new numbers.
 - Compute-cull layouts first-seen labels in the tight draw view plus a 0.25-viewport ring. The
   expanded working set is residency slack, not a prepare batch. Known strings hit the shape cache
   on the same turn and clone instance ranges.
+- Put stable UI alphabets on `rasterizerOptions.prebuilt` pages. Do not ship those pages in the
+  core bundle.
+- `culling.lod` drops labels whose projected font height is below one pixel. Leave it off unless
+  the product accepts missing subpixel text.
 - Read diagnostics at telemetry cadence.

@@ -82,6 +82,24 @@ export function computeCullStructurallyEligible(input: {
 }
 
 export const PREPARE_RING_SLACK = 0.25;
+export const LOD_MIN_PROJECTED_PX = 1;
+
+export function projectedFontHeightPx(input: {
+  readonly fontSize: number;
+  readonly scaleY: number;
+  readonly worldScaleY: number;
+}): number {
+  return Math.abs(input.fontSize * input.scaleY * input.worldScaleY);
+}
+
+export function shouldDropSubpixelLod(input: {
+  readonly lod: boolean;
+  readonly fontSize: number;
+  readonly scaleY: number;
+  readonly worldScaleY: number;
+}): boolean {
+  return input.lod && projectedFontHeightPx(input) < LOD_MIN_PROJECTED_PX;
+}
 
 export function shouldInstanceUnshaped(input: {
   readonly cullPath: CullPath;

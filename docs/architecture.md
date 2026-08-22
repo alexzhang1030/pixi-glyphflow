@@ -72,6 +72,8 @@ hits stay on the same turn. Duplicate strings clone a prototype instance range a
 palette index. Compute-cull still instances an expanded working set for camera slack, but it only
 layouts and rasters first-seen labels that intersect the tight draw view plus a 0.25-viewport ring.
 `tinySdf: true` builds those HarfBuzz glyphs as a local SDF from the canvas mask.
+`rasterizerOptions.prebuilt` serves packed pages first so a known alphabet miss is a crop, not a
+generator start. `culling.lod` drops labels whose projected font height is below one pixel.
 Off-screen residents stay unshaped until the camera reaches them. On-screen text appears in that
 commit. There is no leftover admission wave.
 

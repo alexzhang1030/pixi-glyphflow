@@ -78,6 +78,18 @@ through `FontFace` from the registered bytes. Without `FontFace` (or a document 
 canvas would paint a fallback family. Keep `@zappar/msdf-generator` for `mode: "msdf"` and for
 hosts that cannot install a face.
 
+## Prebuilt glyph keys omit font revision
+
+`prebuiltGlyphKey` is family, glyph id, glyph text, rounded size, weight, and mode. A re-registered
+family keeps the same page. Do not put `fontRevision` in the bake key. A page baked for different
+bytes under the same family name is a product mistake, not a cache miss.
+
+## LOD remirrors only when labels cross one pixel
+
+`culling.lod` uses `fontSize * scaleY * worldScaleY`. Zoom inside a working set does not remirror
+the instance store unless a label crosses the one-pixel line. Position storms stay on palette
+patches. Do not treat every camera frame as a residency refresh when LOD is on.
+
 ## Stamp the rendered epoch on unchanged visible labels
 
 `#buildRenderChanges` stamps `#renderedEpochs[slot] = nextEpoch` for every resident it intends to

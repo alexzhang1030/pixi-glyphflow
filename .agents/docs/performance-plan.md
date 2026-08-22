@@ -208,7 +208,7 @@ WebGL 2 keeps the Wave 1 CPU grid. WebGPU gains a second adapter that does not w
   tight CPU grid.
 - Moving the transform palette to a storage buffer and combining atlas pages into a texture array
   remain follow-up work.
-- Optional LOD: drop or downsample glyphs whose projected height is below one pixel, following map-label practice. This is a policy flag, default off, because it changes pixels.
+- Optional LOD: `culling.lod` drops labels whose projected font height is below one pixel. Default off, because it changes pixels.
 
 Primary targets: camera-only CPU ≤ 1.00 ms p95 at 1,000,000 residents / 50,000 visible; WebGPU `viewport-drag` and `viewport-zoom` at or below the Wave 1 CPU-grid numbers; WebGL 2 unchanged within variance.
 
@@ -219,7 +219,8 @@ Verify: `bun run test:browser -- glyph-rendering` and both-adapter site/browser 
 The packer is no longer the limiter; generation and upload are.
 
 - TinySDF is in tree behind `rasterizerOptions.tinySdf`. It builds an SDF from the canvas mask so `@zappar/msdf-generator` is not on the first miss. Binary families install through `FontFace`. Exact HarfBuzz glyph IDs still go through MSDF when the flag is off.
-- Support prebaked MSDF/SDF pages as the default for known UI alphabets (TMP hybrid model; Mapbox PBF ranges). Dynamic pages handle the long tail.
+- `rasterizerOptions.prebuilt` is the hybrid page lookup (TMP / Mapbox PBF model). Dynamic TinySDF or MSDF handles the long tail. Default alphabet pages stay out of the core bundle.
+- `culling.lod` drops labels whose projected font height is below one pixel. Default is off.
 - Budget atlas uploads per frame and resume across frames. A 20,000-glyph first miss must not hitch a single commit. First-seen layout runs in the seeing commit for the tight draw view plus a 0.25-viewport ring. Do not drip-feed on-screen labels.
 - Optional persistent cache is a product decision (IndexedDB, as in Mapbox local glyphs). Do not add it without a human license and privacy pass.
 - Pin the visible set and a small predictive ring around the current viewport/zoom, so zoom does not evict the glyphs it will need on the next wheel tick.

@@ -45,7 +45,9 @@
   admission wave. Unchanged visible labels keep their rendered epoch so a sibling z-index or blend
   change does not evict them. Shape-cache hits return a run on the same turn. Duplicate strings
   clone instance ranges and only rewrite the palette index. `tinySdf: true` builds HarfBuzz glyphs
-  with a local SDF from the canvas mask and skips the MSDF worker.
+  with a local SDF from the canvas mask and skips the MSDF worker. `rasterizerOptions.prebuilt`
+  serves packed pages before generation. `culling.lod` drops labels whose projected font height is
+  below one pixel.
 
 ## 1.1.0 - 2026-08-15
 

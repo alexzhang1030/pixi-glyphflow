@@ -12,6 +12,8 @@ import {
   patchCullRecordAabbAt,
   planComputeCullStorageBytes,
   resolveCullPath,
+  projectedFontHeightPx,
+  shouldDropSubpixelLod,
   shouldInstanceUnshaped,
   shouldRefreshResidency,
   WEBGPU_DEFAULT_MAX_STORAGE_BUFFER_BINDING_SIZE,
@@ -278,5 +280,18 @@ describe("compute cull host reference", () => {
     expect(view.getFloat32(12, true)).toBe(40);
     expect(view.getUint32(16, true)).toBe(5);
     expect(view.getUint32(20, true)).toBe(6);
+  });
+
+  test("drops labels whose projected font height is below one pixel", () => {
+    expect(projectedFontHeightPx({ fontSize: 16, scaleY: 1, worldScaleY: 0.24 })).toBeCloseTo(3.84);
+    expect(shouldDropSubpixelLod({ lod: false, fontSize: 16, scaleY: 0.01, worldScaleY: 1 })).toBe(
+      false,
+    );
+    expect(shouldDropSubpixelLod({ lod: true, fontSize: 16, scaleY: 0.01, worldScaleY: 1 })).toBe(
+      true,
+    );
+    expect(shouldDropSubpixelLod({ lod: true, fontSize: 16, scaleY: 1, worldScaleY: 0.24 })).toBe(
+      false,
+    );
   });
 });

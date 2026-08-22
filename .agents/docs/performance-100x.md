@@ -48,14 +48,15 @@ writes, and remirroring the store.
 - `tinySdf: true` builds HarfBuzz glyphs as a local SDF from the canvas mask. The homepage demo
   turns this on so a new ideograph does not start `@zappar/msdf-generator`. MSDF stays the default
   because the field changes pixels.
+- `rasterizerOptions.prebuilt` crops packed pages before TinySDF or MSDF. Keys omit font revision.
+  The core package does not ship default alphabet pages.
+- `culling.lod` drops labels whose projected font height is below one pixel. Default is off.
 
 ## Remaining slices, in order
 
-1. **Prebaked pages.** Known UI alphabets still miss on the first session if TinySDF has not run.
-   Default baked pages are Wave 4 leftovers.
-2. **LOD.** Drop glyphs whose projected height is below one pixel. Policy flag, default off.
-   Changes pixels.
-3. **Palette storage buffer and atlas texture array.** Wave 3 leftovers. Binding cost, not the
+1. **Default baked pages.** Known UI alphabets still miss on the first session if no page is
+   supplied and TinySDF has not run. Shipping those pages in the core gzip is rejected.
+2. **Palette storage buffer and atlas texture array.** Wave 3 leftovers. Binding cost, not the
    zoom hitch.
 
 Reject: drip-feed admission, `queryAll()` for compute-cull, BVH rebuilds on the 100k storm, and
