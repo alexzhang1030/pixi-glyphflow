@@ -780,7 +780,9 @@ export class TextLayer extends Container {
 
     const needsComputeDispatch = cullPath === "compute-cull";
     if (coordinator === undefined || (changes.length === 0 && !needsComputeDispatch)) {
-      this.#pendingAdmissionCount = 0;
+      if (coordinator === undefined || this.#visibleCount === 0) {
+        this.#pendingAdmissionCount = 0;
+      }
       if (this.#visibleCount === 0) this.#renderSurface?.dropIdleMeshes();
       this.#lastCommitDurationMs = performance.now() - start;
       this.#lastCommitPromise = this.#renderTail.then(() => {
@@ -845,7 +847,7 @@ export class TextLayer extends Container {
         this.#deferAdmissions(changes, result.deferredSlots);
         surface?.apply(result, computeUpdate);
       } else {
-        this.#pendingAdmissionCount = 0;
+        if (this.#visibleCount === 0) this.#pendingAdmissionCount = 0;
         if (computeUpdate !== undefined) surface?.refreshComputeCull(computeUpdate);
       }
       this.#lastUploadMs = surface?.stats.lastUploadMs ?? 0;
@@ -1301,7 +1303,11 @@ export class TextLayer extends Container {
   }
 
   #deferAdmissions(changes: readonly LayerRenderChange[], deferredSlots: readonly number[]): void {
-    this.#pendingAdmissionCount = deferredSlots.length;
+    if (this.#visibleCount === 0) {
+      this.#pendingAdmissionCount = 0;
+      for (const change of changes) this.#dirtyMasks[change.slot] = TextDirty.None;
+      return;
+    }
     const deferred = new Set(deferredSlots);
     for (const change of changes) {
       if (deferred.has(change.slot)) {
@@ -1313,18 +1319,22 @@ export class TextLayer extends Container {
       }
       this.#dirtyMasks[change.slot] = TextDirty.None;
     }
-    if (deferredSlots.length === 0) return;
-    const epoch = this.#renderEpoch;
-    let count = 0;
-    for (let index = 0; index < this.#renderedCount; index += 1) {
-      const slot = this.#renderedSlots[index];
-      if (slot === undefined) throw new Error("Rendered slot list is incomplete");
-      if (this.#renderedEpochs[slot] === epoch) {
-        this.#renderedSlots[count] = slot;
-        count += 1;
+    if (deferredSlots.length > 0) {
+      this.#pendingAdmissionCount = deferredSlots.length;
+      const epoch = this.#renderEpoch;
+      let count = 0;
+      for (let index = 0; index < this.#renderedCount; index += 1) {
+        const slot = this.#renderedSlots[index];
+        if (slot === undefined) throw new Error("Rendered slot list is incomplete");
+        if (this.#renderedEpochs[slot] === epoch) {
+          this.#renderedSlots[count] = slot;
+          count += 1;
+        }
       }
+      this.#renderedCount = count;
+      return;
     }
-    this.#renderedCount = count;
+    if (admissionPreparedGlyphs(changes)) this.#pendingAdmissionCount = 0;
   }
 
   #scheduleAdmission(): void {
@@ -1408,6 +1418,18 @@ export class TextLayer extends Container {
       throw new Error("TextLayer has been destroyed");
     }
   }
+}
+
+function admissionPreparedGlyphs(changes: readonly LayerRenderChange[]): boolean {
+  for (const change of changes) {
+    if (
+      change.snapshot !== undefined &&
+      (change.mask & (TextDirty.Content | TextDirty.Style)) !== 0
+    ) {
+      return true;
+    }
+  }
+  return false;
 }
 
 function normalizeLabel(

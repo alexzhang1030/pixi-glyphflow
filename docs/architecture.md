@@ -70,7 +70,7 @@ ownership and revision stamps.
 `RenderCoordinator` prepares removals and transform-only updates immediately. First-seen labels and
 content or style dirty labels run in waves of `prepareWave`. After `prepareBudgetMs` the rest stay
 deferred. `TextLayer` restores those dirty masks, keeps already-shaped glyphs on screen, and continues
-on the next animation frame.
+on the next animation frame. A later position-only or camera-only commit does not clear that leftover.
 
 ## Atlas and instances
 

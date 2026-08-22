@@ -31,6 +31,30 @@ function alphaRaster() {
   };
 }
 
+function admissionLayer(onLayout: () => void): TextLayer {
+  return new TextLayer({
+    renderer: {} as Renderer,
+    rendering: {
+      prepareBudgetMs: 0,
+      prepareWave: 3,
+      layoutEngine: {
+        async layout() {
+          onLayout();
+          return RUN;
+        },
+        destroy() {},
+      },
+      glyphProvider: {
+        async rasterize() {
+          return alphaRaster();
+        },
+        destroy() {},
+      },
+      atlasOptions: { pageWidth: 32, pageHeight: 32, maxBytes: 4_096 },
+    },
+  });
+}
+
 describe("TextLayer commit and maintenance", () => {
   test("publishes coalesced dirty domains and reports zero work for no-op commits", async () => {
     const layer = new TextLayer();
@@ -259,26 +283,8 @@ describe("TextLayer commit and maintenance", () => {
 
   test("admits first-seen labels across commits when the prepare budget is one wave", async () => {
     let layouts = 0;
-    const layer = new TextLayer({
-      renderer: {} as Renderer,
-      rendering: {
-        prepareBudgetMs: 0,
-        prepareWave: 3,
-        layoutEngine: {
-          async layout() {
-            layouts += 1;
-            return RUN;
-          },
-          destroy() {},
-        },
-        glyphProvider: {
-          async rasterize() {
-            return alphaRaster();
-          },
-          destroy() {},
-        },
-        atlasOptions: { pageWidth: 32, pageHeight: 32, maxBytes: 4_096 },
-      },
+    const layer = admissionLayer(() => {
+      layouts += 1;
     });
     layer.createMany(
       Array.from({ length: 10 }, (_, index) => ({ text: "A", x: index * 12, y: 0 })),
@@ -311,26 +317,8 @@ describe("TextLayer commit and maintenance", () => {
 
   test("hideAll after a partial admission wave drops leftover glyphs", async () => {
     let layouts = 0;
-    const layer = new TextLayer({
-      renderer: {} as Renderer,
-      rendering: {
-        prepareBudgetMs: 0,
-        prepareWave: 3,
-        layoutEngine: {
-          async layout() {
-            layouts += 1;
-            return RUN;
-          },
-          destroy() {},
-        },
-        glyphProvider: {
-          async rasterize() {
-            return alphaRaster();
-          },
-          destroy() {},
-        },
-        atlasOptions: { pageWidth: 32, pageHeight: 32, maxBytes: 4_096 },
-      },
+    const layer = admissionLayer(() => {
+      layouts += 1;
     });
     layer.createMany(
       Array.from({ length: 10 }, (_, index) => ({ text: "A", x: index * 12, y: 0 })),
@@ -346,6 +334,32 @@ describe("TextLayer commit and maintenance", () => {
     expect(layer.stats.pendingAdmissionCount).toBe(0);
     expect(layer.stats.glyphCount).toBe(0);
     expect(layouts).toBe(3);
+
+    layer.destroy();
+  });
+
+  test("keeps leftover first-seen when a position commit overlaps the first wave", async () => {
+    let layouts = 0;
+    const layer = admissionLayer(() => {
+      layouts += 1;
+    });
+    const ids = layer.createMany(
+      Array.from({ length: 10 }, (_, index) => ({ text: "A", x: index * 12, y: 0 })),
+    );
+
+    const first = layer.commit();
+    layer.updatePositions(ids.slice(0, 3), new Float32Array([0, 1, 12, 1, 24, 1]));
+    const storm = layer.commit();
+    await first;
+    await storm;
+    expect(layouts).toBe(3);
+    expect(layer.stats.pendingAdmissionCount).toBe(7);
+    expect(layer.stats.glyphCount).toBe(3);
+
+    await layer.commit();
+    expect(layouts).toBe(6);
+    expect(layer.stats.pendingAdmissionCount).toBe(4);
+    expect(layer.stats.glyphCount).toBe(6);
 
     layer.destroy();
   });
