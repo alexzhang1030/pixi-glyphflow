@@ -847,16 +847,15 @@ export class TextLayer extends Container {
         }
       }
       this.#lastSpatialUpdateMs += performance.now() - spatialWriteStart;
+      // Repacked records and a fresh instance mirror must stay in lockstep.
+      const remirror = refreshResidency || unshapedAdded > 0 || lodMutated;
       const computeUpdate: RenderComputeCullUpdate | undefined =
         cullPath === "compute-cull"
           ? {
-              records:
-                refreshResidency || unshapedAdded > 0 || lodMutated
-                  ? this.#packCullRecords()
-                  : this.#patchCullRecordAabbs(changes),
+              records: remirror ? this.#packCullRecords() : this.#patchCullRecordAabbs(changes),
               recordCount: this.#cullRecordCount,
               viewport: drawViewport ?? FULL_CULL_VIEWPORT,
-              mirrorInstances: refreshResidency || unshapedAdded > 0 || lodMutated,
+              mirrorInstances: remirror,
             }
           : undefined;
       if (result !== undefined) surface?.apply(result, computeUpdate);
@@ -1165,7 +1164,6 @@ export class TextLayer extends Container {
     this.#clearCullRecordIndex();
     const states = coordinator.getDrawStates();
     this.#ensureCullRecordCapacity(states.length);
-    const bounds: MutableBoundsData = { x: 0, y: 0, width: 0, height: 0 };
     for (let index = 0; index < states.length; index += 1) {
       const state = states[index];
       if (state === undefined) throw new Error("Draw state list is incomplete");
@@ -1173,7 +1171,7 @@ export class TextLayer extends Container {
       if (range === undefined) {
         throw new Error(`Cull instance range ${String(state.slot)} is unavailable`);
       }
-      const box = this.#spatial.get(state.slot, bounds);
+      const box = this.#spatial.get(state.slot, this.#boundsScratch);
       if (box === undefined) {
         throw new Error(`Cull bounds ${String(state.slot)} are unavailable`);
       }
@@ -1194,13 +1192,12 @@ export class TextLayer extends Container {
 
   #patchCullRecordAabbs(changes: readonly LayerRenderChange[]): ArrayBuffer | undefined {
     if (this.#cullRecordCount === 0) return undefined;
-    const bounds: MutableBoundsData = { x: 0, y: 0, width: 0, height: 0 };
     let patched = 0;
     for (const change of changes) {
       if (change.snapshot === undefined) continue;
       const index = this.#cullRecordIndex[change.slot] ?? -1;
       if (index < 0) continue;
-      const box = this.#spatial.get(change.slot, bounds);
+      const box = this.#spatial.get(change.slot, this.#boundsScratch);
       if (box === undefined) continue;
       patchCullRecordAabbAt(
         this.#cullRecordFloats,
@@ -1243,8 +1240,8 @@ export class TextLayer extends Container {
     if (epoch === 0) return { changes, lodPack: false };
     const cullPath = this.#resolveCullPath();
     const draw = this.#drawViewport();
+    const ring = draw === undefined ? undefined : expandPrepareRing(draw);
     const coordinator = this.#renderCoordinator;
-    const bounds = this.#boundsScratch;
     let lodPack = false;
     for (let index = 0; index < this.#dirtyLength; index += 1) {
       const slot = this.#dirtySlots[index];
@@ -1265,20 +1262,7 @@ export class TextLayer extends Container {
       }
       if (!rendered) {
         if (!this.#lod || this.#positionOnly[slot] === 1) continue;
-        const box = this.#spatial.get(slot, bounds);
-        if (
-          box === undefined ||
-          !shouldInstanceUnshaped({
-            cullPath,
-            draw,
-            minX: box.x,
-            minY: box.y,
-            maxX: box.x + box.width,
-            maxY: box.y + box.height,
-          })
-        ) {
-          continue;
-        }
+        if (!this.#unshapedVisible(slot, cullPath, ring)) continue;
         const change = this.#renderChangeForSlot(
           slot,
           false,
@@ -1302,14 +1286,7 @@ export class TextLayer extends Container {
     if (draw === undefined) return [];
     const ring = expandPrepareRing(draw);
     this.#ensureScratchCapacity();
-    if (this.#bulkSlots.length < this.#spatial.capacity) {
-      this.#bulkSlots = growTypedArray(this.#bulkSlots, this.#spatial.capacity);
-    }
-    const count = this.#spatial.query(
-      { x: ring.x, y: ring.y, width: ring.width, height: ring.height },
-      this.#bulkSlots,
-      0,
-    );
+    const count = this.#spatial.query(ring, this.#bulkSlots, 0);
     const coordinator = this.#renderCoordinator;
     const epoch = this.#renderEpoch;
     const changes: LayerRenderChange[] = [];
@@ -1335,7 +1312,7 @@ export class TextLayer extends Container {
     const nextEpoch = previousEpoch + 1;
     const coordinator = this.#renderCoordinator;
     const changes: LayerRenderChange[] = [];
-    const bounds = this.#boundsScratch;
+    const ring = draw === undefined ? undefined : expandPrepareRing(draw);
     for (let index = 0; index < this.#visibleCount; index += 1) {
       const slot = this.#visibleSlots[index];
       if (slot === undefined) throw new Error("Visible slot list is incomplete");
@@ -1343,22 +1320,7 @@ export class TextLayer extends Container {
       const dirtyMask = this.#dirtyMasks[slot] ?? TextDirty.None;
       const hasRun = coordinator?.getRun(slot) !== undefined;
       if (this.#shouldDropLod(slot)) continue;
-      if (!hasRun) {
-        const box = this.#spatial.get(slot, bounds);
-        if (
-          box === undefined ||
-          !shouldInstanceUnshaped({
-            cullPath,
-            draw,
-            minX: box.x,
-            minY: box.y,
-            maxX: box.x + box.width,
-            maxY: box.y + box.height,
-          })
-        ) {
-          continue;
-        }
-      }
+      if (!hasRun && !this.#unshapedVisible(slot, cullPath, ring)) continue;
       this.#renderedEpochs[slot] = nextEpoch;
       if (wasRendered && dirtyMask === TextDirty.None) continue;
       const change = this.#renderChangeForSlot(slot, wasRendered, hasRun);
@@ -1432,11 +1394,23 @@ export class TextLayer extends Container {
     };
   }
 
+  #unshapedVisible(slot: number, cullPath: CullPath, ring: CullViewport | undefined): boolean {
+    const box = this.#spatial.get(slot, this.#boundsScratch);
+    if (box === undefined) return false;
+    return shouldInstanceUnshaped({
+      cullPath,
+      ring,
+      minX: box.x,
+      minY: box.y,
+      maxX: box.x + box.width,
+      maxY: box.y + box.height,
+    });
+  }
+
   #shouldDropLod(slot: number): boolean {
     if (!this.#lod) return false;
     if (!this.#store.copyBoundsLabelAt(slot, this.#labelScratch)) return false;
     return shouldDropSubpixelLod({
-      lod: true,
       fontSize: resolvePositiveStyleNumber(this.#labelScratch.style.fontSize, 26),
       scaleY: this.#labelScratch.scaleY,
       worldScaleY: this.#lodWorldScaleY,
@@ -1444,29 +1418,8 @@ export class TextLayer extends Container {
   }
 
   #worldScaleY(): number {
-    this.updateLocalTransform();
-    let a = this.localTransform.a;
-    let b = this.localTransform.b;
-    let c = this.localTransform.c;
-    let d = this.localTransform.d;
-    let node = this.parent;
-    while (node !== null && node !== undefined) {
-      node.updateLocalTransform();
-      const parentA = node.localTransform.a;
-      const parentB = node.localTransform.b;
-      const parentC = node.localTransform.c;
-      const parentD = node.localTransform.d;
-      const nextA = a * parentA + b * parentC;
-      const nextB = a * parentB + b * parentD;
-      const nextC = c * parentA + d * parentC;
-      const nextD = c * parentB + d * parentD;
-      a = nextA;
-      b = nextB;
-      c = nextC;
-      d = nextD;
-      node = node.parent;
-    }
-    const scale = Math.hypot(c, d);
+    const matrix = this.getGlobalTransform(this.#matrixScratch);
+    const scale = Math.hypot(matrix.c, matrix.d);
     return Number.isFinite(scale) && scale > 0 ? scale : 1;
   }
 

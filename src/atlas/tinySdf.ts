@@ -1,5 +1,5 @@
 /** Edge of the encoded field. Matches the shader `smoothstep(0.5, …)` contour. */
-export const TINY_SDF_EDGE = 0.5;
+const TINY_SDF_EDGE = 0.5;
 export const TINY_SDF_RADIUS = 8;
 
 const INF = 1e20;

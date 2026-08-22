@@ -121,6 +121,7 @@ const EMPTY_ATLAS_COMMIT: Readonly<AtlasCommit> = Object.freeze({
   uploads: Object.freeze([]),
   evictedKeys: Object.freeze([]),
 });
+
 export class RenderCoordinator {
   readonly instances: GlyphInstanceStore;
   readonly transforms: TransformPalette;
@@ -356,10 +357,9 @@ export class RenderCoordinator {
       if (change === undefined) throw new Error("Render change list is incomplete");
       const item = this.#prepare(change, ticket);
       if (isPromise(item)) {
-        const slot = index;
         pending.push(
           item.then((ready) => {
-            prepared[slot] = ready;
+            prepared[index] = ready;
           }),
         );
         continue;
@@ -392,7 +392,7 @@ export class RenderCoordinator {
     }
 
     if (change.trustedRun !== undefined) {
-      return this.#finishPrepare(change, ticket, change.trustedRun);
+      return this.#finishPrepare(change, snapshot, ticket, change.trustedRun);
     }
     const laidOut = this.#layout.layout(change.slot, snapshot.sourceRevision, {
       text: snapshot.text,
@@ -401,19 +401,18 @@ export class RenderCoordinator {
       ...snapshot.shaping,
     });
     if (isPromise(laidOut)) {
-      return laidOut.then((run) => this.#finishPrepare(change, ticket, run));
+      return laidOut.then((run) => this.#finishPrepare(change, snapshot, ticket, run));
     }
-    return this.#finishPrepare(change, ticket, laidOut);
+    return this.#finishPrepare(change, snapshot, ticket, laidOut);
   }
 
   #finishPrepare(
     change: RenderChange,
+    snapshot: Readonly<RenderLabelSnapshot>,
     ticket: number,
     run: Readonly<PositionedRun>,
   ): PreparedChange | Promise<PreparedChange> {
     if (ticket !== this.#ticket) return { change, run };
-    const snapshot = change.snapshot;
-    if (snapshot === undefined) return { change, run };
     const missing = this.#ensureMissingGlyphs(run, snapshot);
     if (missing === undefined) return { change, run };
     return missing.then(() => ({ change, run }));
@@ -490,16 +489,9 @@ export class RenderCoordinator {
   ): void {
     const key = prototypeKey(run, snapshot);
     const prototype = this.#prototypeSlots.get(key);
-    if (
-      prototype !== undefined &&
-      prototype !== slot &&
-      this.instances.getRange(prototype) !== undefined &&
-      this.instances.clone(prototype, slot)
-    ) {
-      this.#rememberPrototype(slot, key);
-      return;
+    if (prototype === undefined || prototype === slot || !this.instances.clone(prototype, slot)) {
+      this.instances.set(slot, this.#buildInstances(slot, run, snapshot), { skipEquality: true });
     }
-    this.instances.set(slot, this.#buildInstances(slot, run, snapshot), { skipEquality: true });
     this.#rememberPrototype(slot, key);
   }
 

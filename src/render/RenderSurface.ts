@@ -138,7 +138,6 @@ export class RenderSurface {
     this.#assertActive();
     if (this.#coordinator.getDrawStates().length !== 0) return;
     this.#destroyMeshes();
-    this.#submittedGlyphs = 0;
   }
 
   refreshComputeCull(update: Readonly<RenderComputeCullUpdate>): CullPath {
@@ -155,7 +154,6 @@ export class RenderSurface {
     }
     if (update.records !== undefined && update.recordCount === 0) {
       this.#destroyMeshes();
-      this.#submittedGlyphs = 0;
     } else if (!this.#hasDirectComputeMesh()) this.#syncMeshes([], update);
     const pass = this.#cullPass;
     const surface = this.#meshes.get(0);
@@ -196,20 +194,20 @@ export class RenderSurface {
     const transformRanges = this.#coordinator.transforms.consumeDirty();
     const instanceRanges = this.#coordinator.instances.consumeDirty();
     this.#syncPalette(transformRanges);
+    const needsComputeRebuild = this.#needsComputeMeshRebuild(computeCull);
     const skipSegmentWalk =
       computeCull !== undefined &&
       this.#hasDirectComputeMesh() &&
       instanceRanges.length === 0 &&
-      !this.#needsComputeMeshRebuild(computeCull);
+      !needsComputeRebuild;
     if (this.#coordinator.getDrawStates().length === 0) {
       this.#destroyMeshes();
-      this.#submittedGlyphs = 0;
     } else if (
       !skipSegmentWalk &&
       (instanceRanges.length > 0 ||
         result.drawOrderChanged ||
         this.#meshes.size === 0 ||
-        this.#needsComputeMeshRebuild(computeCull))
+        needsComputeRebuild)
     ) {
       this.#syncMeshes(instanceRanges, computeCull);
     }
@@ -341,7 +339,6 @@ export class RenderSurface {
     const storeStats = store.stats;
     if (storeStats.activeInstances === 0 || this.#coordinator.getDrawStates().length === 0) {
       this.#destroyMeshes();
-      this.#submittedGlyphs = 0;
       return;
     }
     const data = store.buffer;
@@ -637,6 +634,7 @@ export class RenderSurface {
 
   #destroyMeshes(): void {
     for (const [key, surface] of this.#meshes) this.#destroyMesh(key, surface);
+    this.#submittedGlyphs = 0;
   }
 
   #hasDirectComputeMesh(): boolean {
@@ -652,7 +650,6 @@ export class RenderSurface {
     const store = this.#coordinator.instances;
     if (store.stats.activeInstances === 0) {
       this.#destroyMeshes();
-      this.#submittedGlyphs = 0;
       return;
     }
     const view = new DataView(store.buffer);

@@ -109,16 +109,7 @@ export class GlyphInstanceStore {
       return true;
     }
 
-    if (current !== undefined) {
-      this.#clearMetadata(current.offset, current.count);
-      this.#dirty.record(
-        current.offset * GLYPH_INSTANCE_STRIDE,
-        current.count * GLYPH_INSTANCE_STRIDE,
-      );
-      this.#activeInstances -= current.count;
-      this.#releaseRange(current);
-      this.#ranges.delete(labelId);
-    }
+    if (current !== undefined) this.#releaseLabelRange(labelId, current);
 
     const capacity = nextPowerOfTwo(count);
     const range = this.#allocateRange(capacity);
@@ -138,11 +129,7 @@ export class GlyphInstanceStore {
     if (range === undefined) {
       return false;
     }
-    this.#clearMetadata(range.offset, range.count);
-    this.#dirty.record(range.offset * GLYPH_INSTANCE_STRIDE, range.count * GLYPH_INSTANCE_STRIDE);
-    this.#activeInstances -= range.count;
-    this.#ranges.delete(labelId);
-    this.#releaseRange(range);
+    this.#releaseLabelRange(labelId, range);
 
     return true;
   }
@@ -162,16 +149,7 @@ export class GlyphInstanceStore {
     const count = source.count;
     const sourceOffset = source.offset;
     const current = this.#ranges.get(destId);
-    if (current !== undefined) {
-      this.#clearMetadata(current.offset, current.count);
-      this.#dirty.record(
-        current.offset * GLYPH_INSTANCE_STRIDE,
-        current.count * GLYPH_INSTANCE_STRIDE,
-      );
-      this.#activeInstances -= current.count;
-      this.#releaseRange(current);
-      this.#ranges.delete(destId);
-    }
+    if (current !== undefined) this.#releaseLabelRange(destId, current);
 
     const range = this.#allocateRange(nextPowerOfTwo(count));
     this.#copyInstances(sourceOffset, range.offset, count);
@@ -350,6 +328,14 @@ export class GlyphInstanceStore {
 
   #releaseRange(range: GlyphInstanceRange): void {
     this.#free.insert(range.offset, range.capacity);
+  }
+
+  #releaseLabelRange(labelId: number, range: MutableInstanceRange): void {
+    this.#clearMetadata(range.offset, range.count);
+    this.#dirty.record(range.offset * GLYPH_INSTANCE_STRIDE, range.count * GLYPH_INSTANCE_STRIDE);
+    this.#activeInstances -= range.count;
+    this.#ranges.delete(labelId);
+    this.#releaseRange(range);
   }
 
   #ensureCapacity(required: number): void {

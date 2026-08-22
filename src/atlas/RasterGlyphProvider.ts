@@ -225,14 +225,13 @@ export class RasterGlyphProvider {
       ...(metrics === undefined
         ? {}
         : {
-            metrics: {
-              ...metrics,
-              bearingX: metrics.bearingX / rasterScale,
-              bearingY: metrics.bearingY / rasterScale,
-              advance: metrics.advance / rasterScale,
-              fieldRange: TINY_SDF_RADIUS / rasterScale,
-              ...(rasterScale === 1 ? {} : { rasterScale }),
-            },
+            metrics: scaledFieldMetrics(
+              metrics.bearingX,
+              metrics.bearingY,
+              metrics.advance,
+              TINY_SDF_RADIUS,
+              rasterScale,
+            ),
           }),
     };
   }
@@ -318,13 +317,13 @@ function extractDistanceField(
     const sourceStart = ((y + row) * atlas.texture.width + x) * 4;
     rgba.set(atlas.texture.data.subarray(sourceStart, sourceStart + width * 4), row * width * 4);
   }
-  const metrics: Readonly<GlyphMetrics> = Object.freeze({
-    bearingX: glyph.bounds.left / rasterScale,
-    bearingY: glyph.bounds.top / rasterScale,
-    advance: glyph.advance / rasterScale,
-    fieldRange: atlas.fieldRange / rasterScale,
-    ...(rasterScale === 1 ? {} : { rasterScale }),
-  });
+  const metrics = scaledFieldMetrics(
+    glyph.bounds.left,
+    glyph.bounds.top,
+    glyph.advance,
+    atlas.fieldRange,
+    rasterScale,
+  );
   if (request.mode === "msdf") {
     return Object.freeze({ mode: "msdf", width, height, pixels: rgba, metrics });
   }
@@ -336,6 +335,23 @@ function extractDistanceField(
   }
 
   return Object.freeze({ mode: "sdf", width, height, pixels, metrics });
+}
+
+/** Distance-field metrics scale together or the shader's screen-space math drifts. */
+function scaledFieldMetrics(
+  bearingX: number,
+  bearingY: number,
+  advance: number,
+  fieldRange: number,
+  rasterScale: number,
+): Readonly<GlyphMetrics> {
+  return Object.freeze({
+    bearingX: bearingX / rasterScale,
+    bearingY: bearingY / rasterScale,
+    advance: advance / rasterScale,
+    fieldRange: fieldRange / rasterScale,
+    ...(rasterScale === 1 ? {} : { rasterScale }),
+  });
 }
 
 async function defaultMsdfGenerator(): Promise<MsdfGeneratorLike> {

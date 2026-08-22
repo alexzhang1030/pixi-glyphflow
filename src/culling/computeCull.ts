@@ -6,7 +6,6 @@ export type CullResidency = "viewport" | "all";
 
 export const CULL_RECORD_STRIDE = 32;
 export const CULL_WORKGROUP = 256;
-export const WEBGPU_DEFAULT_MAX_STORAGE_BUFFER_BINDING_SIZE = 134_217_728;
 const FLOATS_PER_RECORD = CULL_RECORD_STRIDE / Float32Array.BYTES_PER_ELEMENT;
 
 export interface CullViewport {
@@ -93,17 +92,17 @@ export function projectedFontHeightPx(input: {
 }
 
 export function shouldDropSubpixelLod(input: {
-  readonly lod: boolean;
   readonly fontSize: number;
   readonly scaleY: number;
   readonly worldScaleY: number;
 }): boolean {
-  return input.lod && projectedFontHeightPx(input) < LOD_MIN_PROJECTED_PX;
+  return projectedFontHeightPx(input) < LOD_MIN_PROJECTED_PX;
 }
 
+/** The ring must be precomputed with `expandPrepareRing`; it is loop-invariant per commit. */
 export function shouldInstanceUnshaped(input: {
   readonly cullPath: CullPath;
-  readonly draw: CullViewport | undefined;
+  readonly ring: CullViewport | undefined;
   readonly minX: number;
   readonly minY: number;
   readonly maxX: number;
@@ -114,8 +113,8 @@ export function shouldInstanceUnshaped(input: {
       return true;
     case "compute-cull":
       return (
-        input.draw !== undefined &&
-        aabbVisible(input.minX, input.minY, input.maxX, input.maxY, expandPrepareRing(input.draw))
+        input.ring !== undefined &&
+        aabbVisible(input.minX, input.minY, input.maxX, input.maxY, input.ring)
       );
     default: {
       const _exhaustive: never = input.cullPath;
@@ -203,6 +202,7 @@ export function aabbVisible(
   return maxX >= left && minX <= right && maxY >= top && minY <= bottom;
 }
 
+/** Fixture builder for the host reference path; production packs into a persistent buffer. */
 export function packCullRecords(records: readonly CullRecordInput[]): ArrayBuffer {
   const buffer = new ArrayBuffer(records.length * CULL_RECORD_STRIDE);
   const floats = new Float32Array(buffer);
