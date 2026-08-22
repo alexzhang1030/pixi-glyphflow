@@ -185,8 +185,7 @@ export class TextLayer extends Container {
     this.#cullRecordIndex = new Int32Array(this.#store.capacity).fill(-1);
     this.#renderer = options.renderer;
     this.#renderingOptions = options.rendering ?? {};
-    this.#prepareWave =
-      options.rendering === false ? 8 : (options.rendering?.prepareWave ?? 8);
+    this.#prepareWave = options.rendering === false ? 8 : (options.rendering?.prepareWave ?? 8);
     if (this.#renderer !== undefined) {
       this.#activateRendering();
     }
@@ -1375,7 +1374,11 @@ export class TextLayer extends Container {
     for (let index = 0; index < wave; index += 1) {
       const slot = this.#admissionSlots[index];
       if (slot === undefined) throw new Error("Admission slot list is incomplete");
-      const change = this.#renderChangeForSlot(slot, false, coordinator?.getRun(slot) !== undefined);
+      const change = this.#renderChangeForSlot(
+        slot,
+        false,
+        coordinator?.getRun(slot) !== undefined,
+      );
       if (change !== undefined) changes.push(change);
     }
     return changes;
