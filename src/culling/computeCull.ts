@@ -81,6 +81,29 @@ export function computeCullStructurallyEligible(input: {
   );
 }
 
+export function shouldInstanceUnshaped(input: {
+  readonly cullPath: CullPath;
+  readonly draw: CullViewport | undefined;
+  readonly minX: number;
+  readonly minY: number;
+  readonly maxX: number;
+  readonly maxY: number;
+}): boolean {
+  switch (input.cullPath) {
+    case "cpu-grid":
+      return true;
+    case "compute-cull":
+      return (
+        input.draw !== undefined &&
+        aabbVisible(input.minX, input.minY, input.maxX, input.maxY, input.draw)
+      );
+    default: {
+      const _exhaustive: never = input.cullPath;
+      return _exhaustive;
+    }
+  }
+}
+
 export function shouldRefreshResidency(input: ResidencyRefreshInput): boolean {
   if (input.visibilityDirty) return true;
   if (input.instanced === undefined || input.draw === undefined) return true;

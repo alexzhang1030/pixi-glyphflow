@@ -11,6 +11,7 @@ import {
   patchCullRecordAabbAt,
   planComputeCullStorageBytes,
   resolveCullPath,
+  shouldInstanceUnshaped,
   shouldRefreshResidency,
   WEBGPU_DEFAULT_MAX_STORAGE_BUFFER_BINDING_SIZE,
   workingSetContains,
@@ -214,6 +215,40 @@ describe("compute cull host reference", () => {
         visibilityDirty: false,
         instanced: draw,
         draw,
+      }),
+    ).toBe(false);
+  });
+
+  test("instances unshaped compute-cull labels only against the tight draw view", () => {
+    const draw = { x: 0, y: 0, width: 100, height: 100, padding: 0 };
+    expect(
+      shouldInstanceUnshaped({
+        cullPath: "cpu-grid",
+        draw,
+        minX: 400,
+        minY: 0,
+        maxX: 408,
+        maxY: 10,
+      }),
+    ).toBe(true);
+    expect(
+      shouldInstanceUnshaped({
+        cullPath: "compute-cull",
+        draw,
+        minX: 10,
+        minY: 10,
+        maxX: 18,
+        maxY: 20,
+      }),
+    ).toBe(true);
+    expect(
+      shouldInstanceUnshaped({
+        cullPath: "compute-cull",
+        draw,
+        minX: 400,
+        minY: 0,
+        maxX: 408,
+        maxY: 10,
       }),
     ).toBe(false);
   });

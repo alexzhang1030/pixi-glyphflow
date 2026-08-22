@@ -53,11 +53,6 @@ exceeds the device limit, the layer uses `cpu-grid`.
 return `0` and preserve revision state. One following `commit()` publishes the complete visibility
 change through culling, hit testing, accessibility, and the active WebGL or WebGPU renderer.
 
-First-seen layout and raster work is budgeted. `TextLayerOptions.rendering.prepareBudgetMs` defaults
-to `8`. `prepareWave` defaults to `8`. A budget of `0` admits one wave per `commit()`. Unprepared
-residents stay off the draw set. The layer schedules another animation frame until they are admitted.
-`TextLayerStats.pendingAdmissionCount` is the leftover count.
-
 `TextGroupId` is an opaque identity created by `createGroup()`. Every call produces a distinct
 identity owned by its `TextLayer`. A label references one group through `TextLabelSpec.group` or a
 patch. `group: null` clears membership. Effective visibility is the conjunction of label-local and

@@ -250,14 +250,12 @@ describe("RenderCoordinator", () => {
     registry.destroy();
   });
 
-  test("admits first-seen labels in prepare waves when the budget is zero", async () => {
+  test("prepares every first-seen label in one commit", async () => {
     const registry = new FontRegistry();
     await registry.register({ family: "Fixture" });
     let layoutCalls = 0;
     const coordinator = new RenderCoordinator({
       registry,
-      prepareBudgetMs: 0,
-      prepareWave: 3,
       layoutEngine: {
         async layout(_slot, _revision, input) {
           layoutCalls += 1;
@@ -288,17 +286,10 @@ describe("RenderCoordinator", () => {
     }));
 
     const first = await coordinator.commit(1, firstSeen);
-    expect(first).toMatchObject({ stale: false, appliedLabels: 3 });
-    expect(first.deferredSlots).toEqual([3, 4, 5, 6, 7, 8, 9]);
-    expect(layoutCalls).toBe(3);
+    expect(first).toMatchObject({ stale: false, appliedLabels: 10 });
+    expect(layoutCalls).toBe(10);
     expect(coordinator.getRun(0)).toBeDefined();
-    expect(coordinator.getRun(3)).toBeUndefined();
-
-    const rest = firstSeen.filter((change) => first.deferredSlots.includes(change.slot));
-    const second = await coordinator.commit(2, rest);
-    expect(second.appliedLabels).toBe(3);
-    expect(second.deferredSlots).toEqual([6, 7, 8, 9]);
-    expect(layoutCalls).toBe(6);
+    expect(coordinator.getRun(9)).toBeDefined();
 
     coordinator.destroy();
     registry.destroy();

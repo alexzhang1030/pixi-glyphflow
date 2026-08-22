@@ -70,19 +70,12 @@ export interface GlyphProviderLike {
   destroy(): void | Promise<void>;
 }
 
-const DEFAULT_PREPARE_BUDGET_MS = 8;
-const DEFAULT_PREPARE_WAVE = 8;
-
 export interface RenderCoordinatorOptions {
   readonly registry: FontRegistry;
   readonly layoutEngine?: RenderLayoutEngineLike;
   readonly glyphProvider?: GlyphProviderLike;
   /** Dynamic canvas and MSDF rasterizer configuration used by the default glyph provider. */
   readonly rasterizerOptions?: RasterGlyphProviderOptions;
-  /** Wall time for first-seen layout and raster work. `0` admits one wave. */
-  readonly prepareBudgetMs?: number;
-  /** First-seen labels prepared together before the budget is checked. */
-  readonly prepareWave?: number;
   readonly atlas?: GlyphAtlas;
   readonly instances?: GlyphInstanceStore;
   readonly transforms?: TransformPalette;
@@ -99,7 +92,6 @@ export interface RenderCommitResult {
   readonly atlasUploads: number;
   readonly atlasCommit: Readonly<AtlasCommit>;
   readonly drawOrderChanged: boolean;
-  readonly deferredSlots: readonly number[];
 }
 
 export interface RenderDrawState {
@@ -133,8 +125,6 @@ const EMPTY_ATLAS_COMMIT: Readonly<AtlasCommit> = Object.freeze({
   uploads: Object.freeze([]),
   evictedKeys: Object.freeze([]),
 });
-const EMPTY_DEFERRED_SLOTS: readonly number[] = Object.freeze([]);
-
 export class RenderCoordinator {
   readonly instances: GlyphInstanceStore;
   readonly transforms: TransformPalette;
@@ -169,13 +159,9 @@ export class RenderCoordinator {
   #lastLayoutMs = 0;
   #lastInstanceWriteMs = 0;
   #lastPaletteWriteMs = 0;
-  readonly #prepareBudgetMs: number;
-  readonly #prepareWave: number;
   #destroyed = false;
 
   constructor(options: RenderCoordinatorOptions) {
-    this.#prepareBudgetMs = resolvePrepareBudgetMs(options.prepareBudgetMs);
-    this.#prepareWave = resolvePrepareWave(options.prepareWave);
     this.#layout = options.layoutEngine ?? new LayoutEngine(options.registry);
     this.#provider =
       options.glyphProvider ??
@@ -204,11 +190,11 @@ export class RenderCoordinator {
     this.#lastPaletteWriteMs = 0;
     const ticket = ++this.#ticket;
     const prepareStart = performance.now();
-    const { prepared, deferredSlots } = await this.#prepareChanges(changes, ticket);
+    const prepared = await this.#prepareChanges(changes, ticket);
     this.#lastLayoutMs = performance.now() - prepareStart;
     if (ticket !== this.#ticket) {
       this.#staleRevisions += 1;
-      return this.#result(revision, true, 0, EMPTY_ATLAS_COMMIT, false, EMPTY_DEFERRED_SLOTS);
+      return this.#result(revision, true, 0, EMPTY_ATLAS_COMMIT, false);
     }
 
     const atlasCommit = this.atlas.commitFrame();
@@ -306,14 +292,7 @@ export class RenderCoordinator {
     this.#revisions += 1;
     this.#appliedLabels += appliedLabels;
 
-    return this.#result(
-      revision,
-      false,
-      appliedLabels,
-      atlasCommit,
-      drawOrderChanged,
-      deferredSlots,
-    );
+    return this.#result(revision, false, appliedLabels, atlasCommit, drawOrderChanged);
   }
 
   getRun(slot: number): Readonly<PositionedRun> | undefined {
@@ -364,34 +343,8 @@ export class RenderCoordinator {
     this.#destroyed = true;
   }
 
-  async #prepareChanges(
-    changes: readonly RenderChange[],
-    ticket: number,
-  ): Promise<{ prepared: PreparedChange[]; deferredSlots: readonly number[] }> {
-    const cheap: RenderChange[] = [];
-    const expensive: RenderChange[] = [];
-    for (const change of changes) {
-      if (this.#needsGlyphPrepare(change)) expensive.push(change);
-      else cheap.push(change);
-    }
-    const prepared = await Promise.all(cheap.map((change) => this.#prepare(change, ticket)));
-    const deadline = performance.now() + this.#prepareBudgetMs;
-    for (let index = 0; index < expensive.length;) {
-      if (index > 0 && performance.now() >= deadline) {
-        return {
-          prepared,
-          deferredSlots: expensive.slice(index).map((change) => change.slot),
-        };
-      }
-      const wave = expensive.slice(index, index + this.#prepareWave);
-      prepared.push(...(await Promise.all(wave.map((change) => this.#prepare(change, ticket)))));
-      index += wave.length;
-    }
-    return { prepared, deferredSlots: EMPTY_DEFERRED_SLOTS };
-  }
-
-  #needsGlyphPrepare(change: RenderChange): boolean {
-    return change.snapshot !== undefined && this.#sourceChanged(change);
+  #prepareChanges(changes: readonly RenderChange[], ticket: number): Promise<PreparedChange[]> {
+    return Promise.all(changes.map((change) => this.#prepare(change, ticket)));
   }
 
   #sourceChanged(change: RenderChange): boolean {
@@ -554,7 +507,6 @@ export class RenderCoordinator {
     appliedLabels: number,
     atlasCommit: Readonly<AtlasCommit>,
     drawOrderChanged: boolean,
-    deferredSlots: readonly number[],
   ): Readonly<RenderCommitResult> {
     return Object.freeze({
       revision,
@@ -564,8 +516,6 @@ export class RenderCoordinator {
       atlasUploads: atlasCommit.uploads.length,
       atlasCommit,
       drawOrderChanged,
-      deferredSlots:
-        deferredSlots.length === 0 ? EMPTY_DEFERRED_SLOTS : Object.freeze([...deferredSlots]),
     });
   }
 
@@ -614,22 +564,6 @@ class LazyRasterGlyphProvider implements GlyphProviderLike {
 
     return pending;
   }
-}
-
-function resolvePrepareBudgetMs(value: number | undefined): number {
-  if (value === undefined) return DEFAULT_PREPARE_BUDGET_MS;
-  if (!Number.isFinite(value) || value < 0) {
-    throw new TypeError("prepareBudgetMs must be a finite non-negative number");
-  }
-  return value;
-}
-
-function resolvePrepareWave(value: number | undefined): number {
-  if (value === undefined) return DEFAULT_PREPARE_WAVE;
-  if (!Number.isSafeInteger(value) || value < 1) {
-    throw new TypeError("prepareWave must be a positive safe integer");
-  }
-  return value;
 }
 
 function validateChanges(changes: readonly RenderChange[]): void {

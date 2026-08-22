@@ -11,6 +11,7 @@ import {
   expandWorkingSet,
   CULL_RECORD_STRIDE,
   patchCullRecordAabbAt,
+  shouldInstanceUnshaped,
   shouldRefreshResidency,
   viewportFromBounds,
   writeCullRecordAt,
@@ -120,12 +121,6 @@ export class TextLayer extends Container {
   #instancedViewport: CullViewport | undefined;
   #viewDirty = false;
   #visibilityDirty = true;
-  #admissionCancel: (() => void) | undefined;
-  #pendingAdmissionCount = 0;
-  #admissionSlots: Uint32Array;
-  #admissionCount = 0;
-  #admissionSent = 0;
-  readonly #prepareWave: number;
   #dirtyMasks: Uint8Array;
   #positionOnly: Uint8Array;
   #dirtySlots: Uint32Array;
@@ -134,8 +129,6 @@ export class TextLayer extends Container {
   #visibleSlots: Uint32Array;
   #visibleCount = 0;
   #renderedEpochs: Uint32Array;
-  #renderedSlots: Uint32Array;
-  #renderedCount = 0;
   #renderEpoch = 0;
   #renderSequence = 0;
   #cullRecords = new ArrayBuffer(0);
@@ -180,12 +173,9 @@ export class TextLayer extends Container {
     this.#bulkSlots = new Uint32Array(this.#store.capacity);
     this.#visibleSlots = new Uint32Array(this.#store.capacity);
     this.#renderedEpochs = new Uint32Array(this.#store.capacity);
-    this.#renderedSlots = new Uint32Array(this.#store.capacity);
-    this.#admissionSlots = new Uint32Array(this.#store.capacity);
     this.#cullRecordIndex = new Int32Array(this.#store.capacity).fill(-1);
     this.#renderer = options.renderer;
     this.#renderingOptions = options.rendering ?? {};
-    this.#prepareWave = options.rendering === false ? 8 : (options.rendering?.prepareWave ?? 8);
     if (this.#renderer !== undefined) {
       this.#activateRendering();
     }
@@ -712,8 +702,7 @@ export class TextLayer extends Container {
   commit(): Promise<TextRevision> {
     this.#assertActive();
     const hasLabelChanges = this.#store.pendingDirty.labels > 0;
-    this.#cancelAdmissionSchedule();
-    if (!hasLabelChanges && !this.#viewDirty && this.#pendingAdmissionCount === 0) {
+    if (!hasLabelChanges && !this.#viewDirty) {
       this.#lastCommitDurationMs = 0;
       this.#lastCommitDirtyLabels = 0;
       this.#lastCommitContentLabels = 0;
@@ -765,17 +754,22 @@ export class TextLayer extends Container {
       instanced: this.#instancedViewport,
       draw: drawViewport,
     });
+    const cameraMoved = this.#viewDirty;
     this.#viewDirty = false;
-    this.#admissionSent = 0;
     const spatialStart = performance.now();
     let changes: LayerRenderChange[] = [];
+    let unshapedAdded = 0;
     if (refreshResidency) {
       this.#visibleCount = this.#queryVisible(cullPath, drawViewport);
       this.#visibilityDirty = false;
-      if (coordinator !== undefined) changes = this.#buildRenderChanges(cullPath);
+      if (coordinator !== undefined) changes = this.#buildRenderChanges(cullPath, drawViewport);
     } else if (coordinator !== undefined) {
       if (hasLabelChanges) changes = this.#buildResidentDirtyChanges();
-      if (this.#admissionCount > 0) changes.push(...this.#takeAdmissionWave());
+      if (cameraMoved && cullPath === "compute-cull" && drawViewport !== undefined) {
+        const extra = this.#buildTightFirstSeen();
+        unshapedAdded = extra.length;
+        changes.push(...extra);
+      }
     }
     this.#lastSpatialUpdateMs = performance.now() - spatialStart;
     this.#lastLayoutMs = 0;
@@ -786,9 +780,6 @@ export class TextLayer extends Container {
 
     const needsComputeDispatch = cullPath === "compute-cull";
     if (coordinator === undefined || (changes.length === 0 && !needsComputeDispatch)) {
-      if (coordinator === undefined || this.#visibleCount === 0) {
-        this.#pendingAdmissionCount = 0;
-      }
       if (this.#visibleCount === 0) this.#renderSurface?.dropIdleMeshes();
       this.#lastCommitDurationMs = performance.now() - start;
       this.#lastCommitPromise = this.#renderTail.then(() => {
@@ -842,23 +833,17 @@ export class TextLayer extends Container {
         cullPath === "compute-cull"
           ? {
               records:
-                refreshResidency || this.#admissionSent > 0
+                refreshResidency || unshapedAdded > 0
                   ? this.#packCullRecords()
                   : this.#patchCullRecordAabbs(changes),
               recordCount: this.#cullRecordCount,
               viewport: drawViewport ?? FULL_CULL_VIEWPORT,
-              mirrorInstances: refreshResidency,
+              mirrorInstances: refreshResidency || unshapedAdded > 0,
             }
           : undefined;
-      if (result !== undefined) {
-        this.#deferAdmissions(changes, result.deferredSlots, refreshResidency);
-        surface?.apply(result, computeUpdate);
-      } else {
-        if (this.#visibleCount === 0) this.#pendingAdmissionCount = 0;
-        if (computeUpdate !== undefined) surface?.refreshComputeCull(computeUpdate);
-      }
+      if (result !== undefined) surface?.apply(result, computeUpdate);
+      else if (computeUpdate !== undefined) surface?.refreshComputeCull(computeUpdate);
       this.#lastUploadMs = surface?.stats.lastUploadMs ?? 0;
-      if (this.#pendingAdmissionCount > 0) this.#scheduleAdmission();
     });
     this.#renderTail = renderWork.then(
       () => undefined,
@@ -944,7 +929,6 @@ export class TextLayer extends Container {
       lastUploadMs: this.#lastUploadMs,
       glyphCount: render?.glyphs ?? 0,
       pendingGlyphCount: render?.pendingGlyphs ?? 0,
-      pendingAdmissionCount: this.#pendingAdmissionCount,
       shapedLabels: render?.shapedLabels ?? 0,
       transformOnlyLabels: render?.transformOnlyLabels ?? 0,
       removedRenderLabels: render?.removedLabels ?? 0,
@@ -970,7 +954,6 @@ export class TextLayer extends Container {
       return;
     }
 
-    this.#cancelAdmissionSchedule();
     this.#renderer = undefined;
     this.#renderSurface?.destroy();
     this.#renderSurface = undefined;
@@ -1111,8 +1094,7 @@ export class TextLayer extends Container {
     this.#dirtySlots = growTypedArray(this.#dirtySlots, required);
     this.#visibleSlots = growTypedArray(this.#visibleSlots, required);
     this.#renderedEpochs = growTypedArray(this.#renderedEpochs, required);
-    this.#renderedSlots = growTypedArray(this.#renderedSlots, required);
-    this.#admissionSlots = growTypedArray(this.#admissionSlots, required);
+    this.#bulkSlots = growTypedArray(this.#bulkSlots, required);
     if (this.#cullRecordIndex.length < required) {
       const next = new Int32Array(required).fill(-1);
       next.set(this.#cullRecordIndex);
@@ -1251,7 +1233,30 @@ export class TextLayer extends Container {
     return changes;
   }
 
-  #buildRenderChanges(cullPath: CullPath): LayerRenderChange[] {
+  #buildTightFirstSeen(): LayerRenderChange[] {
+    const bounds = this.#viewportBounds;
+    if (bounds === undefined) return [];
+    this.#ensureScratchCapacity();
+    if (this.#bulkSlots.length < this.#spatial.capacity) {
+      this.#bulkSlots = growTypedArray(this.#bulkSlots, this.#spatial.capacity);
+    }
+    const count = this.#spatial.query(bounds, this.#bulkSlots, this.#cullingPadding);
+    const coordinator = this.#renderCoordinator;
+    const epoch = this.#renderEpoch;
+    const changes: LayerRenderChange[] = [];
+    for (let index = 0; index < count; index += 1) {
+      const slot = this.#bulkSlots[index];
+      if (slot === undefined) throw new Error("Tight first-seen slot list is incomplete");
+      if (coordinator?.getRun(slot) !== undefined) continue;
+      const change = this.#renderChangeForSlot(slot, false, false);
+      if (change === undefined) continue;
+      if (epoch !== 0) this.#renderedEpochs[slot] = epoch;
+      changes.push(change);
+    }
+    return changes;
+  }
+
+  #buildRenderChanges(cullPath: CullPath, draw: CullViewport | undefined): LayerRenderChange[] {
     let previousEpoch = this.#renderEpoch;
     if (previousEpoch === 0xffff_ffff) {
       this.#renderedEpochs.fill(0);
@@ -1260,14 +1265,31 @@ export class TextLayer extends Container {
     const nextEpoch = previousEpoch + 1;
     const coordinator = this.#renderCoordinator;
     const changes: LayerRenderChange[] = [];
+    const bounds = this.#boundsScratch;
     for (let index = 0; index < this.#visibleCount; index += 1) {
       const slot = this.#visibleSlots[index];
       if (slot === undefined) throw new Error("Visible slot list is incomplete");
       const wasRendered = previousEpoch !== 0 && this.#renderedEpochs[slot] === previousEpoch;
-      this.#renderedEpochs[slot] = nextEpoch;
       const dirtyMask = this.#dirtyMasks[slot] ?? TextDirty.None;
       if (wasRendered && dirtyMask === TextDirty.None) continue;
       const hasRun = coordinator?.getRun(slot) !== undefined;
+      if (!hasRun) {
+        const box = this.#spatial.get(slot, bounds);
+        if (
+          box === undefined ||
+          !shouldInstanceUnshaped({
+            cullPath,
+            draw,
+            minX: box.x,
+            minY: box.y,
+            maxX: box.x + box.width,
+            maxY: box.y + box.height,
+          })
+        ) {
+          continue;
+        }
+      }
+      this.#renderedEpochs[slot] = nextEpoch;
       const change = this.#renderChangeForSlot(slot, wasRendered, hasRun);
       if (change === undefined) throw new Error("Visible label snapshot is unavailable");
       changes.push(change);
@@ -1282,8 +1304,6 @@ export class TextLayer extends Container {
         ...(cullPath === "compute-cull" && !gone ? { retainResources: true } : {}),
       });
     }
-    this.#renderedSlots.set(this.#visibleSlots.subarray(0, this.#visibleCount));
-    this.#renderedCount = this.#visibleCount;
     this.#renderEpoch = nextEpoch;
 
     return changes;
@@ -1301,161 +1321,10 @@ export class TextLayer extends Container {
   }
 
   #resetRenderedSet(): void {
-    this.#cancelAdmissionSchedule();
-    this.#pendingAdmissionCount = 0;
-    this.#admissionCount = 0;
-    this.#admissionSent = 0;
     this.#renderedEpochs.fill(0);
-    this.#renderedCount = 0;
     this.#renderEpoch = 0;
     this.#instancedViewport = undefined;
     this.#clearCullRecordIndex();
-  }
-
-  #deferAdmissions(
-    changes: readonly LayerRenderChange[],
-    deferredSlots: readonly number[],
-    refreshResidency: boolean,
-  ): void {
-    if (this.#visibleCount === 0) {
-      this.#admissionCount = 0;
-      this.#admissionSent = 0;
-      this.#pendingAdmissionCount = 0;
-      for (const change of changes) this.#dirtyMasks[change.slot] = TextDirty.None;
-      return;
-    }
-    const deferred = new Set(deferredSlots);
-    for (const change of changes) {
-      if (deferred.has(change.slot)) {
-        this.#dirtyMasks[change.slot] = change.mask;
-        if (this.#renderCoordinator?.getRun(change.slot) === undefined) {
-          this.#renderedEpochs[change.slot] = 0;
-        }
-        continue;
-      }
-      this.#dirtyMasks[change.slot] = TextDirty.None;
-      if (!refreshResidency && change.snapshot !== undefined) this.#markAdmitted(change.slot);
-    }
-    if (refreshResidency) {
-      if (
-        deferredSlots.length > 0 ||
-        admissionPreparedGlyphs(changes) ||
-        this.#admissionCount === 0
-      ) {
-        this.#writeAdmissionSlots(deferredSlots);
-      }
-      if (deferredSlots.length === 0) return;
-      const epoch = this.#renderEpoch;
-      let count = 0;
-      for (let index = 0; index < this.#renderedCount; index += 1) {
-        const slot = this.#renderedSlots[index];
-        if (slot === undefined) throw new Error("Rendered slot list is incomplete");
-        if (this.#renderedEpochs[slot] === epoch) {
-          this.#renderedSlots[count] = slot;
-          count += 1;
-        }
-      }
-      this.#renderedCount = count;
-      return;
-    }
-    if (this.#admissionSent > 0) {
-      this.#compactAdmissionSlots(deferredSlots, this.#admissionSent);
-      this.#admissionSent = 0;
-      return;
-    }
-    if (admissionPreparedGlyphs(changes)) this.#writeAdmissionSlots([]);
-  }
-
-  #takeAdmissionWave(): LayerRenderChange[] {
-    const wave = Math.min(this.#prepareWave, this.#admissionCount);
-    this.#admissionSent = wave;
-    const changes: LayerRenderChange[] = [];
-    const coordinator = this.#renderCoordinator;
-    for (let index = 0; index < wave; index += 1) {
-      const slot = this.#admissionSlots[index];
-      if (slot === undefined) throw new Error("Admission slot list is incomplete");
-      const change = this.#renderChangeForSlot(
-        slot,
-        false,
-        coordinator?.getRun(slot) !== undefined,
-      );
-      if (change !== undefined) changes.push(change);
-    }
-    return changes;
-  }
-
-  #writeAdmissionSlots(slots: readonly number[]): void {
-    this.#ensureAdmissionCapacity(slots.length);
-    for (let index = 0; index < slots.length; index += 1) {
-      const slot = slots[index];
-      if (slot === undefined) throw new Error("Admission slot list is incomplete");
-      this.#admissionSlots[index] = slot;
-    }
-    this.#admissionCount = slots.length;
-    this.#pendingAdmissionCount = slots.length;
-  }
-
-  #compactAdmissionSlots(deferredSlots: readonly number[], sent: number): void {
-    const unsentCount = this.#admissionCount - sent;
-    if (unsentCount > 0) {
-      if (this.#bulkSlots.length < unsentCount) {
-        this.#bulkSlots = growTypedArray(this.#bulkSlots, unsentCount);
-      }
-      this.#bulkSlots.set(this.#admissionSlots.subarray(sent, this.#admissionCount));
-    }
-    this.#ensureAdmissionCapacity(deferredSlots.length + unsentCount);
-    let out = 0;
-    for (const slot of deferredSlots) {
-      this.#admissionSlots[out] = slot;
-      out += 1;
-    }
-    if (unsentCount > 0) {
-      this.#admissionSlots.set(this.#bulkSlots.subarray(0, unsentCount), out);
-      out += unsentCount;
-    }
-    this.#admissionCount = out;
-    this.#pendingAdmissionCount = out;
-  }
-
-  #ensureAdmissionCapacity(count: number): void {
-    if (this.#admissionSlots.length >= count) return;
-    this.#admissionSlots = growTypedArray(this.#admissionSlots, count);
-  }
-
-  #markAdmitted(slot: number): void {
-    const epoch = this.#renderEpoch;
-    if (epoch === 0 || this.#renderedEpochs[slot] === epoch) return;
-    if (this.#renderCoordinator?.getRun(slot) === undefined) return;
-    this.#renderedEpochs[slot] = epoch;
-    this.#ensureScratchCapacity();
-    this.#renderedSlots[this.#renderedCount] = slot;
-    this.#renderedCount += 1;
-  }
-
-  #scheduleAdmission(): void {
-    if (this.#admissionCancel !== undefined) return;
-    const finish = (): void => {
-      this.#admissionCancel = undefined;
-      if (this.destroyed || this.#pendingAdmissionCount === 0) return;
-      void this.commit();
-    };
-    const raf = globalThis.requestAnimationFrame;
-    if (typeof raf === "function") {
-      const handle = raf(finish);
-      this.#admissionCancel = () => {
-        globalThis.cancelAnimationFrame(handle);
-      };
-      return;
-    }
-    const handle = setTimeout(finish, 0);
-    this.#admissionCancel = () => {
-      clearTimeout(handle);
-    };
-  }
-
-  #cancelAdmissionSchedule(): void {
-    this.#admissionCancel?.();
-    this.#admissionCancel = undefined;
   }
 
   #renderChangeForSlot(
@@ -1513,18 +1382,6 @@ export class TextLayer extends Container {
       throw new Error("TextLayer has been destroyed");
     }
   }
-}
-
-function admissionPreparedGlyphs(changes: readonly LayerRenderChange[]): boolean {
-  for (const change of changes) {
-    if (
-      change.snapshot !== undefined &&
-      (change.mask & (TextDirty.Content | TextDirty.Style)) !== 0
-    ) {
-      return true;
-    }
-  }
-  return false;
 }
 
 function normalizeLabel(

@@ -54,34 +54,21 @@ spent the pan windows in `RenderCoordinator.#prepare` / `#ensureGlyph` / `#build
 re-entry used `ALL_DIRTY` after a full remove. Drop the draw state and cull records only. `remove()`
 still tears the slot down. WebGL keeps the tight evict.
 
-## Do not Promise.all first-seen residents in one commit
+## Do not drip-feed on-screen labels
 
-A homepage pan after a working-set miss spent 1.89s in Pixi `_tick` / `updatePositions` /
-`writeTexture` and 2.65s in the next `_tick` on `RenderCoordinator.#prepare` / `#ensureGlyph` /
-`layout`. Those bars were first-seen labels in the new working set, all prepared in one microtask
-flush.
+Budgeted first-seen waves (`prepareBudgetMs` / `prepareWave` / leftover rAF) hid most of a new
+working set and filled it in over later frames. That is rejected: on-screen text must appear in
+the commit that first sees it.
 
-`retainResources` only helps revisits. New glyphs still need layout and raster. Budget that work
-(`prepareBudgetMs` / `prepareWave`) and continue on `requestAnimationFrame`. Do not wait for
-`ViewportBinding`; storm commits are 100ms and camera-only `frame-end` flushes skip when the camera
-is idle.
+The hitch those waves were papering over is still real. A homepage pan after a working-set miss
+spent 1.89s then 2.65s in layout and raster because compute-cull prepared the padded working set,
+not the tight draw view. `retainResources` only helps revisits. New glyphs still need layout and
+raster. Do that for labels that intersect the tight draw view, in one `Promise.all`. Off-screen
+working-set residents stay unshaped until the camera reaches them.
 
-Slots that make the wave must drop their dirty mask. If they keep `ALL_DIRTY`, the next commit
-sends them through layout again and the leftover first-seen set never shrinks.
-
-A position-only storm or a camera-only compute-cull flush must not write
-`pendingAdmissionCount = deferredSlots.length` when that list is empty. Zoom-out starts a first
-wave while the count is still 0. The homepage movers then commit. That batch never lists the
-leftover first-seen slots. Clearing the count drops them. The camera is already back inside the
-working set, so nothing re-queries, and the rest of the labels never appear. Only a residency
-refresh that deferred slots, or one that prepared content or style glyphs, may replace the leftover
-count. Hide-all still clears it.
-
-Leftover admission must not force a residency refresh. `pendingAdmissionCount > 0` used to OR into
-`shouldRefreshResidency`, so every animation frame re-queried the working set, rebuilt O(remaining)
-first-seen changes, and remirrored the instance buffer. Compute-cull then did more CPU than
-`cpu-grid`, because the working set is the padded box. Keep leftover slots in a list. Continue
-sends one `prepareWave`. Remirror only when the camera leaves that box or visibility changes.
+Do not bring back per-frame admission leftovers, `pendingAdmissionCount`, or animation-frame
+continue. That path also remirrored the instance buffer every wave and made compute-cull slower
+than `cpu-grid`.
 
 ## Live atlas keys omit `glyphText` when a glyph id is present
 

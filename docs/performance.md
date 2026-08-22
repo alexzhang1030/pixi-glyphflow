@@ -113,6 +113,6 @@ storage budgets stay until a human accepts new numbers.
   instance storage larger than the 128 MiB WebGPU default.
 - Reuse styles and fonts to maximize shaping and layout cache hits.
 - Set an atlas ceiling that matches the product glyph working set.
-- A first-seen working set is admitted across frames. `prepareBudgetMs` (default 8) and
-  `prepareWave` (default 8) cap layout and raster work per commit.
+- Compute-cull layouts first-seen labels in the tight draw view only. The expanded working set is
+  residency slack, not a prepare batch.
 - Read diagnostics at telemetry cadence.

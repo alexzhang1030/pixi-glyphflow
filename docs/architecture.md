@@ -67,11 +67,10 @@ converts the shared horizontal run into upright top-to-bottom columns before atl
 Trusted glyph runs let an upstream layout system supply immutable typed arrays with explicit
 ownership and revision stamps.
 
-`RenderCoordinator` prepares removals and transform-only updates immediately. First-seen labels and
-content or style dirty labels run in waves of `prepareWave`. After `prepareBudgetMs` the rest stay
-deferred. `TextLayer` restores those dirty masks, keeps already-shaped glyphs on screen, and continues
-on the next animation frame. A later position-only or camera-only commit does not clear that leftover.
-Continue sends one `prepareWave` from a leftover slot list and does not remirror the working set.
+`RenderCoordinator` prepares every accepted change in one `Promise.all`. Compute-cull still
+instances an expanded working set for camera slack, but it only layouts and rasters first-seen
+labels that intersect the tight draw view. Off-screen residents stay unshaped until the camera
+reaches them. On-screen text appears in that commit. There is no leftover admission wave.
 
 ## Atlas and instances
 

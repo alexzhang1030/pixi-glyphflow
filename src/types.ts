@@ -174,7 +174,6 @@ export interface TextLayerStats {
   readonly lastUploadMs: number;
   readonly glyphCount: number;
   readonly pendingGlyphCount: number;
-  readonly pendingAdmissionCount: number;
   readonly shapedLabels: number;
   readonly transformOnlyLabels: number;
   readonly removedRenderLabels: number;

@@ -40,11 +40,8 @@
   and instance writes. A single-bank mesh stays on that path when late glyph allocation leaves the
   CPU store out of draw order. WebGL and multi-segment meshes retain the tight CPU grid. `cullPath`
   reports the path that ran.
-- First-seen layout and raster work stops after `prepareBudgetMs` (default 8ms) or one
-  `prepareWave` when the budget is 0. Unprepared residents stay off the draw set.
-  `TextLayer.stats.pendingAdmissionCount` reports the leftover. The layer continues on the next
-  animation frame. A position-only or camera-only commit does not drop that leftover.
-  Continue remirrors only when the camera leaves the working set.
+- First-seen layout and raster run in the commit that first sees the label. Compute-cull prepares
+  only labels that intersect the tight draw view. There is no leftover admission wave.
 
 ## 1.1.0 - 2026-08-15
 

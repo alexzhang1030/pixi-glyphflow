@@ -31,34 +31,6 @@ function alphaRaster() {
   };
 }
 
-function admissionLayer(
-  onLayout: () => void,
-  culling?: false | { readonly bounds: { x: number; y: number; width: number; height: number } },
-): TextLayer {
-  return new TextLayer({
-    renderer: {} as Renderer,
-    ...(culling === undefined ? {} : { culling }),
-    rendering: {
-      prepareBudgetMs: 0,
-      prepareWave: 3,
-      layoutEngine: {
-        async layout() {
-          onLayout();
-          return RUN;
-        },
-        destroy() {},
-      },
-      glyphProvider: {
-        async rasterize() {
-          return alphaRaster();
-        },
-        destroy() {},
-      },
-      atlasOptions: { pageWidth: 32, pageHeight: 32, maxBytes: 4_096 },
-    },
-  });
-}
-
 describe("TextLayer commit and maintenance", () => {
   test("publishes coalesced dirty domains and reports zero work for no-op commits", async () => {
     const layer = new TextLayer();
@@ -285,111 +257,43 @@ describe("TextLayer commit and maintenance", () => {
     layer.destroy();
   });
 
-  test("admits first-seen labels across commits when the prepare budget is one wave", async () => {
+  test("prepares every first-seen label in one commit", async () => {
     let layouts = 0;
-    const layer = admissionLayer(() => {
-      layouts += 1;
+    const layer = new TextLayer({
+      renderer: {} as Renderer,
+      rendering: {
+        layoutEngine: {
+          async layout() {
+            layouts += 1;
+            return RUN;
+          },
+          destroy() {},
+        },
+        glyphProvider: {
+          async rasterize() {
+            return alphaRaster();
+          },
+          destroy() {},
+        },
+        atlasOptions: { pageWidth: 32, pageHeight: 32, maxBytes: 4_096 },
+      },
     });
     layer.createMany(
       Array.from({ length: 10 }, (_, index) => ({ text: "A", x: index * 12, y: 0 })),
     );
 
     await layer.commit();
-    expect(layouts).toBe(3);
-    expect(layer.stats.pendingAdmissionCount).toBe(7);
-    expect(layer.stats.glyphCount).toBe(3);
-
-    await layer.commit();
-    expect(layouts).toBe(6);
-    expect(layer.stats.pendingAdmissionCount).toBe(4);
-
-    await layer.commit();
-    expect(layouts).toBe(9);
-    expect(layer.stats.pendingAdmissionCount).toBe(1);
-
-    await layer.commit();
     expect(layouts).toBe(10);
-    expect(layer.stats.pendingAdmissionCount).toBe(0);
     expect(layer.stats.glyphCount).toBe(10);
 
     await layer.commit();
     expect(layouts).toBe(10);
-    expect(layer.stats.pendingAdmissionCount).toBe(0);
-
-    layer.destroy();
-  });
-
-  test("hideAll after a partial admission wave drops leftover glyphs", async () => {
-    let layouts = 0;
-    const layer = admissionLayer(() => {
-      layouts += 1;
-    });
-    layer.createMany(
-      Array.from({ length: 10 }, (_, index) => ({ text: "A", x: index * 12, y: 0 })),
-    );
-
-    await layer.commit();
-    expect(layouts).toBe(3);
-    expect(layer.stats.glyphCount).toBe(3);
 
     layer.hideAll();
     await layer.commit();
     expect(layer.stats.visibleLabelCount).toBe(0);
-    expect(layer.stats.pendingAdmissionCount).toBe(0);
     expect(layer.stats.glyphCount).toBe(0);
-    expect(layouts).toBe(3);
-
-    layer.destroy();
-  });
-
-  test("keeps leftover first-seen when a position commit overlaps the first wave", async () => {
-    let layouts = 0;
-    const layer = admissionLayer(() => {
-      layouts += 1;
-    });
-    const ids = layer.createMany(
-      Array.from({ length: 10 }, (_, index) => ({ text: "A", x: index * 12, y: 0 })),
-    );
-
-    const first = layer.commit();
-    layer.updatePositions(ids.slice(0, 3), new Float32Array([0, 1, 12, 1, 24, 1]));
-    const storm = layer.commit();
-    await first;
-    await storm;
-    expect(layouts).toBe(3);
-    expect(layer.stats.pendingAdmissionCount).toBe(7);
-    expect(layer.stats.glyphCount).toBe(3);
-
-    await layer.commit();
-    expect(layouts).toBe(6);
-    expect(layer.stats.pendingAdmissionCount).toBe(4);
-    expect(layer.stats.glyphCount).toBe(6);
-
-    layer.destroy();
-  });
-
-  test("continues leftover admission without another spatial query", async () => {
-    let layouts = 0;
-    const layer = admissionLayer(
-      () => {
-        layouts += 1;
-      },
-      { bounds: { x: -20, y: -20, width: 200, height: 40 } },
-    );
-    layer.createMany(
-      Array.from({ length: 10 }, (_, index) => ({ text: "A", x: index * 12, y: 0 })),
-    );
-
-    await layer.commit();
-    expect(layouts).toBe(3);
-    expect(layer.stats.pendingAdmissionCount).toBe(7);
-    const queries = layer.stats.cullingQueries;
-
-    await layer.commit();
-    expect(layouts).toBe(6);
-    expect(layer.stats.pendingAdmissionCount).toBe(4);
-    expect(layer.stats.glyphCount).toBe(6);
-    expect(layer.stats.cullingQueries).toBe(queries);
+    expect(layouts).toBe(10);
 
     layer.destroy();
   });
