@@ -214,7 +214,7 @@ describe("glyph providers", () => {
     registry.destroy();
   });
 
-  test("serializes atlas generation within each MSDF worker", async () => {
+  test("batches same-size MSDF misses into one generator pass and serializes each worker", async () => {
     const registry = new FontRegistry();
     const font = await registry.register({ family: "Fixture", source: new Uint8Array([1, 2]) });
     let active = 0;
@@ -233,19 +233,17 @@ describe("glyph providers", () => {
             active -= 1;
             return {
               texture: {
-                width: 1,
+                width: charset.length,
                 height: 1,
-                data: new Uint8ClampedArray([255, 255, 255, 255]),
+                data: new Uint8ClampedArray(charset.length * 4).fill(255),
               },
-              glyphs: [
-                {
-                  char: charset,
-                  atlasPosition: [0, 0],
-                  atlasSize: [1, 1],
-                  bounds: { left: 0, bottom: 0, right: 1, top: 1 },
-                  advance: 1,
-                },
-              ],
+              glyphs: [...charset].map((char, index) => ({
+                char,
+                atlasPosition: [index, 0] as [number, number],
+                atlasSize: [1, 1] as [number, number],
+                bounds: { left: index, bottom: 0, right: index + 1, top: 1 },
+                advance: 1,
+              })),
               fieldRange: 4,
             };
           },
@@ -256,17 +254,19 @@ describe("glyph providers", () => {
     const base = {
       family: "Fixture",
       fontRevision: font.revision,
-      fontSize: 16,
       mode: "msdf",
     } as const;
 
-    await Promise.all([
-      provider.rasterize({ ...base, glyphId: 65, glyphText: "A" }),
-      provider.rasterize({ ...base, glyphId: 66, glyphText: "B" }),
+    const rasters = await Promise.all([
+      provider.rasterize({ ...base, fontSize: 48, glyphId: 65, glyphText: "A" }),
+      provider.rasterize({ ...base, fontSize: 48, glyphId: 66, glyphText: "B" }),
+      provider.rasterize({ ...base, fontSize: 96, glyphId: 67, glyphText: "C" }),
     ]);
 
     expect(maximumActive).toBe(1);
-    expect(charsets).toEqual(["A", "B"]);
+    expect(charsets).toEqual(["AB", "C"]);
+    expect(rasters[0]?.metrics?.bearingX).toBe(0);
+    expect(rasters[1]?.metrics?.bearingX).toBeGreaterThan(0);
     await provider.destroy();
     registry.destroy();
   });
