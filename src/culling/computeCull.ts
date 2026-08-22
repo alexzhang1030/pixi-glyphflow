@@ -83,15 +83,12 @@ export function computeCullStructurallyEligible(input: {
 
 export function shouldRefreshResidency(input: ResidencyRefreshInput): boolean {
   if (input.visibilityDirty) return true;
+  if (input.instanced === undefined || input.draw === undefined) return true;
   switch (input.cullPath) {
     case "cpu-grid":
-      return true;
+      return !cullViewportsEqual(input.instanced, input.draw);
     case "compute-cull":
-      return (
-        input.instanced === undefined ||
-        input.draw === undefined ||
-        !workingSetContains(input.instanced, input.draw)
-      );
+      return !workingSetContains(input.instanced, input.draw);
     default: {
       const _exhaustive: never = input.cullPath;
       return _exhaustive;

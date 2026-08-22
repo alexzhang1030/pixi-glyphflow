@@ -71,6 +71,7 @@ ownership and revision stamps.
 content or style dirty labels run in waves of `prepareWave`. After `prepareBudgetMs` the rest stay
 deferred. `TextLayer` restores those dirty masks, keeps already-shaped glyphs on screen, and continues
 on the next animation frame. A later position-only or camera-only commit does not clear that leftover.
+Continue sends one `prepareWave` from a leftover slot list and does not remirror the working set.
 
 ## Atlas and instances
 

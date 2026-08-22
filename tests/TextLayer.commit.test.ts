@@ -31,9 +31,13 @@ function alphaRaster() {
   };
 }
 
-function admissionLayer(onLayout: () => void): TextLayer {
+function admissionLayer(
+  onLayout: () => void,
+  culling?: false | { readonly bounds: { x: number; y: number; width: number; height: number } },
+): TextLayer {
   return new TextLayer({
     renderer: {} as Renderer,
+    ...(culling === undefined ? {} : { culling }),
     rendering: {
       prepareBudgetMs: 0,
       prepareWave: 3,
@@ -360,6 +364,32 @@ describe("TextLayer commit and maintenance", () => {
     expect(layouts).toBe(6);
     expect(layer.stats.pendingAdmissionCount).toBe(4);
     expect(layer.stats.glyphCount).toBe(6);
+
+    layer.destroy();
+  });
+
+  test("continues leftover admission without another spatial query", async () => {
+    let layouts = 0;
+    const layer = admissionLayer(
+      () => {
+        layouts += 1;
+      },
+      { bounds: { x: -20, y: -20, width: 200, height: 40 } },
+    );
+    layer.createMany(
+      Array.from({ length: 10 }, (_, index) => ({ text: "A", x: index * 12, y: 0 })),
+    );
+
+    await layer.commit();
+    expect(layouts).toBe(3);
+    expect(layer.stats.pendingAdmissionCount).toBe(7);
+    const queries = layer.stats.cullingQueries;
+
+    await layer.commit();
+    expect(layouts).toBe(6);
+    expect(layer.stats.pendingAdmissionCount).toBe(4);
+    expect(layer.stats.glyphCount).toBe(6);
+    expect(layer.stats.cullingQueries).toBe(queries);
 
     layer.destroy();
   });

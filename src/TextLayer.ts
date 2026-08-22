@@ -122,6 +122,10 @@ export class TextLayer extends Container {
   #visibilityDirty = true;
   #admissionCancel: (() => void) | undefined;
   #pendingAdmissionCount = 0;
+  #admissionSlots: Uint32Array;
+  #admissionCount = 0;
+  #admissionSent = 0;
+  readonly #prepareWave: number;
   #dirtyMasks: Uint8Array;
   #positionOnly: Uint8Array;
   #dirtySlots: Uint32Array;
@@ -177,9 +181,12 @@ export class TextLayer extends Container {
     this.#visibleSlots = new Uint32Array(this.#store.capacity);
     this.#renderedEpochs = new Uint32Array(this.#store.capacity);
     this.#renderedSlots = new Uint32Array(this.#store.capacity);
+    this.#admissionSlots = new Uint32Array(this.#store.capacity);
     this.#cullRecordIndex = new Int32Array(this.#store.capacity).fill(-1);
     this.#renderer = options.renderer;
     this.#renderingOptions = options.rendering ?? {};
+    this.#prepareWave =
+      options.rendering === false ? 8 : (options.rendering?.prepareWave ?? 8);
     if (this.#renderer !== undefined) {
       this.#activateRendering();
     }
@@ -753,23 +760,23 @@ export class TextLayer extends Container {
     this.#lastCommitStyleLabels = dirty.style;
     const cullPath = this.#resolveCullPath();
     const drawViewport = this.#drawViewport();
-    const refreshResidency =
-      this.#pendingAdmissionCount > 0 ||
-      shouldRefreshResidency({
-        cullPath,
-        visibilityDirty: this.#visibilityDirty,
-        instanced: this.#instancedViewport,
-        draw: drawViewport,
-      });
+    const refreshResidency = shouldRefreshResidency({
+      cullPath,
+      visibilityDirty: this.#visibilityDirty,
+      instanced: this.#instancedViewport,
+      draw: drawViewport,
+    });
     this.#viewDirty = false;
+    this.#admissionSent = 0;
     const spatialStart = performance.now();
     let changes: LayerRenderChange[] = [];
     if (refreshResidency) {
       this.#visibleCount = this.#queryVisible(cullPath, drawViewport);
       this.#visibilityDirty = false;
       if (coordinator !== undefined) changes = this.#buildRenderChanges(cullPath);
-    } else if (hasLabelChanges && coordinator !== undefined) {
-      changes = this.#buildResidentDirtyChanges();
+    } else if (coordinator !== undefined) {
+      if (hasLabelChanges) changes = this.#buildResidentDirtyChanges();
+      if (this.#admissionCount > 0) changes.push(...this.#takeAdmissionWave());
     }
     this.#lastSpatialUpdateMs = performance.now() - spatialStart;
     this.#lastLayoutMs = 0;
@@ -835,16 +842,17 @@ export class TextLayer extends Container {
       const computeUpdate: RenderComputeCullUpdate | undefined =
         cullPath === "compute-cull"
           ? {
-              records: refreshResidency
-                ? this.#packCullRecords()
-                : this.#patchCullRecordAabbs(changes),
+              records:
+                refreshResidency || this.#admissionSent > 0
+                  ? this.#packCullRecords()
+                  : this.#patchCullRecordAabbs(changes),
               recordCount: this.#cullRecordCount,
               viewport: drawViewport ?? FULL_CULL_VIEWPORT,
               mirrorInstances: refreshResidency,
             }
           : undefined;
       if (result !== undefined) {
-        this.#deferAdmissions(changes, result.deferredSlots);
+        this.#deferAdmissions(changes, result.deferredSlots, refreshResidency);
         surface?.apply(result, computeUpdate);
       } else {
         if (this.#visibleCount === 0) this.#pendingAdmissionCount = 0;
@@ -1105,6 +1113,7 @@ export class TextLayer extends Container {
     this.#visibleSlots = growTypedArray(this.#visibleSlots, required);
     this.#renderedEpochs = growTypedArray(this.#renderedEpochs, required);
     this.#renderedSlots = growTypedArray(this.#renderedSlots, required);
+    this.#admissionSlots = growTypedArray(this.#admissionSlots, required);
     if (this.#cullRecordIndex.length < required) {
       const next = new Int32Array(required).fill(-1);
       next.set(this.#cullRecordIndex);
@@ -1131,7 +1140,7 @@ export class TextLayer extends Container {
         }
         switch (cullPath) {
           case "cpu-grid":
-            this.#instancedViewport = undefined;
+            this.#instancedViewport = draw;
             return this.#spatial.query(bounds, this.#visibleSlots, this.#cullingPadding);
           case "compute-cull": {
             const working = expandWorkingSet(draw, Math.max(draw.width, draw.height));
@@ -1295,6 +1304,8 @@ export class TextLayer extends Container {
   #resetRenderedSet(): void {
     this.#cancelAdmissionSchedule();
     this.#pendingAdmissionCount = 0;
+    this.#admissionCount = 0;
+    this.#admissionSent = 0;
     this.#renderedEpochs.fill(0);
     this.#renderedCount = 0;
     this.#renderEpoch = 0;
@@ -1302,8 +1313,14 @@ export class TextLayer extends Container {
     this.#clearCullRecordIndex();
   }
 
-  #deferAdmissions(changes: readonly LayerRenderChange[], deferredSlots: readonly number[]): void {
+  #deferAdmissions(
+    changes: readonly LayerRenderChange[],
+    deferredSlots: readonly number[],
+    refreshResidency: boolean,
+  ): void {
     if (this.#visibleCount === 0) {
+      this.#admissionCount = 0;
+      this.#admissionSent = 0;
       this.#pendingAdmissionCount = 0;
       for (const change of changes) this.#dirtyMasks[change.slot] = TextDirty.None;
       return;
@@ -1318,9 +1335,17 @@ export class TextLayer extends Container {
         continue;
       }
       this.#dirtyMasks[change.slot] = TextDirty.None;
+      if (!refreshResidency && change.snapshot !== undefined) this.#markAdmitted(change.slot);
     }
-    if (deferredSlots.length > 0) {
-      this.#pendingAdmissionCount = deferredSlots.length;
+    if (refreshResidency) {
+      if (
+        deferredSlots.length > 0 ||
+        admissionPreparedGlyphs(changes) ||
+        this.#admissionCount === 0
+      ) {
+        this.#writeAdmissionSlots(deferredSlots);
+      }
+      if (deferredSlots.length === 0) return;
       const epoch = this.#renderEpoch;
       let count = 0;
       for (let index = 0; index < this.#renderedCount; index += 1) {
@@ -1334,7 +1359,74 @@ export class TextLayer extends Container {
       this.#renderedCount = count;
       return;
     }
-    if (admissionPreparedGlyphs(changes)) this.#pendingAdmissionCount = 0;
+    if (this.#admissionSent > 0) {
+      this.#compactAdmissionSlots(deferredSlots, this.#admissionSent);
+      this.#admissionSent = 0;
+      return;
+    }
+    if (admissionPreparedGlyphs(changes)) this.#writeAdmissionSlots([]);
+  }
+
+  #takeAdmissionWave(): LayerRenderChange[] {
+    const wave = Math.min(this.#prepareWave, this.#admissionCount);
+    this.#admissionSent = wave;
+    const changes: LayerRenderChange[] = [];
+    const coordinator = this.#renderCoordinator;
+    for (let index = 0; index < wave; index += 1) {
+      const slot = this.#admissionSlots[index];
+      if (slot === undefined) throw new Error("Admission slot list is incomplete");
+      const change = this.#renderChangeForSlot(slot, false, coordinator?.getRun(slot) !== undefined);
+      if (change !== undefined) changes.push(change);
+    }
+    return changes;
+  }
+
+  #writeAdmissionSlots(slots: readonly number[]): void {
+    this.#ensureAdmissionCapacity(slots.length);
+    for (let index = 0; index < slots.length; index += 1) {
+      const slot = slots[index];
+      if (slot === undefined) throw new Error("Admission slot list is incomplete");
+      this.#admissionSlots[index] = slot;
+    }
+    this.#admissionCount = slots.length;
+    this.#pendingAdmissionCount = slots.length;
+  }
+
+  #compactAdmissionSlots(deferredSlots: readonly number[], sent: number): void {
+    const unsentCount = this.#admissionCount - sent;
+    if (unsentCount > 0) {
+      if (this.#bulkSlots.length < unsentCount) {
+        this.#bulkSlots = growTypedArray(this.#bulkSlots, unsentCount);
+      }
+      this.#bulkSlots.set(this.#admissionSlots.subarray(sent, this.#admissionCount));
+    }
+    this.#ensureAdmissionCapacity(deferredSlots.length + unsentCount);
+    let out = 0;
+    for (const slot of deferredSlots) {
+      this.#admissionSlots[out] = slot;
+      out += 1;
+    }
+    if (unsentCount > 0) {
+      this.#admissionSlots.set(this.#bulkSlots.subarray(0, unsentCount), out);
+      out += unsentCount;
+    }
+    this.#admissionCount = out;
+    this.#pendingAdmissionCount = out;
+  }
+
+  #ensureAdmissionCapacity(count: number): void {
+    if (this.#admissionSlots.length >= count) return;
+    this.#admissionSlots = growTypedArray(this.#admissionSlots, count);
+  }
+
+  #markAdmitted(slot: number): void {
+    const epoch = this.#renderEpoch;
+    if (epoch === 0 || this.#renderedEpochs[slot] === epoch) return;
+    if (this.#renderCoordinator?.getRun(slot) === undefined) return;
+    this.#renderedEpochs[slot] = epoch;
+    this.#ensureScratchCapacity();
+    this.#renderedSlots[this.#renderedCount] = slot;
+    this.#renderedCount += 1;
   }
 
   #scheduleAdmission(): void {

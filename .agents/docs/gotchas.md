@@ -77,6 +77,12 @@ working set, so nothing re-queries, and the rest of the labels never appear. Onl
 refresh that deferred slots, or one that prepared content or style glyphs, may replace the leftover
 count. Hide-all still clears it.
 
+Leftover admission must not force a residency refresh. `pendingAdmissionCount > 0` used to OR into
+`shouldRefreshResidency`, so every animation frame re-queried the working set, rebuilt O(remaining)
+first-seen changes, and remirrored the instance buffer. Compute-cull then did more CPU than
+`cpu-grid`, because the working set is the padded box. Keep leftover slots in a list. Continue
+sends one `prepareWave`. Remirror only when the camera leaves that box or visibility changes.
+
 ## Live atlas keys omit `glyphText` when a glyph id is present
 
 Packed identities are family intern + glyph id + size bucket + weight class + mode + font revision. Rasterize must use the same size bucket as the key. String keys stay valid for `atlas-pressure` (`glyph-${index}`), prebuilt pages, non-BMP text with glyph id 0, and unusual weights. Do not put `glyphText` back into the packed key, and do not fall back to `float16x4` instance attributes.

@@ -44,6 +44,7 @@
   `prepareWave` when the budget is 0. Unprepared residents stay off the draw set.
   `TextLayer.stats.pendingAdmissionCount` reports the leftover. The layer continues on the next
   animation frame. A position-only or camera-only commit does not drop that leftover.
+  Continue remirrors only when the camera leaves the working set.
 
 ## 1.1.0 - 2026-08-15
 

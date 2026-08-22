@@ -201,7 +201,8 @@ WebGL 2 keeps the Wave 1 CPU grid. WebGPU gains a second adapter that does not w
   adapter limit through `requestComputeCullGpu()` and fall back to `cpu-grid` when they still
   cannot bind.
 - Camera-only commits inside the expanded CPU working set upload only the viewport uniform. Residency
-  refreshes pack records and upload instances again.
+  refreshes pack records and upload instances again. Leftover first-seen admission continues from a
+  slot list and does not remirror the working set.
 - Prefix sums and stable scatter preserve z-index and insertion order without atomic append order.
 - WebGL, missing WebGPU devices, `computeCull: false`, and multi-segment compact meshes keep the
   tight CPU grid.

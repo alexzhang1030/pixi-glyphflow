@@ -208,6 +208,14 @@ describe("compute cull host reference", () => {
         draw,
       }),
     ).toBe(true);
+    expect(
+      shouldRefreshResidency({
+        cullPath: "cpu-grid",
+        visibilityDirty: false,
+        instanced: draw,
+        draw,
+      }),
+    ).toBe(false);
   });
 
   test("patches a packed AABB without rewriting instance ranges", () => {
