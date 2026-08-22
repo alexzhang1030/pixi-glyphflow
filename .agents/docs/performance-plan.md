@@ -67,9 +67,11 @@ The published 128 MiB store and 64-byte transform ceilings stay until new M1 Pro
 
 Compute culling separates CPU residency from the submitted draw set. The CPU grid shapes and
 instances an expanded viewport. Camera motion inside that box uploads one tight viewport uniform
-and dispatches stable prefix-sum compaction without rebuilding instances. Crossing the working-set
-edge refreshes residency through another expanded grid query. WebGL and multi-segment meshes keep
-the tight CPU-grid path.
+and dispatches stable prefix-sum compaction without rebuilding instances. Position-only storms
+inside the same box patch resident cull AABBs and palette texels. They do not re-query or rebuild
+draw segments. Crossing the working-set edge refreshes the draw-state set and cull records, but
+keeps runs and instances so a later re-entry does not layout or raster again. Show/hide/add/remove
+still goes through the store. WebGL and multi-segment meshes keep the tight CPU-grid path.
 
 ### The million-glyph GPU path is not the product path
 
@@ -193,16 +195,20 @@ Verify: existing storage assertions in `benchmarks/budgets.ts` plus new optional
 
 WebGL 2 keeps the Wave 1 CPU grid. WebGPU gains a second adapter that does not walk JS arrays on camera-only frames.
 
-- The direct natural-order mesh now uploads label bounds with instance ranges. A compute pass tests
+- The direct single-bank mesh now uploads label bounds with instance ranges. A compute pass tests
   the tight viewport, writes compacted instances, and patches indirect draw arguments.
+- PixiJS keeps the 128 MiB storage-binding default. Million-label instance buffers request the
+  adapter limit through `requestComputeCullGpu()` and fall back to `cpu-grid` when they still
+  cannot bind.
 - Camera-only commits inside the expanded CPU working set upload only the viewport uniform. Residency
-  refreshes pack records and upload instances again.
+  refreshes pack records and upload instances again. Leftover first-seen admission continues from a
+  slot list and does not remirror the working set.
 - Prefix sums and stable scatter preserve z-index and insertion order without atomic append order.
 - WebGL, missing WebGPU devices, `computeCull: false`, and multi-segment compact meshes keep the
   tight CPU grid.
 - Moving the transform palette to a storage buffer and combining atlas pages into a texture array
   remain follow-up work.
-- Optional LOD: drop or downsample glyphs whose projected height is below one pixel, following map-label practice. This is a policy flag, default off, because it changes pixels.
+- Optional LOD: `culling.lod` drops labels whose projected font height is below one pixel. Default off, because it changes pixels.
 
 Primary targets: camera-only CPU ≤ 1.00 ms p95 at 1,000,000 residents / 50,000 visible; WebGPU `viewport-drag` and `viewport-zoom` at or below the Wave 1 CPU-grid numbers; WebGL 2 unchanged within variance.
 
@@ -212,9 +218,10 @@ Verify: `bun run test:browser -- glyph-rendering` and both-adapter site/browser 
 
 The packer is no longer the limiter; generation and upload are.
 
-- Add a TinySDF-style local SDF path for system and CJK fallback so `@zappar/msdf-generator` is not on the first miss for every ideograph. Keep exact HarfBuzz glyph IDs for registered binary fonts.
-- Support prebaked MSDF/SDF pages as the default for known UI alphabets (TMP hybrid model; Mapbox PBF ranges). Dynamic pages handle the long tail.
-- Budget atlas uploads per frame and resume across frames. A 20,000-glyph first miss must not hitch a single commit.
+- TinySDF is in tree behind `rasterizerOptions.tinySdf`. It builds an SDF from the canvas mask so `@zappar/msdf-generator` is not on the first miss. Binary families install through `FontFace`. Exact HarfBuzz glyph IDs still go through MSDF when the flag is off.
+- `rasterizerOptions.prebuilt` is the hybrid page lookup (TMP / Mapbox PBF model). Dynamic TinySDF or MSDF handles the long tail. Default alphabet pages stay out of the core bundle.
+- `culling.lod` drops labels whose projected font height is below one pixel. Default is off.
+- Budget atlas uploads per frame and resume across frames. A 20,000-glyph first miss must not hitch a single commit. First-seen layout runs in the seeing commit for the tight draw view plus a 0.25-viewport ring. Do not drip-feed on-screen labels.
 - Optional persistent cache is a product decision (IndexedDB, as in Mapbox local glyphs). Do not add it without a human license and privacy pass.
 - Pin the visible set and a small predictive ring around the current viewport/zoom, so zoom does not evict the glyphs it will need on the next wheel tick.
 

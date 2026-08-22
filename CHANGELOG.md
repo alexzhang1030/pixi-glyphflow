@@ -37,8 +37,17 @@
   waste map. Published `atlas-pressure` frame ceilings stay.
 - WebGPU can compact an expanded CPU working set against the tight draw viewport with a stable
   prefix sum and indexed indirect draw. Camera motion inside that working set skips spatial queries
-  and instance writes. WebGL and unsupported mesh shapes retain the tight CPU grid. `cullPath`
+  and instance writes. A single-bank mesh stays on that path when late glyph allocation leaves the
+  CPU store out of draw order. WebGL and multi-segment meshes retain the tight CPU grid. `cullPath`
   reports the path that ran.
+- First-seen layout and raster run in the commit that first sees the label. Compute-cull prepares
+  labels that intersect the tight draw view plus a 0.25-viewport ring. There is no leftover
+  admission wave. Unchanged visible labels keep their rendered epoch so a sibling z-index or blend
+  change does not evict them. Shape-cache hits return a run on the same turn. Duplicate strings
+  clone instance ranges and only rewrite the palette index. `tinySdf: true` builds HarfBuzz glyphs
+  with a local SDF from the canvas mask and skips the MSDF worker. `rasterizerOptions.prebuilt`
+  serves packed pages before generation. `culling.lod` drops labels whose projected font height is
+  below one pixel.
 
 ## 1.1.0 - 2026-08-15
 

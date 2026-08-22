@@ -1,7 +1,7 @@
 export { SpatialIndex } from "../culling/SpatialIndex";
 export { GlyphAtlas } from "../atlas/GlyphAtlas";
 export { resolveGlyphIdentity, unpackGlyphIdentity } from "../atlas/glyphIdentity";
-export { PrebuiltGlyphProvider } from "../atlas/PrebuiltGlyphProvider";
+export { PrebuiltGlyphProvider, prebuiltGlyphKey } from "../atlas/PrebuiltGlyphProvider";
 export { RasterGlyphProvider } from "../atlas/RasterGlyphProvider";
 export { LayoutEngine } from "../layout/LayoutEngine";
 export { BitmapLayoutAdapter } from "../pixi/compat/bitmapLayout";
@@ -60,6 +60,7 @@ export type {
   LayoutCacheStats,
   LayoutEngineOptions,
   LayoutEngineStats,
+  LayoutResult,
   PositionedRunShaper,
   TextLayoutInput,
 } from "../layout/types";

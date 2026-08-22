@@ -13,7 +13,7 @@ import type {
 import type { AtlasCommit } from "../atlas/types";
 import type { FontRegistry } from "../FontRegistry";
 import { LayoutEngine } from "../layout/LayoutEngine";
-import type { PositionedRun, TextLayoutInput } from "../layout/types";
+import type { LayoutResult, PositionedRun, TextLayoutInput } from "../layout/types";
 import type { TrustedGlyphRun } from "../shaping/TrustedGlyphRun";
 import { TextDirty } from "../store/types";
 import type { TextLayoutOptions, TextShapingOptions } from "../types";
@@ -52,14 +52,12 @@ export interface RenderChange {
   readonly trustedRun?: TrustedGlyphRun;
   /** Transform dirty is only x/y; patch palette texels without rewriting fill/effects. */
   readonly positionOnly?: boolean;
+  /** Drop the draw state but keep the run, instances, and palette. */
+  readonly retainResources?: boolean;
 }
 
 export interface RenderLayoutEngineLike {
-  layout(
-    labelId: number,
-    sourceRevision: number,
-    input: TextLayoutInput,
-  ): Promise<Readonly<PositionedRun>>;
+  layout(labelId: number, sourceRevision: number, input: TextLayoutInput): LayoutResult;
   destroy(): void;
 }
 
@@ -123,7 +121,6 @@ const EMPTY_ATLAS_COMMIT: Readonly<AtlasCommit> = Object.freeze({
   uploads: Object.freeze([]),
   evictedKeys: Object.freeze([]),
 });
-
 export class RenderCoordinator {
   readonly instances: GlyphInstanceStore;
   readonly transforms: TransformPalette;
@@ -138,6 +135,8 @@ export class RenderCoordinator {
   readonly #runs = new Map<number, Readonly<PositionedRun>>();
   readonly #drawStates = new Map<number, Readonly<RenderDrawState>>();
   readonly #pendingGlyphs = new Map<GlyphCacheKey, Promise<void>>();
+  readonly #prototypeSlots = new Map<string, number>();
+  readonly #slotPrototypeKeys = new Map<number, string>();
   #batchPositions = new Float32Array(0);
   #batchUvs = new Float32Array(0);
   #batchPalette = new Uint32Array(0);
@@ -153,9 +152,12 @@ export class RenderCoordinator {
   #removedLabels = 0;
   #lastAddedOrder = 0;
   #needsDrawSort = false;
+  #drawStateList: Readonly<RenderDrawState>[] = [];
+  #drawStatesDirty = true;
   #lastLayoutMs = 0;
   #lastInstanceWriteMs = 0;
   #lastPaletteWriteMs = 0;
+  readonly #tinySdf: boolean;
   #destroyed = false;
 
   constructor(options: RenderCoordinatorOptions) {
@@ -171,6 +173,7 @@ export class RenderCoordinator {
     this.#ownsAtlas = options.atlas === undefined;
     this.#ownsInstances = options.instances === undefined;
     this.#ownsTransforms = options.transforms === undefined;
+    this.#tinySdf = options.rasterizerOptions?.tinySdf === true;
   }
 
   async commit(
@@ -187,7 +190,8 @@ export class RenderCoordinator {
     this.#lastPaletteWriteMs = 0;
     const ticket = ++this.#ticket;
     const prepareStart = performance.now();
-    const prepared = await Promise.all(changes.map((change) => this.#prepare(change, ticket)));
+    const preparedOrPending = this.#prepareChanges(changes, ticket);
+    const prepared = isPromise(preparedOrPending) ? await preparedOrPending : preparedOrPending;
     this.#lastLayoutMs = performance.now() - prepareStart;
     if (ticket !== this.#ticket) {
       this.#staleRevisions += 1;
@@ -200,8 +204,16 @@ export class RenderCoordinator {
     for (const item of prepared) {
       const { change, run } = item;
       if (change.snapshot === undefined) {
+        if (this.#drawStates.delete(change.slot)) {
+          drawOrderChanged = true;
+          this.#drawStatesDirty = true;
+        }
+        if (change.retainResources === true) {
+          appliedLabels += 1;
+          continue;
+        }
         this.#runs.delete(change.slot);
-        drawOrderChanged = this.#drawStates.delete(change.slot) || drawOrderChanged;
+        this.#forgetPrototype(change.slot);
         const instanceStart = performance.now();
         this.instances.remove(change.slot);
         this.#lastInstanceWriteMs += performance.now() - instanceStart;
@@ -239,16 +251,13 @@ export class RenderCoordinator {
           }),
         );
         drawOrderChanged = true;
+        this.#drawStatesDirty = true;
       }
-      const sourceChanged =
-        (change.mask & (TextDirty.Content | TextDirty.Style)) !== 0 ||
-        this.#runs.get(change.slot) === undefined;
+      const sourceChanged = this.#sourceChanged(change);
       if (sourceChanged) {
         this.#runs.set(change.slot, run);
         const instanceStart = performance.now();
-        this.instances.set(change.slot, this.#buildInstances(change.slot, run, change.snapshot), {
-          skipEquality: true,
-        });
+        this.#writeInstances(change.slot, run, change.snapshot);
         this.#lastInstanceWriteMs += performance.now() - instanceStart;
         this.#shapedLabels += 1;
       } else {
@@ -293,10 +302,14 @@ export class RenderCoordinator {
 
   getDrawStates(): readonly Readonly<RenderDrawState>[] {
     this.#assertActive();
+    if (!this.#drawStatesDirty && !this.#needsDrawSort) return this.#drawStateList;
     const states = Array.from(this.#drawStates.values());
     if (this.#needsDrawSort) {
       states.sort((left, right) => left.zIndex - right.zIndex || left.order - right.order);
+      this.#needsDrawSort = false;
     }
+    this.#drawStateList = states;
+    this.#drawStatesDirty = false;
     return states;
   }
 
@@ -322,6 +335,8 @@ export class RenderCoordinator {
     this.#runs.clear();
     this.#drawStates.clear();
     this.#pendingGlyphs.clear();
+    this.#prototypeSlots.clear();
+    this.#slotPrototypeKeys.clear();
     if (this.#ownsLayout) this.#layout.destroy();
     if (this.#ownsProvider) void this.#provider.destroy();
     if (this.#ownsAtlas) this.atlas.destroy();
@@ -330,14 +345,44 @@ export class RenderCoordinator {
     this.#destroyed = true;
   }
 
-  async #prepare(change: RenderChange, ticket: number): Promise<PreparedChange> {
+  #prepareChanges(
+    changes: readonly RenderChange[],
+    ticket: number,
+  ): PreparedChange[] | Promise<PreparedChange[]> {
+    const prepared: PreparedChange[] = [];
+    const pending: Promise<void>[] = [];
+    for (let index = 0; index < changes.length; index += 1) {
+      const change = changes[index];
+      if (change === undefined) throw new Error("Render change list is incomplete");
+      const item = this.#prepare(change, ticket);
+      if (isPromise(item)) {
+        const slot = index;
+        pending.push(
+          item.then((ready) => {
+            prepared[slot] = ready;
+          }),
+        );
+        continue;
+      }
+      prepared[index] = item;
+    }
+    if (pending.length === 0) return prepared;
+    return Promise.all(pending).then(() => prepared);
+  }
+
+  #sourceChanged(change: RenderChange): boolean {
+    return (
+      (change.mask & (TextDirty.Content | TextDirty.Style)) !== 0 ||
+      this.#runs.get(change.slot) === undefined
+    );
+  }
+
+  #prepare(change: RenderChange, ticket: number): PreparedChange | Promise<PreparedChange> {
     const snapshot = change.snapshot;
     if (snapshot === undefined) {
       return { change };
     }
-    const sourceChanged =
-      (change.mask & (TextDirty.Content | TextDirty.Style)) !== 0 ||
-      this.#runs.get(change.slot) === undefined;
+    const sourceChanged = this.#sourceChanged(change);
     if (!sourceChanged) {
       const run = this.#runs.get(change.slot);
       if (run === undefined) {
@@ -346,30 +391,53 @@ export class RenderCoordinator {
       return { change, run };
     }
 
-    const run =
-      change.trustedRun ??
-      (await this.#layout.layout(change.slot, snapshot.sourceRevision, {
-        text: snapshot.text,
-        style: snapshot.style,
-        ...snapshot.layout,
-        ...snapshot.shaping,
-      }));
-    if (ticket !== this.#ticket) {
-      return { change, run };
+    if (change.trustedRun !== undefined) {
+      return this.#finishPrepare(change, ticket, change.trustedRun);
     }
-    await Promise.all(
-      Array.from({ length: run.glyphCount }, (_, index) => this.#ensureGlyph(run, index, snapshot)),
-    );
-
-    return { change, run };
+    const laidOut = this.#layout.layout(change.slot, snapshot.sourceRevision, {
+      text: snapshot.text,
+      style: snapshot.style,
+      ...snapshot.layout,
+      ...snapshot.shaping,
+    });
+    if (isPromise(laidOut)) {
+      return laidOut.then((run) => this.#finishPrepare(change, ticket, run));
+    }
+    return this.#finishPrepare(change, ticket, laidOut);
   }
 
-  async #ensureGlyph(
+  #finishPrepare(
+    change: RenderChange,
+    ticket: number,
+    run: Readonly<PositionedRun>,
+  ): PreparedChange | Promise<PreparedChange> {
+    if (ticket !== this.#ticket) return { change, run };
+    const snapshot = change.snapshot;
+    if (snapshot === undefined) return { change, run };
+    const missing = this.#ensureMissingGlyphs(run, snapshot);
+    if (missing === undefined) return { change, run };
+    return missing.then(() => ({ change, run }));
+  }
+
+  #ensureMissingGlyphs(
+    run: Readonly<PositionedRun>,
+    snapshot: Readonly<RenderLabelSnapshot>,
+  ): Promise<void> | undefined {
+    const missing: Promise<void>[] = [];
+    for (let index = 0; index < run.glyphCount; index += 1) {
+      const pending = this.#ensureGlyph(run, index, snapshot);
+      if (pending !== undefined) missing.push(pending);
+    }
+    if (missing.length === 0) return undefined;
+    return Promise.all(missing).then(() => undefined);
+  }
+
+  #ensureGlyph(
     run: Readonly<PositionedRun>,
     index: number,
     snapshot: Readonly<RenderLabelSnapshot>,
-  ): Promise<void> {
-    const mode = selectMode(run, index);
+  ): Promise<void> | undefined {
+    const mode = this.#glyphMode(run, index);
     const glyphText = resolveGlyphText(run, index);
     const glyphId = run.glyphIds[index] ?? 0;
     const identity = resolveGlyphIdentity({
@@ -391,9 +459,9 @@ export class RenderCoordinator {
       return pending;
     }
 
-    const promise = (async () => {
-      const request = this.atlas.request(key);
-      const raster = await this.#provider.rasterize({
+    const request = this.atlas.request(key);
+    const promise = this.#provider
+      .rasterize({
         family: run.fontFamily,
         ...(run.fontFamilies === undefined ? {} : { fontFamilies: run.fontFamilies }),
         fontRevision: run.fontRevision,
@@ -402,16 +470,53 @@ export class RenderCoordinator {
         fontSize: identity.fontSize,
         fontWeight: identity.fontWeight,
         mode,
+      })
+      .then((raster) => {
+        if (!this.atlas.stage(request, raster) && this.atlas.get(key) === undefined) {
+          throw new Error(`Glyph atlas capacity rejected: ${String(key)}`);
+        }
+      })
+      .finally(() => {
+        this.#pendingGlyphs.delete(key);
       });
-      if (!this.atlas.stage(request, raster) && this.atlas.get(key) === undefined) {
-        throw new Error(`Glyph atlas capacity rejected: ${String(key)}`);
-      }
-    })();
     this.#pendingGlyphs.set(key, promise);
-    try {
-      await promise;
-    } finally {
-      this.#pendingGlyphs.delete(key);
+    return promise;
+  }
+
+  #writeInstances(
+    slot: number,
+    run: Readonly<PositionedRun>,
+    snapshot: Readonly<RenderLabelSnapshot>,
+  ): void {
+    const key = prototypeKey(run, snapshot);
+    const prototype = this.#prototypeSlots.get(key);
+    if (
+      prototype !== undefined &&
+      prototype !== slot &&
+      this.instances.getRange(prototype) !== undefined &&
+      this.instances.clone(prototype, slot)
+    ) {
+      this.#rememberPrototype(slot, key);
+      return;
+    }
+    this.instances.set(slot, this.#buildInstances(slot, run, snapshot), { skipEquality: true });
+    this.#rememberPrototype(slot, key);
+  }
+
+  #rememberPrototype(slot: number, key: string): void {
+    const previous = this.#slotPrototypeKeys.get(slot);
+    if (previous !== undefined && previous !== key && this.#prototypeSlots.get(previous) === slot) {
+      this.#prototypeSlots.delete(previous);
+    }
+    this.#slotPrototypeKeys.set(slot, key);
+    if (this.#prototypeSlots.get(key) === undefined) this.#prototypeSlots.set(key, slot);
+  }
+
+  #forgetPrototype(slot: number): void {
+    const key = this.#slotPrototypeKeys.get(slot);
+    this.#slotPrototypeKeys.delete(slot);
+    if (key !== undefined && this.#prototypeSlots.get(key) === slot) {
+      this.#prototypeSlots.delete(key);
     }
   }
 
@@ -429,7 +534,7 @@ export class RenderCoordinator {
     const modes = this.#batchModes.subarray(0, count);
     const rasterScales = this.#batchScales.subarray(0, count);
     for (let index = 0; index < count; index += 1) {
-      const mode = selectMode(run, index);
+      const mode = this.#glyphMode(run, index);
       const glyphText = resolveGlyphText(run, index);
       const glyphId = run.glyphIds[index] ?? 0;
       const identity = resolveGlyphIdentity({
@@ -502,6 +607,12 @@ export class RenderCoordinator {
       throw new Error("RenderCoordinator has been destroyed");
     }
   }
+
+  #glyphMode(run: Readonly<PositionedRun>, index: number): GlyphMode {
+    if (run.source === "harfbuzz") return this.#tinySdf ? "sdf" : "msdf";
+    const text = resolveGlyphText(run, index);
+    return /\p{Extended_Pictographic}/u.test(text) ? "color" : "alpha";
+  }
 }
 
 class LazyRasterGlyphProvider implements GlyphProviderLike {
@@ -544,6 +655,26 @@ class LazyRasterGlyphProvider implements GlyphProviderLike {
   }
 }
 
+function isPromise<T>(value: T | Promise<T>): value is Promise<T> {
+  return value instanceof Promise;
+}
+
+function prototypeKey(
+  run: Readonly<PositionedRun>,
+  snapshot: Readonly<RenderLabelSnapshot>,
+): string {
+  return [
+    run.source,
+    run.fontFamily,
+    String(run.fontRevision),
+    run.text,
+    String(resolveFontSize(snapshot.style.fontSize)),
+    String(snapshot.style.fontWeight ?? "normal"),
+    snapshot.layout?.writingMode ?? "horizontal-tb",
+    String(run.glyphCount),
+  ].join("\0");
+}
+
 function validateChanges(changes: readonly RenderChange[]): void {
   for (const change of changes) {
     if (!Number.isSafeInteger(change.slot) || change.slot < 0) {
@@ -553,12 +684,6 @@ function validateChanges(changes: readonly RenderChange[]): void {
       throw new TypeError("Render change mask contains unsupported domains");
     }
   }
-}
-
-function selectMode(run: Readonly<PositionedRun>, index: number): GlyphMode {
-  if (run.source === "harfbuzz") return "msdf";
-  const text = resolveGlyphText(run, index);
-  return /\p{Extended_Pictographic}/u.test(text) ? "color" : "alpha";
 }
 
 function resolveGlyphText(run: Readonly<PositionedRun>, index: number): string {

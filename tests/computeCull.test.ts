@@ -3,14 +3,23 @@ import { describe, expect, test } from "bun:test";
 import {
   aabbVisible,
   compactVisibleInstances,
+  computeCullStructurallyEligible,
   createIndirectArgs,
   cullResidency,
+  expandPrepareRing,
   expandWorkingSet,
   packCullRecords,
+  patchCullRecordAabbAt,
+  planComputeCullStorageBytes,
   resolveCullPath,
+  projectedFontHeightPx,
+  shouldDropSubpixelLod,
+  shouldInstanceUnshaped,
   shouldRefreshResidency,
+  WEBGPU_DEFAULT_MAX_STORAGE_BUFFER_BINDING_SIZE,
   workingSetContains,
 } from "../src/culling/computeCull";
+import { COMPUTE_CULL_WGSL } from "../src/culling/computeCull.wgsl";
 import { GLYPH_INSTANCE_STRIDE } from "../src/render/types";
 
 describe("compute cull host reference", () => {
@@ -18,6 +27,47 @@ describe("compute cull host reference", () => {
     expect(cullResidency(true, true)).toBe("viewport");
     expect(cullResidency(true, false)).toBe("all");
     expect(cullResidency(false, true)).toBe("all");
+  });
+
+  test("keeps a single-bank store compute-eligible when instance order is not draw order", () => {
+    expect(
+      computeCullStructurallyEligible({
+        segmentCount: 1,
+        highWater: 8,
+        activeInstances: 6,
+      }),
+    ).toBe(true);
+    expect(
+      computeCullStructurallyEligible({
+        segmentCount: 2,
+        highWater: 8,
+        activeInstances: 6,
+      }),
+    ).toBe(false);
+    expect(
+      computeCullStructurallyEligible({
+        segmentCount: 1,
+        highWater: 13,
+        activeInstances: 6,
+      }),
+    ).toBe(false);
+  });
+
+  test("keeps storage buffers inside the device binding limit", () => {
+    expect(planComputeCullStorageBytes(24, WEBGPU_DEFAULT_MAX_STORAGE_BUFFER_BINDING_SIZE)).toBe(
+      32,
+    );
+    expect(
+      planComputeCullStorageBytes(90 * 1024 * 1024, WEBGPU_DEFAULT_MAX_STORAGE_BUFFER_BINDING_SIZE),
+    ).toBe(WEBGPU_DEFAULT_MAX_STORAGE_BUFFER_BINDING_SIZE);
+    expect(
+      planComputeCullStorageBytes(
+        WEBGPU_DEFAULT_MAX_STORAGE_BUFFER_BINDING_SIZE + 1,
+        WEBGPU_DEFAULT_MAX_STORAGE_BUFFER_BINDING_SIZE,
+      ),
+    ).toBeUndefined();
+    expect(planComputeCullStorageBytes(200_000_000, 210_000_000)).toBe(200_000_000);
+    expect(planComputeCullStorageBytes(268_435_456, 4_294_967_292)).toBe(268_435_456);
   });
 
   test("enables compute cull only on a ready WebGPU device", () => {
@@ -36,6 +86,11 @@ describe("compute cull host reference", () => {
     expect(resolveCullPath({ adapter: "webgpu", computeCull: false, deviceReady: true })).toBe(
       "cpu-grid",
     );
+  });
+
+  test("avoids WGSL reserved identifiers in the scatter pass", () => {
+    expect(COMPUTE_CULL_WGSL).not.toMatch(/\blet from\b/);
+    expect(COMPUTE_CULL_WGSL).not.toMatch(/\blet to\b/);
   });
 
   test("keeps axis-aligned overlap and rejects separated boxes", () => {
@@ -120,7 +175,6 @@ describe("compute cull host reference", () => {
     expect(
       shouldRefreshResidency({
         cullPath: "compute-cull",
-        hasLabelChanges: false,
         visibilityDirty: false,
         instanced,
         draw: { ...draw, x: 40 },
@@ -129,7 +183,6 @@ describe("compute cull host reference", () => {
     expect(
       shouldRefreshResidency({
         cullPath: "compute-cull",
-        hasLabelChanges: false,
         visibilityDirty: false,
         instanced,
         draw: { ...draw, x: 950 },
@@ -138,16 +191,14 @@ describe("compute cull host reference", () => {
     expect(
       shouldRefreshResidency({
         cullPath: "compute-cull",
-        hasLabelChanges: true,
         visibilityDirty: false,
         instanced,
         draw,
       }),
-    ).toBe(true);
+    ).toBe(false);
     expect(
       shouldRefreshResidency({
         cullPath: "compute-cull",
-        hasLabelChanges: false,
         visibilityDirty: true,
         instanced,
         draw,
@@ -156,11 +207,91 @@ describe("compute cull host reference", () => {
     expect(
       shouldRefreshResidency({
         cullPath: "cpu-grid",
-        hasLabelChanges: false,
         visibilityDirty: false,
         instanced,
         draw,
       }),
     ).toBe(true);
+    expect(
+      shouldRefreshResidency({
+        cullPath: "cpu-grid",
+        visibilityDirty: false,
+        instanced: draw,
+        draw,
+      }),
+    ).toBe(false);
+  });
+
+  test("instances unshaped compute-cull labels against the prepare ring", () => {
+    const draw = { x: 0, y: 0, width: 100, height: 100, padding: 0 };
+    const ring = expandPrepareRing(draw);
+    expect(ring).toEqual({ x: -25, y: -25, width: 150, height: 150, padding: 0 });
+    expect(
+      shouldInstanceUnshaped({
+        cullPath: "cpu-grid",
+        draw,
+        minX: 400,
+        minY: 0,
+        maxX: 408,
+        maxY: 10,
+      }),
+    ).toBe(true);
+    expect(
+      shouldInstanceUnshaped({
+        cullPath: "compute-cull",
+        draw,
+        minX: 10,
+        minY: 10,
+        maxX: 18,
+        maxY: 20,
+      }),
+    ).toBe(true);
+    expect(
+      shouldInstanceUnshaped({
+        cullPath: "compute-cull",
+        draw,
+        minX: 110,
+        minY: 10,
+        maxX: 118,
+        maxY: 20,
+      }),
+    ).toBe(true);
+    expect(
+      shouldInstanceUnshaped({
+        cullPath: "compute-cull",
+        draw,
+        minX: 400,
+        minY: 0,
+        maxX: 408,
+        maxY: 10,
+      }),
+    ).toBe(false);
+  });
+
+  test("patches a packed AABB without rewriting instance ranges", () => {
+    const records = packCullRecords([
+      { minX: 1, minY: 2, maxX: 3, maxY: 4, instanceOffset: 5, instanceCount: 6 },
+    ]);
+    patchCullRecordAabbAt(new Float32Array(records), 0, 10, 20, 30, 40);
+    const view = new DataView(records);
+    expect(view.getFloat32(0, true)).toBe(10);
+    expect(view.getFloat32(4, true)).toBe(20);
+    expect(view.getFloat32(8, true)).toBe(30);
+    expect(view.getFloat32(12, true)).toBe(40);
+    expect(view.getUint32(16, true)).toBe(5);
+    expect(view.getUint32(20, true)).toBe(6);
+  });
+
+  test("drops labels whose projected font height is below one pixel", () => {
+    expect(projectedFontHeightPx({ fontSize: 16, scaleY: 1, worldScaleY: 0.24 })).toBeCloseTo(3.84);
+    expect(shouldDropSubpixelLod({ lod: false, fontSize: 16, scaleY: 0.01, worldScaleY: 1 })).toBe(
+      false,
+    );
+    expect(shouldDropSubpixelLod({ lod: true, fontSize: 16, scaleY: 0.01, worldScaleY: 1 })).toBe(
+      true,
+    );
+    expect(shouldDropSubpixelLod({ lod: true, fontSize: 16, scaleY: 1, worldScaleY: 0.24 })).toBe(
+      false,
+    );
   });
 });

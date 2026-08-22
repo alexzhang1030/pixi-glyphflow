@@ -4,6 +4,33 @@ import type { Renderer } from "pixi.js";
 
 import { TextLayer, type PositionedRun } from "../src";
 
+const RUN: PositionedRun = Object.freeze({
+  source: "bitmap",
+  text: "A",
+  fontFamily: "sans-serif",
+  fontRevision: 0,
+  direction: "ltr",
+  glyphCount: 1,
+  glyphIds: new Uint32Array([65]),
+  glyphKeys: Object.freeze(["A"]),
+  clusters: new Uint32Array([0]),
+  x: new Float32Array([0]),
+  y: new Float32Array([8]),
+  xAdvance: new Float32Array([8]),
+  yAdvance: new Float32Array([0]),
+  lineIndices: new Uint32Array([0]),
+  bounds: Object.freeze({ x: 0, y: 0, width: 8, height: 10 }),
+});
+
+function alphaRaster() {
+  return {
+    mode: "alpha" as const,
+    width: 8,
+    height: 10,
+    pixels: new Uint8Array(80).fill(255),
+  };
+}
+
 describe("TextLayer commit and maintenance", () => {
   test("publishes coalesced dirty domains and reports zero work for no-op commits", async () => {
     const layer = new TextLayer();
@@ -66,42 +93,20 @@ describe("TextLayer commit and maintenance", () => {
   test("serializes complete render revisions and reuses glyph work for transform updates", async () => {
     let layouts = 0;
     let rasters = 0;
-    const run: PositionedRun = Object.freeze({
-      source: "bitmap",
-      text: "A",
-      fontFamily: "sans-serif",
-      fontRevision: 0,
-      direction: "ltr",
-      glyphCount: 1,
-      glyphIds: new Uint32Array([65]),
-      glyphKeys: Object.freeze(["A"]),
-      clusters: new Uint32Array([0]),
-      x: new Float32Array([0]),
-      y: new Float32Array([8]),
-      xAdvance: new Float32Array([8]),
-      yAdvance: new Float32Array([0]),
-      lineIndices: new Uint32Array([0]),
-      bounds: Object.freeze({ x: 0, y: 0, width: 8, height: 10 }),
-    });
     const layer = new TextLayer({
       renderer: {} as Renderer,
       rendering: {
         layoutEngine: {
           async layout() {
             layouts += 1;
-            return run;
+            return RUN;
           },
           destroy() {},
         },
         glyphProvider: {
           async rasterize() {
             rasters += 1;
-            return {
-              mode: "alpha" as const,
-              width: 8,
-              height: 10,
-              pixels: new Uint8Array(80).fill(255),
-            };
+            return alphaRaster();
           },
           destroy() {},
         },
@@ -140,41 +145,19 @@ describe("TextLayer commit and maintenance", () => {
 
   test("reuses glyph work for packed position storms", async () => {
     let layouts = 0;
-    const run: PositionedRun = Object.freeze({
-      source: "bitmap",
-      text: "A",
-      fontFamily: "sans-serif",
-      fontRevision: 0,
-      direction: "ltr",
-      glyphCount: 1,
-      glyphIds: new Uint32Array([65]),
-      glyphKeys: Object.freeze(["A"]),
-      clusters: new Uint32Array([0]),
-      x: new Float32Array([0]),
-      y: new Float32Array([8]),
-      xAdvance: new Float32Array([8]),
-      yAdvance: new Float32Array([0]),
-      lineIndices: new Uint32Array([0]),
-      bounds: Object.freeze({ x: 0, y: 0, width: 8, height: 10 }),
-    });
     const layer = new TextLayer({
       renderer: {} as Renderer,
       rendering: {
         layoutEngine: {
           async layout() {
             layouts += 1;
-            return run;
+            return RUN;
           },
           destroy() {},
         },
         glyphProvider: {
           async rasterize() {
-            return {
-              mode: "alpha" as const,
-              width: 8,
-              height: 10,
-              pixels: new Uint8Array(80).fill(255),
-            };
+            return alphaRaster();
           },
           destroy() {},
         },
@@ -270,6 +253,85 @@ describe("TextLayer commit and maintenance", () => {
     expect(inputs[1]?.writingMode).toBeUndefined();
     expect(rasterWeights).toEqual(["700", "normal"]);
     expect(layer.stats.lastCommitStyleLabels).toBe(1);
+
+    layer.destroy();
+  });
+
+  test("prepares every first-seen label in one commit", async () => {
+    let layouts = 0;
+    const layer = new TextLayer({
+      renderer: {} as Renderer,
+      rendering: {
+        layoutEngine: {
+          async layout() {
+            layouts += 1;
+            return RUN;
+          },
+          destroy() {},
+        },
+        glyphProvider: {
+          async rasterize() {
+            return alphaRaster();
+          },
+          destroy() {},
+        },
+        atlasOptions: { pageWidth: 32, pageHeight: 32, maxBytes: 4_096 },
+      },
+    });
+    layer.createMany(
+      Array.from({ length: 10 }, (_, index) => ({ text: "A", x: index * 12, y: 0 })),
+    );
+
+    await layer.commit();
+    expect(layouts).toBe(10);
+    expect(layer.stats.glyphCount).toBe(10);
+
+    await layer.commit();
+    expect(layouts).toBe(10);
+    expect(layer.stats.glyphCount).toBe(10);
+
+    layer.hideAll();
+    await layer.commit();
+    expect(layer.stats.visibleLabelCount).toBe(0);
+    expect(layer.stats.glyphCount).toBe(0);
+    expect(layouts).toBe(10);
+
+    layer.destroy();
+  });
+
+  test("keeps unchanged siblings on the draw set when one label changes z-index", async () => {
+    const layer = new TextLayer({
+      renderer: {} as Renderer,
+      rendering: {
+        layoutEngine: {
+          async layout() {
+            return RUN;
+          },
+          destroy() {},
+        },
+        glyphProvider: {
+          async rasterize() {
+            return alphaRaster();
+          },
+          destroy() {},
+        },
+        atlasOptions: { pageWidth: 32, pageHeight: 32, maxBytes: 4_096 },
+      },
+    });
+    const [bottom, top] = layer.createMany([
+      { text: "A", x: 0, y: 0, zIndex: 0 },
+      { text: "A", x: 0, y: 0, zIndex: 0 },
+    ]);
+
+    await layer.commit();
+    expect(layer.stats.glyphCount).toBe(2);
+    expect(layer.stats.removedRenderLabels).toBe(0);
+
+    layer.update(bottom!, { zIndex: 2 });
+    await layer.commit();
+    expect(layer.stats.glyphCount).toBe(2);
+    expect(layer.stats.removedRenderLabels).toBe(0);
+    expect(layer.get(top!)?.zIndex).toBe(0);
 
     layer.destroy();
   });

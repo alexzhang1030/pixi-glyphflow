@@ -117,14 +117,14 @@ fn scatter(@builtin(global_invocation_id) id: vec3<u32>) {
   let dest = prefix[index] + group_sums[group];
   let source = records[index].instance_offset;
   for (var glyph = 0u; glyph < count; glyph++) {
-    let from = (source + glyph) * UINTS_PER_INSTANCE;
-    let to = (dest + glyph) * UINTS_PER_INSTANCE;
-    instances_out[to] = instances_in[from];
-    instances_out[to + 1u] = instances_in[from + 1u];
-    instances_out[to + 2u] = instances_in[from + 2u];
-    instances_out[to + 3u] = instances_in[from + 3u];
-    instances_out[to + 4u] = instances_in[from + 4u];
-    instances_out[to + 5u] = instances_in[from + 5u];
+    let src = (source + glyph) * UINTS_PER_INSTANCE;
+    let dst = (dest + glyph) * UINTS_PER_INSTANCE;
+    instances_out[dst] = instances_in[src];
+    instances_out[dst + 1u] = instances_in[src + 1u];
+    instances_out[dst + 2u] = instances_in[src + 2u];
+    instances_out[dst + 3u] = instances_in[src + 3u];
+    instances_out[dst + 4u] = instances_in[src + 4u];
+    instances_out[dst + 5u] = instances_in[src + 5u];
   }
 }
 `;

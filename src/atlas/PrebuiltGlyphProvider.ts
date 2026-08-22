@@ -5,6 +5,7 @@ import type {
   PrebuiltGlyphProviderOptions,
   PrebuiltGlyphProviderStats,
   PrebuiltGlyphRecord,
+  RasterGlyphRequest,
 } from "./types";
 
 interface GlyphSource {
@@ -44,17 +45,15 @@ export class PrebuiltGlyphProvider {
     }
   }
 
-  rasterize(key: string): Promise<Readonly<GlyphRaster> | undefined> {
+  lookup(key: string): Readonly<GlyphRaster> | undefined {
     this.#assertActive();
     const cached = this.#cache.get(key);
     if (cached !== undefined) {
       this.#hits += 1;
-      return Promise.resolve(cached);
+      return cached;
     }
     const source = this.#glyphs.get(key);
-    if (source === undefined) {
-      return Promise.resolve(undefined);
-    }
+    if (source === undefined) return undefined;
 
     this.#misses += 1;
     const channels = channelCount(source.page.mode);
@@ -86,8 +85,11 @@ export class PrebuiltGlyphProvider {
       ...(record.metrics === undefined ? {} : { metrics: Object.freeze({ ...record.metrics }) }),
     });
     this.#cache.set(key, raster);
+    return raster;
+  }
 
-    return Promise.resolve(raster);
+  rasterize(key: string): Promise<Readonly<GlyphRaster> | undefined> {
+    return Promise.resolve(this.lookup(key));
   }
 
   get stats(): Readonly<PrebuiltGlyphProviderStats> {
@@ -113,6 +115,23 @@ export class PrebuiltGlyphProvider {
       throw new Error("PrebuiltGlyphProvider has been destroyed");
     }
   }
+}
+
+/** Bake identity without font revision. Re-registering a family keeps the same page. */
+export function prebuiltGlyphKey(
+  request: Pick<
+    RasterGlyphRequest,
+    "family" | "glyphId" | "glyphText" | "fontSize" | "fontWeight" | "mode"
+  >,
+): string {
+  return [
+    request.family,
+    String(request.glyphId),
+    request.glyphText,
+    String(Math.round(request.fontSize)),
+    request.fontWeight ?? "normal",
+    request.mode,
+  ].join("\0");
 }
 
 function validatePage(page: PrebuiltGlyphPage): void {

@@ -143,16 +143,16 @@ describe("LayoutEngine", () => {
     });
     expect(engine.stats).toEqual({ layouts: 1, bitmapLayouts: 0, harfbuzzLayouts: 2 });
 
-    expect(
-      await engine.layout(14, 8, {
-        text: "漢字",
-        style: { fontFamily: "Global UI", fontSize: 28 },
-        language: "zh-Hant",
-        script: "Hant",
-        features: ["kern"],
-        variations: { wght: 560 },
-      }),
-    ).toBe(run);
+    const cached = engine.layout(14, 8, {
+      text: "漢字",
+      style: { fontFamily: "Global UI", fontSize: 28 },
+      language: "zh-Hant",
+      script: "Hant",
+      features: ["kern"],
+      variations: { wght: 560 },
+    });
+    expect(cached).toBe(run);
+    expect(cached).not.toBeInstanceOf(Promise);
     expect(shapeInputs).toHaveLength(2);
     expect(engine.stats).toEqual({ layouts: 2, bitmapLayouts: 0, harfbuzzLayouts: 2 });
 

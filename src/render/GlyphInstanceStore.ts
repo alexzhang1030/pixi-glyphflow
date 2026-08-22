@@ -149,8 +149,38 @@ export class GlyphInstanceStore {
 
   getRange(labelId: number): Readonly<GlyphInstanceRange> | undefined {
     this.#assertActive();
-    const range = this.#ranges.get(labelId);
-    return range === undefined ? undefined : Object.freeze({ ...range });
+    return this.#ranges.get(labelId);
+  }
+
+  clone(sourceId: number, destId: number): boolean {
+    this.#assertActive();
+    assertLabelId(sourceId);
+    assertLabelId(destId);
+    if (sourceId === destId) return false;
+    const source = this.#ranges.get(sourceId);
+    if (source === undefined || source.count === 0) return false;
+    const count = source.count;
+    const sourceOffset = source.offset;
+    const current = this.#ranges.get(destId);
+    if (current !== undefined) {
+      this.#clearMetadata(current.offset, current.count);
+      this.#dirty.record(
+        current.offset * GLYPH_INSTANCE_STRIDE,
+        current.count * GLYPH_INSTANCE_STRIDE,
+      );
+      this.#activeInstances -= current.count;
+      this.#releaseRange(current);
+      this.#ranges.delete(destId);
+    }
+
+    const range = this.#allocateRange(nextPowerOfTwo(count));
+    this.#copyInstances(sourceOffset, range.offset, count);
+    this.#patchPalette(range.offset, count, destId);
+    range.count = count;
+    this.#ranges.set(destId, range);
+    this.#activeInstances += count;
+    this.#dirty.record(range.offset * GLYPH_INSTANCE_STRIDE, count * GLYPH_INSTANCE_STRIDE);
+    return true;
   }
 
   consumeDirty(): readonly Readonly<DirtyByteRange>[] {
@@ -261,6 +291,20 @@ export class GlyphInstanceStore {
     }
 
     return true;
+  }
+
+  #copyInstances(sourceOffset: number, destOffset: number, count: number): void {
+    const bytes = count * GLYPH_INSTANCE_STRIDE;
+    new Uint8Array(this.#buffer, destOffset * GLYPH_INSTANCE_STRIDE, bytes).set(
+      new Uint8Array(this.#buffer, sourceOffset * GLYPH_INSTANCE_STRIDE, bytes),
+    );
+  }
+
+  #patchPalette(offset: number, count: number, paletteIndex: number): void {
+    const uint32 = this.#uint32;
+    for (let index = 0; index < count; index += 1) {
+      uint32[(offset + index) * UINT32_PER_INSTANCE + PALETTE_U32] = paletteIndex;
+    }
   }
 
   #write(offset: number, batch: GlyphInstanceBatch): void {

@@ -40,8 +40,15 @@ and diagnostics.
 validation before state publication.
 
 `TextLayerCullingOptions.computeCull` accepts `true`, `false`, or `"auto"`. The default is `"auto"`.
-Automatic mode uses compute compaction only when the attached WebGPU device and the mesh shape
-support it. WebGL, unavailable devices, and `false` use the CPU grid.
+Automatic mode uses compute compaction when the attached WebGPU device is ready and the live
+glyphs fit one atlas bank. WebGL, unavailable devices, multi-segment meshes, and `false` use the
+CPU grid. `lod: true` drops labels whose projected font height is below one pixel. That changes
+pixels and stays off by default.
+
+PixiJS creates WebGPU devices with the 128 MiB core `maxStorageBufferBindingSize`. A million-label
+instance buffer can be 256 MiB. `requestComputeCullGpu()` requests the adapter's storage and buffer
+limits and returns `{ adapter, device }` for `Application.init({ gpu })`. If a live buffer still
+exceeds the device limit, the layer uses `cpu-grid`.
 
 `showAll()` and `hideAll()` return the number of labels whose `visible` state changed. Repeated calls
 return `0` and preserve revision state. One following `commit()` publishes the complete visibility
@@ -133,7 +140,7 @@ observation.
 ## `pixi-glyphflow/advanced`
 
 The advanced entry exposes `SpatialIndex`, `GlyphAtlas`, `PrebuiltGlyphProvider`,
-`RasterGlyphProvider`, `BitmapLayoutAdapter`, `LayoutEngine`, `GlyphInstanceStore`, `TransformPalette`,
+`prebuiltGlyphKey`, `RasterGlyphProvider`, `BitmapLayoutAdapter`, `LayoutEngine`, `GlyphInstanceStore`, `TransformPalette`,
 `GlyphMesh`, `RenderCoordinator`, `WebGLAdapter`, and `WebGPUAdapter` with their public option and
 diagnostic types.
 
@@ -145,11 +152,15 @@ coordinator path packs numeric identities and still accepts diagnostic strings.
 
 `TextLayerOptions.rendering.rasterizerOptions` configures the default `RasterGlyphProvider`.
 `generatorConcurrency` controls the lazy MSDF worker pool. `distanceFieldMinFontSize` controls the
-minimum source resolution for dynamic MSDF/SDF glyphs and defaults to `48`. The renderer stores the
+minimum source resolution for dynamic MSDF/SDF glyphs and defaults to `48`. `tinySdf: true` builds
+those HarfBuzz glyphs as a local SDF from the canvas mask and skips `@zappar/msdf-generator`. That
+changes pixels. `prebuilt` serves packed pages before TinySDF or MSDF. Record keys come from
+`prebuiltGlyphKey` and omit font revision so a re-registered family keeps the same page. The
+renderer stores the
 physical-to-logical raster scale so layout, stroke, and shadow dimensions remain stable.
 `createMsdfGenerator` supplies explicit worker and WebAssembly URLs for production bundlers. Each
 worker serializes font loading and atlas generation; separate workers execute in parallel.
 
 `TextLayerStats.cullPath` is either `"compute-cull"` or `"cpu-grid"` and names the path used by the
-latest draw preparation. The root entry exports the `CullPath` type. Compute shader and pass
-internals are not root exports.
+latest draw preparation. The root entry exports the `CullPath` type and `requestComputeCullGpu`.
+Compute shader and pass internals are not root exports.

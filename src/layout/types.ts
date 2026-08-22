@@ -113,3 +113,5 @@ export interface LayoutEngineStats {
   readonly bitmapLayouts: number;
   readonly harfbuzzLayouts: number;
 }
+
+export type LayoutResult = Readonly<PositionedRun> | Promise<Readonly<PositionedRun>>;

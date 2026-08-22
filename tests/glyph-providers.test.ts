@@ -4,6 +4,7 @@ import { FontRegistry } from "../src";
 import {
   PrebuiltGlyphProvider,
   RasterGlyphProvider,
+  prebuiltGlyphKey,
   type GlyphMode,
   type GlyphRaster,
   type RasterGlyphRequest,
@@ -112,13 +113,15 @@ describe("glyph providers", () => {
     expect(alpha.pixels).toEqual(new Uint8Array([7, 7]));
     expect(color.pixels).toEqual(new Uint8Array(8).fill(7));
     expect(msdf.pixels).toEqual(new Uint8Array([10, 20, 30, 255, 100, 50, 0, 255]));
-    expect(sdf.pixels).toEqual(new Uint8Array([20, 50]));
+    expect(sdf.mode).toBe("sdf");
+    expect(sdf.pixels).toHaveLength(2);
     expect(msdf.metrics).toEqual({ bearingX: 1, bearingY: 4, advance: 5, fieldRange: 6 });
     expect({ canvasCalls, generatorStarts, generatorCalls }).toEqual({
-      canvasCalls: 2,
+      canvasCalls: 3,
       generatorStarts: 1,
-      generatorCalls: 2,
+      generatorCalls: 1,
     });
+    expect(provider.stats.tinySdfRasters).toBe(1);
 
     registry.unregister("Fixture");
     await registry.register({ family: "Fixture", source: new Uint8Array([3]) });
@@ -264,6 +267,104 @@ describe("glyph providers", () => {
 
     expect(maximumActive).toBe(1);
     expect(charsets).toEqual(["A", "B"]);
+    await provider.destroy();
+    registry.destroy();
+  });
+
+  test("serves prebuilt pages before TinySDF or MSDF generation", async () => {
+    const registry = new FontRegistry();
+    const font = await registry.register({ family: "Fixture", source: new Uint8Array([1, 2]) });
+    const request = {
+      family: "Fixture",
+      fontRevision: font.revision,
+      glyphId: 65,
+      glyphText: "A",
+      fontSize: 16,
+      mode: "msdf" as const,
+    };
+    let generatorStarts = 0;
+    const pixels = new Uint8Array([9, 8, 7, 255]);
+    const provider = new RasterGlyphProvider(registry, {
+      prebuilt: {
+        pages: [{ id: "latin", mode: "msdf", width: 1, height: 1, pixels }],
+        glyphs: [
+          {
+            key: prebuiltGlyphKey(request),
+            pageId: "latin",
+            x: 0,
+            y: 0,
+            width: 1,
+            height: 1,
+            metrics: { bearingX: 0, bearingY: 1, advance: 2, fieldRange: 4 },
+          },
+        ],
+      },
+      async createMsdfGenerator() {
+        generatorStarts += 1;
+        throw new Error("MSDF generator must not start for a prebuilt hit");
+      },
+    });
+
+    const raster = await provider.rasterize(request);
+    expect(raster.pixels).toEqual(pixels);
+    expect(raster.metrics).toEqual({ bearingX: 0, bearingY: 1, advance: 2, fieldRange: 4 });
+    expect(generatorStarts).toBe(0);
+    expect(provider.stats).toMatchObject({
+      prebuiltHits: 1,
+      distanceFieldRasters: 0,
+      tinySdfRasters: 0,
+    });
+
+    await provider.destroy();
+    registry.destroy();
+  });
+
+  test("builds an SDF from the canvas mask without starting the MSDF generator", async () => {
+    const registry = new FontRegistry();
+    const font = await registry.register({ family: "System UI" });
+    let generatorStarts = 0;
+    const alpha = new Uint8Array(8 * 8);
+    alpha.fill(255, 16, 48);
+    const provider = new RasterGlyphProvider(registry, {
+      canvasRasterizer(): Promise<GlyphRaster> {
+        return Promise.resolve({
+          mode: "alpha",
+          width: 8,
+          height: 8,
+          pixels: alpha,
+          metrics: { bearingX: 1, bearingY: 6, advance: 8 },
+        });
+      },
+      async createMsdfGenerator() {
+        generatorStarts += 1;
+        throw new Error("MSDF generator must not start for TinySDF");
+      },
+    });
+
+    const raster = await provider.rasterize({
+      family: "System UI",
+      fontRevision: font.revision,
+      glyphId: 65,
+      glyphText: "A",
+      fontSize: 16,
+      mode: "sdf",
+    });
+
+    expect(raster.mode).toBe("sdf");
+    expect(raster.width).toBe(8);
+    expect(raster.height).toBe(8);
+    expect(raster.pixels[0]).toBeLessThan(128);
+    expect(raster.pixels[28]).toBeGreaterThan(128);
+    expect(raster.metrics).toMatchObject({
+      bearingX: 1 / 3,
+      bearingY: 2,
+      advance: 8 / 3,
+      fieldRange: 8 / 3,
+      rasterScale: 3,
+    });
+    expect(generatorStarts).toBe(0);
+    expect(provider.stats).toMatchObject({ tinySdfRasters: 1, distanceFieldRasters: 0 });
+
     await provider.destroy();
     registry.destroy();
   });

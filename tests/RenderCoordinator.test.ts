@@ -104,6 +104,65 @@ describe("RenderCoordinator", () => {
     registry.destroy();
   });
 
+  test("retains runs and instances when a compute-cull working-set exit asks to keep resources", async () => {
+    const registry = new FontRegistry();
+    await registry.register({ family: "Fixture" });
+    let layoutCalls = 0;
+    let rasterCalls = 0;
+    const coordinator = new RenderCoordinator({
+      registry,
+      layoutEngine: {
+        async layout(_slot, _revision, input) {
+          layoutCalls += 1;
+          return run(input.text);
+        },
+        destroy() {},
+      },
+      glyphProvider: {
+        async rasterize(): Promise<GlyphRaster> {
+          rasterCalls += 1;
+          return {
+            mode: "alpha",
+            width: 4,
+            height: 6,
+            pixels: new Uint8Array(24).fill(255),
+          };
+        },
+        destroy() {},
+      },
+      atlasOptions: { pageWidth: 16, pageHeight: 16, maxBytes: 256 },
+      instanceOptions: { initialCapacity: 4 },
+      transformOptions: { initialCapacity: 4, textureWidth: 4 },
+    });
+
+    await coordinator.commit(1, [
+      { slot: 0, mask: CONTENT | TRANSFORM | STYLE, snapshot: label(1, 10, 20) },
+    ]);
+    expect({ layoutCalls, rasterCalls }).toEqual({ layoutCalls: 1, rasterCalls: 2 });
+    expect(coordinator.getRun(0)?.text).toBe("AB");
+    expect(coordinator.instances.getRange(0)).toEqual({ offset: 0, count: 2, capacity: 2 });
+
+    await coordinator.commit(2, [
+      { slot: 0, mask: CONTENT, snapshot: undefined, retainResources: true },
+    ]);
+    expect(coordinator.getRun(0)?.text).toBe("AB");
+    expect(coordinator.instances.getRange(0)).toEqual({ offset: 0, count: 2, capacity: 2 });
+    expect(coordinator.transforms.stats.activeLabels).toBe(1);
+    expect(coordinator.getDrawStates()).toEqual([]);
+
+    const restored = await coordinator.commit(3, [
+      { slot: 0, mask: TRANSFORM, snapshot: label(1, 10, 20) },
+    ]);
+    expect(restored).toMatchObject({ stale: false, appliedLabels: 1, glyphs: 2, atlasUploads: 0 });
+    expect({ layoutCalls, rasterCalls }).toEqual({ layoutCalls: 1, rasterCalls: 2 });
+    expect(coordinator.getDrawStates()).toEqual([
+      { slot: 0, zIndex: 0, order: 1, blendMode: "normal" },
+    ]);
+
+    coordinator.destroy();
+    registry.destroy();
+  });
+
   test("renders oversampled atlas glyphs at logical layout dimensions", async () => {
     const registry = new FontRegistry();
     await registry.register({ family: "Fixture" });
@@ -186,6 +245,140 @@ describe("RenderCoordinator", () => {
     gates.get("old")?.();
     expect(await older).toMatchObject({ stale: true, appliedLabels: 0 });
     expect(coordinator.getRun(0)?.text).toBe("new");
+
+    coordinator.destroy();
+    registry.destroy();
+  });
+
+  test("prepares every first-seen label in one commit", async () => {
+    const registry = new FontRegistry();
+    await registry.register({ family: "Fixture" });
+    let layoutCalls = 0;
+    const coordinator = new RenderCoordinator({
+      registry,
+      layoutEngine: {
+        async layout(_slot, _revision, input) {
+          layoutCalls += 1;
+          return run(input.text);
+        },
+        destroy() {},
+      },
+      glyphProvider: {
+        async rasterize(): Promise<GlyphRaster> {
+          return {
+            mode: "alpha",
+            width: 4,
+            height: 6,
+            pixels: new Uint8Array(24).fill(255),
+            metrics: { bearingX: 0, bearingY: 5, advance: 4 },
+          };
+        },
+        destroy() {},
+      },
+      atlasOptions: { pageWidth: 64, pageHeight: 64, maxBytes: 4_096 },
+      instanceOptions: { initialCapacity: 32 },
+      transformOptions: { initialCapacity: 16, textureWidth: 16 },
+    });
+    const firstSeen = Array.from({ length: 10 }, (_, slot) => ({
+      slot,
+      mask: CONTENT | TRANSFORM | STYLE,
+      snapshot: label(1, slot * 10, 0, `L${String(slot)}`),
+    }));
+
+    const first = await coordinator.commit(1, firstSeen);
+    expect(first).toMatchObject({ stale: false, appliedLabels: 10 });
+    expect(layoutCalls).toBe(10);
+    expect(coordinator.getRun(0)).toBeDefined();
+    expect(coordinator.getRun(9)).toBeDefined();
+
+    coordinator.destroy();
+    registry.destroy();
+  });
+
+  test("clones instance ranges for duplicate strings after the first raster", async () => {
+    const registry = new FontRegistry();
+    await registry.register({ family: "Fixture" });
+    let layoutCalls = 0;
+    let rasterCalls = 0;
+    const shared = run("AB");
+    const coordinator = new RenderCoordinator({
+      registry,
+      layoutEngine: {
+        layout(_slot, _revision, input) {
+          layoutCalls += 1;
+          return input.text === "AB" ? shared : run(input.text);
+        },
+        destroy() {},
+      },
+      glyphProvider: {
+        async rasterize(): Promise<GlyphRaster> {
+          rasterCalls += 1;
+          return {
+            mode: "alpha",
+            width: 4,
+            height: 6,
+            pixels: new Uint8Array(24).fill(255),
+            metrics: { bearingX: 0, bearingY: 5, advance: 4 },
+          };
+        },
+        destroy() {},
+      },
+      atlasOptions: { pageWidth: 64, pageHeight: 64, maxBytes: 4_096 },
+      instanceOptions: { initialCapacity: 32 },
+      transformOptions: { initialCapacity: 16, textureWidth: 16 },
+    });
+    const duplicates = Array.from({ length: 8 }, (_, slot) => ({
+      slot,
+      mask: CONTENT | TRANSFORM | STYLE,
+      snapshot: label(1, slot * 10, 0, "AB"),
+    }));
+
+    const first = await coordinator.commit(1, duplicates);
+    expect(first).toMatchObject({ stale: false, appliedLabels: 8, glyphs: 16, atlasUploads: 2 });
+    expect(layoutCalls).toBe(8);
+    expect(rasterCalls).toBe(2);
+    expect(coordinator.instances.getRange(0)).toEqual({ offset: 0, count: 2, capacity: 2 });
+    expect(coordinator.instances.getRange(7)).toEqual({ offset: 14, count: 2, capacity: 2 });
+
+    coordinator.destroy();
+    registry.destroy();
+  });
+
+  test("requests TinySDF for HarfBuzz glyphs when the option is on", async () => {
+    const registry = new FontRegistry();
+    await registry.register({ family: "Fixture" });
+    const modes: string[] = [];
+    const coordinator = new RenderCoordinator({
+      registry,
+      rasterizerOptions: { tinySdf: true },
+      layoutEngine: {
+        layout(_slot, _revision, input) {
+          return Object.freeze({ ...run(input.text), source: "harfbuzz" as const });
+        },
+        destroy() {},
+      },
+      glyphProvider: {
+        async rasterize(request: RasterGlyphRequest): Promise<GlyphRaster> {
+          modes.push(request.mode);
+          return {
+            mode: "sdf",
+            width: 4,
+            height: 6,
+            pixels: new Uint8Array(24).fill(200),
+            metrics: { bearingX: 0, bearingY: 5, advance: 4, fieldRange: 8 },
+          };
+        },
+        destroy() {},
+      },
+      atlasOptions: { pageWidth: 16, pageHeight: 16, maxBytes: 256 },
+      instanceOptions: { initialCapacity: 4 },
+      transformOptions: { initialCapacity: 4, textureWidth: 4 },
+    });
+
+    await coordinator.commit(1, [
+      { slot: 0, mask: CONTENT | TRANSFORM | STYLE, snapshot: label(1, 0, 0) },
+    ]);
+    expect(modes).toEqual(["sdf", "sdf"]);
 
     coordinator.destroy();
     registry.destroy();

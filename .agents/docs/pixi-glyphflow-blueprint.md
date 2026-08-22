@@ -261,7 +261,7 @@ Camera-only interaction updates the layer transform and visible set while preser
 
 TextLayerStats includes:
 
-- revision, label count, visible label count, glyph count, and pending mutations;
+- revision, label count, visible label count, glyph count, pending admissions, and pending mutations;
 - renderer name and adapter;
 - shape, layout, atlas, instance, and transform work counts;
 - cache hit, miss, entry, and byte counts;

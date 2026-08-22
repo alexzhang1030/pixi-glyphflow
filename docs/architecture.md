@@ -67,6 +67,16 @@ converts the shared horizontal run into upright top-to-bottom columns before atl
 Trusted glyph runs let an upstream layout system supply immutable typed arrays with explicit
 ownership and revision stamps.
 
+`RenderCoordinator` prepares accepted changes without a microtask per label. Cache hits and atlas
+hits stay on the same turn. Duplicate strings clone a prototype instance range and rewrite the
+palette index. Compute-cull still instances an expanded working set for camera slack, but it only
+layouts and rasters first-seen labels that intersect the tight draw view plus a 0.25-viewport ring.
+`tinySdf: true` builds those HarfBuzz glyphs as a local SDF from the canvas mask.
+`rasterizerOptions.prebuilt` serves packed pages first so a known alphabet miss is a crop, not a
+generator start. `culling.lod` drops labels whose projected font height is below one pixel.
+Off-screen residents stay unshaped until the camera reaches them. On-screen text appears in that
+commit. There is no leftover admission wave.
+
 ## Atlas and instances
 
 `GlyphAtlas` stages raster results and publishes a complete generation at a frame boundary. Visible
@@ -112,16 +122,18 @@ working viewport. A stable prefix sum and scatter compact those resident glyphs 
 padded draw viewport. Camera motion inside the working viewport does not query the grid or write the
 instance store. Crossing its edge refreshes residency and uploads cull records.
 
-The direct natural-order `GlyphMesh` rebinds its instance attributes to the compact buffer and uses
-an indexed indirect draw. The encoder hook checks geometry ownership and is removed when the pass is
-destroyed. WebGL, missing devices, disabled compute culling, and multi-segment meshes retain the
-tight CPU-grid path.
+The direct `GlyphMesh` rebinds its instance attributes to the compact buffer and uses an indexed
+indirect draw. The encoder hook checks geometry ownership and is removed when the pass is
+destroyed. WebGL, missing devices, disabled compute culling, oversized storage buffers, and
+multi-segment meshes retain the tight CPU-grid path. A single-bank mesh stays on the compute path
+when CPU instance order is not spatial order. PixiJS devices keep the 128 MiB storage-binding default;
+`requestComputeCullGpu()` raises that limit to the adapter maximum.
 
 ## Diagnostics
 
 `TextLayer.stats` allocates one immutable snapshot at read time. It reports CPU capacity, dirty
 domains, revisions, shaping, visible labels, spatial queries, renderer backend, cull path, draw
-calls, glyphs, pending glyphs, upload bytes, and last-commit layout, instance-write, palette-write,
-spatial, and upload milliseconds. `visibleLabelCount` is the instanced working set. On the CPU grid
-that set is the tight padded viewport. On compute cull it is the expanded residency query. The
-getter does not walk the grid.
+calls, glyphs, pending glyphs, pending admissions, upload bytes, and last-commit layout,
+instance-write, palette-write, spatial, and upload milliseconds. `visibleLabelCount` is the instanced
+working set. On the CPU grid that set is the tight padded viewport. On compute cull it is the
+expanded residency query. The getter does not walk the grid.

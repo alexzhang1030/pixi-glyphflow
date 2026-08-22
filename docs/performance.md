@@ -90,8 +90,9 @@ published ceilings: shared styles intern, position-only commits patch 16 palette
 z-index is `Float32`, fill-only GPU transforms use 32 bytes with a sparse effect tail, the
 CPU store packs non-position columns so one million reserved slots stay within 48 MiB plus
 the journal floor, and live glyph instances use 24 bytes. Wave 3 adds stable WebGPU compute
-compaction on the direct natural-order mesh. Camera frames inside an expanded CPU working set upload
-only the tight draw viewport. WebGL keeps the tight CPU grid. Wave 0 adds `million-live`, split
+compaction on the direct single-bank mesh. Camera frames inside an expanded CPU working set upload
+only the tight draw viewport. Position-only storms inside that set patch resident AABBs and
+palette texels without another grid query. WebGL keeps the tight CPU grid. Wave 0 adds `million-live`, split
 CPU/upload/GPU frame samples, and commit phase timers. The
 40 KiB core gzip and `atlas-pressure` frame CI gates are deferred; the check still prints those
 sizes. Published browser artifacts remain 1.1.0 until the isolated Chrome suite is rerun on the
@@ -108,6 +109,15 @@ storage budgets stay until a human accepts new numbers.
 - Keep viewport culling enabled for large worlds.
 - Leave `computeCull` at `"auto"` for WebGPU camera workloads. Set it to `false` to force the
   WebGL-compatible CPU grid.
+- Pass `requestComputeCullGpu()` into `Application.init({ gpu })` so compute cull can bind
+  instance storage larger than the 128 MiB WebGPU default.
 - Reuse styles and fonts to maximize shaping and layout cache hits.
 - Set an atlas ceiling that matches the product glyph working set.
+- Compute-cull layouts first-seen labels in the tight draw view plus a 0.25-viewport ring. The
+  expanded working set is residency slack, not a prepare batch. Known strings hit the shape cache
+  on the same turn and clone instance ranges.
+- Put stable UI alphabets on `rasterizerOptions.prebuilt` pages. Do not ship those pages in the
+  core bundle.
+- `culling.lod` drops labels whose projected font height is below one pixel. Leave it off unless
+  the product accepts missing subpixel text.
 - Read diagnostics at telemetry cadence.

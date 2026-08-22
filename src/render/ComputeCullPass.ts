@@ -5,6 +5,7 @@ import {
   CULL_WORKGROUP,
   type CullViewport,
   createIndirectArgs,
+  planComputeCullStorageBytes,
 } from "../culling/computeCull";
 import { COMPUTE_CULL_WGSL } from "../culling/computeCull.wgsl";
 
@@ -44,6 +45,7 @@ export class ComputeCullPass {
   #labelCapacity = 0;
   #instanceBytes = 0;
   #recordCount = 0;
+  #bindGroup: GPUBindGroup | undefined;
   #ready = false;
 
   constructor(renderer: WebGPURenderer) {
@@ -118,50 +120,64 @@ export class ComputeCullPass {
     }
   }
 
-  ensureCapacity(labelCount: number, instanceBytes: number): void {
+  ensureCapacity(labelCount: number, instanceBytes: number): boolean {
     const device = this.#device;
-    if (device === undefined || !this.#ready) return;
-    const labels = Math.max(CULL_WORKGROUP, nextPowerOfTwo(Math.max(1, labelCount)));
-    const bytes = Math.max(24, nextPowerOfTwo(Math.max(24, instanceBytes)));
+    if (device === undefined || !this.#ready) return false;
+    const limit = Math.min(device.limits.maxStorageBufferBindingSize, device.limits.maxBufferSize);
+    const recordBytes = planComputeCullStorageBytes(
+      Math.max(CULL_WORKGROUP, labelCount) * CULL_RECORD_STRIDE,
+      limit,
+    );
+    const bytes = planComputeCullStorageBytes(Math.max(24, instanceBytes), limit);
+    if (recordBytes === undefined || bytes === undefined) return false;
+    const labels = recordBytes / CULL_RECORD_STRIDE;
     if (labels > this.#labelCapacity) {
+      this.#bindGroup = undefined;
       this.#records?.destroy();
       this.#counts?.destroy();
       this.#prefix?.destroy();
       this.#groupSums?.destroy();
       this.#records = createBuffer(
         device,
-        labels * CULL_RECORD_STRIDE,
+        recordBytes,
         GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST,
+        "pixi-glyphflow-cull-records",
       );
       this.#counts = createBuffer(
         device,
         labels * Uint32Array.BYTES_PER_ELEMENT,
         GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST,
+        "pixi-glyphflow-cull-counts",
       );
       this.#prefix = createBuffer(
         device,
         labels * Uint32Array.BYTES_PER_ELEMENT,
         GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST,
+        "pixi-glyphflow-cull-prefix",
       );
       this.#groupSums = createBuffer(
         device,
         Math.ceil(labels / CULL_WORKGROUP) * Uint32Array.BYTES_PER_ELEMENT,
         GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST,
+        "pixi-glyphflow-cull-group-sums",
       );
       this.#labelCapacity = labels;
     }
     if (bytes > this.#instanceBytes) {
+      this.#bindGroup = undefined;
       this.#instancesIn?.destroy();
       this.#instancesOut?.destroy();
       this.#instancesIn = createBuffer(
         device,
         bytes,
         GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST,
+        "pixi-glyphflow-cull-instances-in",
       );
       this.#instancesOut = createBuffer(
         device,
         bytes,
         GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST | GPUBufferUsage.VERTEX,
+        "pixi-glyphflow-cull-instances-out",
       );
       this.#instanceBytes = bytes;
     }
@@ -170,9 +186,11 @@ export class ComputeCullPass {
         device,
         UNIFORM_BYTES,
         GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
+        "pixi-glyphflow-cull-uniforms",
       );
     }
     this.#renderer.buffer.updateBuffer(this.indirectBuffer);
+    return true;
   }
 
   uploadRecords(records: ArrayBuffer, recordCount: number): void {
@@ -219,19 +237,23 @@ export class ComputeCullPass {
     floats[4] = viewport.padding;
     ints[5] = this.#recordCount;
     device.queue.writeBuffer(this.#uniform, 0, uniforms);
-    const bindGroup = device.createBindGroup({
-      layout,
-      entries: [
-        { binding: 0, resource: { buffer: this.#uniform } },
-        { binding: 1, resource: { buffer: this.#records } },
-        { binding: 2, resource: { buffer: this.#counts } },
-        { binding: 3, resource: { buffer: this.#prefix } },
-        { binding: 4, resource: { buffer: this.#groupSums } },
-        { binding: 5, resource: { buffer: this.#instancesIn } },
-        { binding: 6, resource: { buffer: this.#instancesOut } },
-        { binding: 7, resource: { buffer: indirect } },
-      ],
-    });
+    const bindGroup =
+      this.#bindGroup ??
+      device.createBindGroup({
+        label: "pixi-glyphflow-compute-cull-bind-group",
+        layout,
+        entries: [
+          { binding: 0, resource: { buffer: this.#uniform } },
+          { binding: 1, resource: { buffer: this.#records } },
+          { binding: 2, resource: { buffer: this.#counts } },
+          { binding: 3, resource: { buffer: this.#prefix } },
+          { binding: 4, resource: { buffer: this.#groupSums } },
+          { binding: 5, resource: { buffer: this.#instancesIn } },
+          { binding: 6, resource: { buffer: this.#instancesOut } },
+          { binding: 7, resource: { buffer: indirect } },
+        ],
+      });
+    this.#bindGroup = bindGroup;
     const groups = Math.max(1, Math.ceil(this.#recordCount / CULL_WORKGROUP));
     const encoder = device.createCommandEncoder({ label: "pixi-glyphflow-compute-cull" });
     const mark = encoder.beginComputePass();
@@ -307,6 +329,7 @@ export class ComputeCullPass {
     this.#instancesIn?.destroy();
     this.#instancesOut?.destroy();
     this.#uniform?.destroy();
+    this.#bindGroup = undefined;
     this.indirectBuffer.destroy();
     this.#geometries.clear();
     this.#ready = false;
@@ -345,15 +368,15 @@ function uninstallEncoderHook(renderer: WebGPURenderer, pass: ComputeCullPass): 
   encoderHooks.delete(renderer);
 }
 
-function createBuffer(device: GPUDevice, size: number, usage: number): GPUBuffer {
+function createBuffer(
+  device: GPUDevice,
+  size: number,
+  usage: GPUBufferUsageFlags,
+  label: string,
+): GPUBuffer {
   return device.createBuffer({
     size: Math.max(Uint32Array.BYTES_PER_ELEMENT, size),
     usage,
+    label,
   });
-}
-
-function nextPowerOfTwo(value: number): number {
-  let capacity = 1;
-  while (capacity < value) capacity *= 2;
-  return capacity;
 }
