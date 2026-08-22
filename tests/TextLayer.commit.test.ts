@@ -288,12 +288,50 @@ describe("TextLayer commit and maintenance", () => {
 
     await layer.commit();
     expect(layouts).toBe(10);
+    expect(layer.stats.glyphCount).toBe(10);
 
     layer.hideAll();
     await layer.commit();
     expect(layer.stats.visibleLabelCount).toBe(0);
     expect(layer.stats.glyphCount).toBe(0);
     expect(layouts).toBe(10);
+
+    layer.destroy();
+  });
+
+  test("keeps unchanged siblings on the draw set when one label changes z-index", async () => {
+    const layer = new TextLayer({
+      renderer: {} as Renderer,
+      rendering: {
+        layoutEngine: {
+          async layout() {
+            return RUN;
+          },
+          destroy() {},
+        },
+        glyphProvider: {
+          async rasterize() {
+            return alphaRaster();
+          },
+          destroy() {},
+        },
+        atlasOptions: { pageWidth: 32, pageHeight: 32, maxBytes: 4_096 },
+      },
+    });
+    const [bottom, top] = layer.createMany([
+      { text: "A", x: 0, y: 0, zIndex: 0 },
+      { text: "A", x: 0, y: 0, zIndex: 0 },
+    ]);
+
+    await layer.commit();
+    expect(layer.stats.glyphCount).toBe(2);
+    expect(layer.stats.removedRenderLabels).toBe(0);
+
+    layer.update(bottom!, { zIndex: 2 });
+    await layer.commit();
+    expect(layer.stats.glyphCount).toBe(2);
+    expect(layer.stats.removedRenderLabels).toBe(0);
+    expect(layer.get(top!)?.zIndex).toBe(0);
 
     layer.destroy();
   });

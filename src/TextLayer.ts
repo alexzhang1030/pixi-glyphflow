@@ -1271,7 +1271,6 @@ export class TextLayer extends Container {
       if (slot === undefined) throw new Error("Visible slot list is incomplete");
       const wasRendered = previousEpoch !== 0 && this.#renderedEpochs[slot] === previousEpoch;
       const dirtyMask = this.#dirtyMasks[slot] ?? TextDirty.None;
-      if (wasRendered && dirtyMask === TextDirty.None) continue;
       const hasRun = coordinator?.getRun(slot) !== undefined;
       if (!hasRun) {
         const box = this.#spatial.get(slot, bounds);
@@ -1290,6 +1289,7 @@ export class TextLayer extends Container {
         }
       }
       this.#renderedEpochs[slot] = nextEpoch;
+      if (wasRendered && dirtyMask === TextDirty.None) continue;
       const change = this.#renderChangeForSlot(slot, wasRendered, hasRun);
       if (change === undefined) throw new Error("Visible label snapshot is unavailable");
       changes.push(change);

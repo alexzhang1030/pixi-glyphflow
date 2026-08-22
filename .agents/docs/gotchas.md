@@ -70,6 +70,16 @@ Do not bring back per-frame admission leftovers, `pendingAdmissionCount`, or ani
 continue. That path also remirrored the instance buffer every wave and made compute-cull slower
 than `cpu-grid`.
 
+## Stamp the rendered epoch on unchanged visible labels
+
+`#buildRenderChanges` stamps `#renderedEpochs[slot] = nextEpoch` for every resident it intends to
+keep. `getDrawStates()` treats a stale epoch as an exit. Skipping `wasRendered && dirty === None`
+before that stamp drops the unchanged sibling. The compositing fixture then keeps one normal mesh
+after a z-raise instead of two.
+
+Do not move the dirty-none continue above the epoch stamp. Off-screen unshaped working-set labels
+still skip before the stamp so they never enter the draw set.
+
 ## Live atlas keys omit `glyphText` when a glyph id is present
 
 Packed identities are family intern + glyph id + size bucket + weight class + mode + font revision. Rasterize must use the same size bucket as the key. String keys stay valid for `atlas-pressure` (`glyph-${index}`), prebuilt pages, non-BMP text with glyph id 0, and unusual weights. Do not put `glyphText` back into the packed key, and do not fall back to `float16x4` instance attributes.
