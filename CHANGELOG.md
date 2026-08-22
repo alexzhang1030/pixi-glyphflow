@@ -2,9 +2,8 @@
 
 ## 1.2.0 - 2026-08-22
 
-Published frame and storage budgets are unchanged. `benchmark:check` reads the newest committed
-formal artifacts so a version bump does not fail CI. `release:check` passes `--require-current`,
-so npm publish still needs Apple M1 Pro Chrome files named for this version.
+Published frame and storage budgets are unchanged. Formal browser artifacts remain the 1.1.0
+Apple M1 Pro Chrome files; `benchmark:check` and `release:check` fall back to those measurements.
 
 ### Added
 

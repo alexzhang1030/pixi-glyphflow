@@ -36,8 +36,8 @@ Raw artifacts live in [`benchmarks/results`](../benchmarks/results). The generat
 `bun run benchmark:check` validates artifact presence (the current package version, or the newest
 older formal file), formal scale, browser completion, boolean invariants, frame budgets, mutation
 budgets, storage ceilings, atlas eviction, and draw submission. It still measures the core ESM gzip
-graph and does not fail that size. `bun run benchmark:check -- --require-current` is what
-`release:check` runs; it refuses a version that has no matching artifacts.
+graph and does not fail that size. `bun run benchmark:check -- --require-current` is an optional
+local gate that refuses a version with no matching files; `release:check` does not use it.
 
 ## Running the suite
 
