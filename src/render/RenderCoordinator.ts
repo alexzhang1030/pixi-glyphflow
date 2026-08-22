@@ -153,6 +153,7 @@ export class RenderCoordinator {
   #removedLabels = 0;
   #lastAddedOrder = 0;
   #needsDrawSort = false;
+  #hasNonZeroZIndex = false;
   #drawStateList: Readonly<RenderDrawState>[] = [];
   #drawStatesDirty = true;
   #lastLayoutMs = 0;
@@ -235,11 +236,17 @@ export class RenderCoordinator {
         previousDrawState.order !== change.snapshot.order ||
         previousDrawState.blendMode !== change.snapshot.blendMode
       ) {
+        if (change.snapshot.zIndex !== 0) this.#hasNonZeroZIndex = true;
         if (previousDrawState === undefined) {
-          if (change.snapshot.order < this.#lastAddedOrder) this.#needsDrawSort = true;
+          // Ascending zero-z inserts append in sorted position; anything else must re-sort.
+          if (change.snapshot.order < this.#lastAddedOrder || this.#hasNonZeroZIndex) {
+            this.#needsDrawSort = true;
+          }
           this.#lastAddedOrder = Math.max(this.#lastAddedOrder, change.snapshot.order);
-        }
-        if (change.snapshot.zIndex !== 0 || previousDrawState?.zIndex !== 0) {
+        } else if (
+          previousDrawState.zIndex !== change.snapshot.zIndex ||
+          previousDrawState.order !== change.snapshot.order
+        ) {
           this.#needsDrawSort = true;
         }
         this.#drawStates.set(
