@@ -2012,6 +2012,9 @@ function assertPointLike(point: PointLike): void {
 }
 
 function growTypedArray<T extends Uint8Array | Uint32Array>(source: T, capacity: number): T {
+  // #bulkSlots also grows to duplicate-heavy updateMany batch sizes, so it can already
+  // exceed a later scratch requirement; growing must never shrink.
+  if (source.length >= capacity) return source;
   const target = (
     source instanceof Uint8Array ? new Uint8Array(capacity) : new Uint32Array(capacity)
   ) as T;
