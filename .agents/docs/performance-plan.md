@@ -37,6 +37,99 @@ Source: generated 1.1.0 report in [`benchmarks/PERFORMANCE.md`](../../benchmarks
 
 Storage on the same artifacts: 72 MiB CPU store, 64-byte transform records, 32-byte glyph instances, 244.14 MiB for the 8M-glyph buffer. Those match the specification ceilings. They are not yet extreme.
 
+## Same-machine A/B evidence (2026-08-22, non-reference)
+
+Cloud VM, headless system Chrome on SwiftShader WebGL 2, identical harness semantics per workload
+(drivers diffed against v1.1.0). Relative deltas only; not reference artifacts. The browser suite
+had been unrunnable since Wave 0 (node:os in the page bundle — see gotchas); these are the first
+post-Wave-1/2/3 browser numbers at all.
+
+| Workload | v1.1.0 p95 | HEAD p95 | Read |
+| --- | ---: | ---: | --- |
+| atlas-pressure | 550.1 ms | 4.0 ms | Wave 1 packer/LRU delivered (~137×) |
+| million-viewport | 6.4 ms | 0.3 ms | hash grid delivered (~21×) |
+| position-storm | 10.3 ms | 8.3 ms | packed positions delivered (~1.2×) |
+| viewport-zoom | 9.0 ms | 38.2 → 11.5 ms | grid sort cliff at dense results; fixed by the result-aware linear fallback |
+| dynamic-counters | 15.1–16.6 ms | 23.5–24.9 ms | REGRESSION: mutation intake 14.5 → 19.6 ms (f16 column packs), commit 0.7 → 4.0 ms (2.9 ms hash-grid updates). Open. |
+| million-live (HEAD only) | — | 0.10 ms | product-path 8M-glyph submission at the GPU floor |
+
+The dynamic-counters regression is the Wave 1/2 trade surfacing: the store packs f16 columns per
+mutated field and the grid re-hashes per moved label. Wave 1's ≤ 8 ms target is currently not
+plausible without batch-aware packing or a cheaper grid update. Reference M1 Pro artifacts are
+still required before changing any published number.
+
+## Whole-repo audit (2026-08-22)
+
+Four parallel code audits (CPU core, glyph pipeline, render pipeline, laboratory) against this
+plan. Full evidence lives in the audit conversation; the durable conclusions:
+
+**Delivered and near floor — stop optimizing here.** Skyline/waste/shelf packing, per-mode O(1)
+LRU, 52-bit keys, the 48 MiB store (test-pinned, 44.9 MiB measured), the sparse journal, the
+4-level hash grid, 24-byte instances, 32-byte fill transforms, camera-only WebGPU frames
+(~50–100 µs CPU), and packing CPU (~µs/glyph). Verified in code, not just claimed.
+
+**Where the next order of magnitude actually is, ranked (status as of the same day):**
+
+1. **MSDF first-miss batching — LANDED.** `@zappar/msdf-generator` re-posts and WASM-re-parses the
+   entire font per glyph (one worker atlas per glyph, 10–60 ms each) and it is the default HarfBuzz
+   mode. Unpatched-cmap misses now batch per (family, revision, raster size) within a microtask
+   window into one generator pass: one font parse plus N crops. Patched-cmap glyphs stay solo, and
+   multi-glyph atlases no longer fall back to `glyphs[0]`.
+2. **Draw-segment cache keyed on `drawListEpoch` — LANDED**, plus `GlyphInstanceStore.segmentEpoch`
+   (bumps only when existing ranges are disturbed, so appends extend the cached walk). The mesh
+   vertex buffer also stops mirroring dirty bytes while compute cull owns the draw; any CPU
+   fallback re-initializes it.
+3. **Columnar position-only commit lane — LANDED.** `TransformPalette.writePositions` plus
+   slot/xy column copies at publish time; rendered movers skip the two frozen snapshots, the change
+   object, and the prepared wrapper. Same-machine dynamic-counters returned to the 1.1.0 range
+   (16.7 ms vs 15.1–16.6 baseline) while keeping the 48 MiB store and the hash grid.
+4. **Atlas upload shape — PARTLY LANDED.** Single-channel pages (alpha/SDF — the homepage TinySDF
+   path) now upload staged glyph rectangles instead of the whole 1 MiB page, promoting to a full
+   upload when rects exceed half the page. Four-channel pages (MSDF/color) keep the whole-page
+   upload because PixiJS premultiplies their alpha on upload and a raw sub-rect write would not;
+   fixing that means owning premultiplication CPU-side. Atlas residency is wired: the coordinator
+   refcounts each label's atlas keys and pins/unpins entries, so eviction can no longer reuse
+   rectangles that live instances sample — under all-pinned pressure the atlas now reports
+   capacity loudly instead of corrupting silently. Still open: a per-frame byte budget with
+   cross-frame resume must gate label admission, not texel uploads (deferring texels for
+   already-instanced labels would draw stale pixels, which the no-drip gotcha forbids).
+
+**Regressions and traps the audits confirmed:**
+
+- dynamic-counters (see A/B table): intake paid f16 packs, an O(len) `estimateTextBounds` with
+  unconditional sin/cos per `updateMany` entry, and megamorphic patch probing; commit paid the
+  per-label object pipeline. CLOSED the same day: the estimate memoizes by (text, style) identity
+  (broadcast batches share one reference pair), rotation-zero skips the trig, the journal keeps
+  its slot list at high water, dirty ranges store flat pairs with tail merging, and the columnar
+  lane removed the object pipeline. Same-machine result: 23.5–24.9 → 16.7 ms, inside the 1.1.0
+  range. `sourceRevision` is also u32 now, so the 65,535-edit counter death is gone (store is
+  ~46.9 MiB per million slots, still under the 48 MiB target).
+- The dirty-range 8-range collapse degenerates scattered edits into a first-to-last span (a
+  scattered 100k storm can balloon toward a 32 MB palette upload); the 256-byte-gap model is fine
+  for dense edits.
+- `atlasCommit.evictedKeys` had no consumer and `pin`/`unpin` had no callers: under real atlas
+  pressure, evicted rectangles could be reused while live instances still sampled them. CLOSED the
+  same day: the coordinator refcounts per-label atlas keys and pins live entries (clones share the
+  prototype's key set). `evictedKeys` stays diagnostic-only.
+- One nonzero z-index used to set a permanent sort ratchet; the coordinator now keeps a live
+  count of nonzero-z draw states, so a z-using scene that returns to all-zero z gets the
+  append-only fast path back.
+
+**Laboratory limits that gate all published claims:** five headline workloads never create a
+renderer (their "frame" is store+spatial commit cost — honest numbers, misleading names);
+million-live samples static redraws, its product cost lives in setup; no workload can reach the
+WebGPU compute-cull path at all (rendering off, culling off, WebGL default), so Wave 3's own
+acceptance criterion is unmeasurable; and p95 on 5–7 samples is the max. The browser suite was
+also unrunnable from Wave 0 until the `node:os` split (see gotchas). Landed since the audit: a
+`first-seen` workload (rendering layer, camera jumps onto never-rendered regions each frame;
+17.6 ms p95 for ~400 fresh labels per frame on the same-machine SwiftShader fixture — the first
+probe of the 100× moment), and `--labels`/`--frames` overrides now write
+`browser-<workload>-<version>-exploratory.json` with an `exploratory` marker instead of
+overwriting the formal artifact. A `camera-live` workload now exists (rendering camera pans with
+`computeCull: "auto"`, 200k labels; its invariants record which cull path ran, and
+`--renderer webgpu` on WebGPU hardware exercises compute-cull — Wave 3's acceptance finally has a
+probe; this VM's Chrome has no WebGPU, so only the CPU-grid side ran here at 5.1 ms p95).
+
 ## Structural diagnosis
 
 These are code facts, not profiler folklore. Each item names the structure that has to change.

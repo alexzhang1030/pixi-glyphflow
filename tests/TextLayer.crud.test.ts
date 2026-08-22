@@ -229,6 +229,18 @@ describe("TextLayer 1.0 CRUD", () => {
     sibling.destroy();
   });
 
+  test("commits after a duplicate-heavy bulk update outgrows the scratch arrays", async () => {
+    const layer = new TextLayer({ initialCapacity: 2 });
+    const id = layer.create({ text: "counter" });
+    layer.updateMany(Array.from({ length: 4096 }, (_, index) => ({ id, patch: { x: index } })));
+    layer.createMany(Array.from({ length: 200 }, (_, index) => ({ text: String(index) })));
+
+    await expect(layer.commit()).resolves.toBeGreaterThan(0);
+    expect(layer.get(id)?.x).toBe(4095);
+
+    layer.destroy();
+  });
+
   test("updates packed positions and rejects malformed batches transactionally", () => {
     const layer = new TextLayer();
     const ids = layer.createMany([{ text: "one" }, { text: "two" }]);

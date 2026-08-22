@@ -121,6 +121,7 @@ const EMPTY_ATLAS_COMMIT: Readonly<AtlasCommit> = Object.freeze({
   uploads: Object.freeze([]),
   evictedKeys: Object.freeze([]),
 });
+
 export class RenderCoordinator {
   readonly instances: GlyphInstanceStore;
   readonly transforms: TransformPalette;
@@ -137,6 +138,8 @@ export class RenderCoordinator {
   readonly #pendingGlyphs = new Map<GlyphCacheKey, Promise<void>>();
   readonly #prototypeSlots = new Map<string, number>();
   readonly #slotPrototypeKeys = new Map<number, string>();
+  readonly #slotAtlasKeys = new Map<number, readonly GlyphCacheKey[]>();
+  readonly #atlasKeyRefs = new Map<GlyphCacheKey, number>();
   #batchPositions = new Float32Array(0);
   #batchUvs = new Float32Array(0);
   #batchPalette = new Uint32Array(0);
@@ -152,8 +155,12 @@ export class RenderCoordinator {
   #removedLabels = 0;
   #lastAddedOrder = 0;
   #needsDrawSort = false;
+  #nonZeroZStates = 0;
   #drawStateList: Readonly<RenderDrawState>[] = [];
   #drawStatesDirty = true;
+  #drawListEpoch = 0;
+  readonly #ensuredRuns = new Map<Readonly<PositionedRun>, Map<string, Promise<void> | "done">>();
+  #ensuredTicket = 0;
   #lastLayoutMs = 0;
   #lastInstanceWriteMs = 0;
   #lastPaletteWriteMs = 0;
@@ -204,9 +211,13 @@ export class RenderCoordinator {
     for (const item of prepared) {
       const { change, run } = item;
       if (change.snapshot === undefined) {
-        if (this.#drawStates.delete(change.slot)) {
+        const removedState = this.#drawStates.get(change.slot);
+        if (removedState !== undefined) {
+          this.#drawStates.delete(change.slot);
+          if (removedState.zIndex !== 0) this.#nonZeroZStates -= 1;
           drawOrderChanged = true;
           this.#drawStatesDirty = true;
+          this.#drawListEpoch += 1;
         }
         if (change.retainResources === true) {
           appliedLabels += 1;
@@ -214,10 +225,11 @@ export class RenderCoordinator {
         }
         this.#runs.delete(change.slot);
         this.#forgetPrototype(change.slot);
+        this.#releaseSlotKeys(change.slot);
         const instanceStart = performance.now();
         this.instances.remove(change.slot);
-        this.#lastInstanceWriteMs += performance.now() - instanceStart;
         const paletteStart = performance.now();
+        this.#lastInstanceWriteMs += paletteStart - instanceStart;
         this.transforms.remove(change.slot);
         this.#lastPaletteWriteMs += performance.now() - paletteStart;
         this.#removedLabels += 1;
@@ -234,11 +246,28 @@ export class RenderCoordinator {
         previousDrawState.order !== change.snapshot.order ||
         previousDrawState.blendMode !== change.snapshot.blendMode
       ) {
-        if (previousDrawState === undefined) {
-          if (change.snapshot.order < this.#lastAddedOrder) this.#needsDrawSort = true;
-          this.#lastAddedOrder = Math.max(this.#lastAddedOrder, change.snapshot.order);
+        if (
+          change.snapshot.zIndex !== 0 &&
+          (previousDrawState === undefined || previousDrawState.zIndex === 0)
+        ) {
+          this.#nonZeroZStates += 1;
+        } else if (
+          change.snapshot.zIndex === 0 &&
+          previousDrawState !== undefined &&
+          previousDrawState.zIndex !== 0
+        ) {
+          this.#nonZeroZStates -= 1;
         }
-        if (change.snapshot.zIndex !== 0 || previousDrawState?.zIndex !== 0) {
+        if (previousDrawState === undefined) {
+          // Ascending zero-z inserts append in sorted position; anything else must re-sort.
+          if (change.snapshot.order < this.#lastAddedOrder || this.#nonZeroZStates > 0) {
+            this.#needsDrawSort = true;
+          }
+          this.#lastAddedOrder = Math.max(this.#lastAddedOrder, change.snapshot.order);
+        } else if (
+          previousDrawState.zIndex !== change.snapshot.zIndex ||
+          previousDrawState.order !== change.snapshot.order
+        ) {
           this.#needsDrawSort = true;
         }
         this.#drawStates.set(
@@ -254,16 +283,18 @@ export class RenderCoordinator {
         this.#drawStatesDirty = true;
       }
       const sourceChanged = this.#sourceChanged(change);
+      let paletteStart: number;
       if (sourceChanged) {
         this.#runs.set(change.slot, run);
         const instanceStart = performance.now();
         this.#writeInstances(change.slot, run, change.snapshot);
-        this.#lastInstanceWriteMs += performance.now() - instanceStart;
+        paletteStart = performance.now();
+        this.#lastInstanceWriteMs += paletteStart - instanceStart;
         this.#shapedLabels += 1;
       } else {
         this.#transformOnlyLabels += 1;
+        paletteStart = performance.now();
       }
-      const paletteStart = performance.now();
       if (change.positionOnly === true && !sourceChanged) {
         this.transforms.setPosition(change.slot, change.snapshot.x, change.snapshot.y);
       } else {
@@ -295,6 +326,25 @@ export class RenderCoordinator {
     return this.#result(revision, false, appliedLabels, atlasCommit, drawOrderChanged);
   }
 
+  /**
+   * Position-only movers bypass the per-label change pipeline: sorted slot and xy columns patch
+   * palette texels directly. Draw states, runs, and instances are untouched.
+   */
+  applyPositionLane(
+    slots: Uint32Array,
+    count: number,
+    xy: Float32Array,
+  ): Readonly<RenderCommitResult> {
+    this.#assertActive();
+    const paletteStart = performance.now();
+    const written = this.transforms.writePositions(slots, count, xy);
+    this.#lastPaletteWriteMs += performance.now() - paletteStart;
+    this.#transformOnlyLabels += count;
+    this.#appliedLabels += count;
+
+    return this.#result(0, false, written, EMPTY_ATLAS_COMMIT, false);
+  }
+
   getRun(slot: number): Readonly<PositionedRun> | undefined {
     this.#assertActive();
     return this.#runs.get(slot);
@@ -307,10 +357,19 @@ export class RenderCoordinator {
     if (this.#needsDrawSort) {
       states.sort((left, right) => left.zIndex - right.zIndex || left.order - right.order);
       this.#needsDrawSort = false;
+      this.#drawListEpoch += 1;
     }
     this.#drawStateList = states;
     this.#drawStatesDirty = false;
     return states;
+  }
+
+  /**
+   * Changes when the draw-state list is re-sorted or loses entries. While it holds still, new draw
+   * states only append, so packed cull-record prefixes stay valid.
+   */
+  get drawListEpoch(): number {
+    return this.#drawListEpoch;
   }
 
   get stats(): Readonly<RenderCoordinatorStats> {
@@ -334,9 +393,13 @@ export class RenderCoordinator {
     this.#ticket += 1;
     this.#runs.clear();
     this.#drawStates.clear();
+    this.#nonZeroZStates = 0;
     this.#pendingGlyphs.clear();
     this.#prototypeSlots.clear();
     this.#slotPrototypeKeys.clear();
+    this.#slotAtlasKeys.clear();
+    this.#atlasKeyRefs.clear();
+    this.#ensuredRuns.clear();
     if (this.#ownsLayout) this.#layout.destroy();
     if (this.#ownsProvider) void this.#provider.destroy();
     if (this.#ownsAtlas) this.atlas.destroy();
@@ -356,10 +419,9 @@ export class RenderCoordinator {
       if (change === undefined) throw new Error("Render change list is incomplete");
       const item = this.#prepare(change, ticket);
       if (isPromise(item)) {
-        const slot = index;
         pending.push(
           item.then((ready) => {
-            prepared[slot] = ready;
+            prepared[index] = ready;
           }),
         );
         continue;
@@ -392,7 +454,7 @@ export class RenderCoordinator {
     }
 
     if (change.trustedRun !== undefined) {
-      return this.#finishPrepare(change, ticket, change.trustedRun);
+      return this.#finishPrepare(change, snapshot, ticket, change.trustedRun);
     }
     const laidOut = this.#layout.layout(change.slot, snapshot.sourceRevision, {
       text: snapshot.text,
@@ -401,35 +463,55 @@ export class RenderCoordinator {
       ...snapshot.shaping,
     });
     if (isPromise(laidOut)) {
-      return laidOut.then((run) => this.#finishPrepare(change, ticket, run));
+      return laidOut.then((run) => this.#finishPrepare(change, snapshot, ticket, run));
     }
-    return this.#finishPrepare(change, ticket, laidOut);
+    return this.#finishPrepare(change, snapshot, ticket, laidOut);
   }
 
   #finishPrepare(
     change: RenderChange,
+    snapshot: Readonly<RenderLabelSnapshot>,
     ticket: number,
     run: Readonly<PositionedRun>,
   ): PreparedChange | Promise<PreparedChange> {
     if (ticket !== this.#ticket) return { change, run };
-    const snapshot = change.snapshot;
-    if (snapshot === undefined) return { change, run };
     const missing = this.#ensureMissingGlyphs(run, snapshot);
     if (missing === undefined) return { change, run };
     return missing.then(() => ({ change, run }));
   }
 
+  /** Duplicate strings share one run object; ensure each (run, size, weight) once per commit. */
   #ensureMissingGlyphs(
     run: Readonly<PositionedRun>,
     snapshot: Readonly<RenderLabelSnapshot>,
   ): Promise<void> | undefined {
+    if (this.#ensuredTicket !== this.#ticket) {
+      this.#ensuredRuns.clear();
+      this.#ensuredTicket = this.#ticket;
+    }
+    const variantKey = `${String(resolveFontSize(snapshot.style.fontSize))}\u0000${String(
+      snapshot.style.fontWeight ?? "normal",
+    )}`;
+    let variants = this.#ensuredRuns.get(run);
+    const cached = variants?.get(variantKey);
+    if (cached === "done") return undefined;
+    if (cached !== undefined) return cached;
     const missing: Promise<void>[] = [];
     for (let index = 0; index < run.glyphCount; index += 1) {
       const pending = this.#ensureGlyph(run, index, snapshot);
       if (pending !== undefined) missing.push(pending);
     }
-    if (missing.length === 0) return undefined;
-    return Promise.all(missing).then(() => undefined);
+    if (variants === undefined) {
+      variants = new Map();
+      this.#ensuredRuns.set(run, variants);
+    }
+    if (missing.length === 0) {
+      variants.set(variantKey, "done");
+      return undefined;
+    }
+    const settled = Promise.all(missing).then(() => undefined);
+    variants.set(variantKey, settled);
+    return settled;
   }
 
   #ensureGlyph(
@@ -438,8 +520,8 @@ export class RenderCoordinator {
     snapshot: Readonly<RenderLabelSnapshot>,
   ): Promise<void> | undefined {
     const mode = this.#glyphMode(run, index);
-    const glyphText = resolveGlyphText(run, index);
     const glyphId = run.glyphIds[index] ?? 0;
+    const glyphText = lazyGlyphText(run, index, glyphId);
     const identity = resolveGlyphIdentity({
       fontFamily: run.fontFamily,
       ...(run.fontFamilies === undefined ? {} : { fontFamilies: run.fontFamilies }),
@@ -466,7 +548,7 @@ export class RenderCoordinator {
         ...(run.fontFamilies === undefined ? {} : { fontFamilies: run.fontFamilies }),
         fontRevision: run.fontRevision,
         glyphId,
-        glyphText,
+        glyphText: glyphText === "" ? resolveGlyphText(run, index) : glyphText,
         fontSize: identity.fontSize,
         fontWeight: identity.fontWeight,
         mode,
@@ -490,17 +572,45 @@ export class RenderCoordinator {
   ): void {
     const key = prototypeKey(run, snapshot);
     const prototype = this.#prototypeSlots.get(key);
-    if (
-      prototype !== undefined &&
-      prototype !== slot &&
-      this.instances.getRange(prototype) !== undefined &&
-      this.instances.clone(prototype, slot)
-    ) {
-      this.#rememberPrototype(slot, key);
-      return;
+    if (prototype !== undefined && prototype !== slot && this.instances.clone(prototype, slot)) {
+      const prototypeKeys = this.#slotAtlasKeys.get(prototype);
+      if (prototypeKeys !== undefined) this.#retainSlotKeys(slot, prototypeKeys);
+      else this.#releaseSlotKeys(slot);
+    } else {
+      this.instances.set(slot, this.#buildInstances(slot, run, snapshot), { skipEquality: true });
     }
-    this.instances.set(slot, this.#buildInstances(slot, run, snapshot), { skipEquality: true });
     this.#rememberPrototype(slot, key);
+  }
+
+  /** Pin the label's atlas entries so eviction cannot reuse rectangles live instances sample. */
+  #retainSlotKeys(slot: number, keys: readonly GlyphCacheKey[]): void {
+    for (const key of keys) {
+      const count = this.#atlasKeyRefs.get(key) ?? 0;
+      this.#atlasKeyRefs.set(key, count + 1);
+      if (count === 0) this.atlas.pin(key);
+    }
+    const previous = this.#slotAtlasKeys.get(slot);
+    this.#slotAtlasKeys.set(slot, keys);
+    if (previous !== undefined) this.#releaseKeys(previous);
+  }
+
+  #releaseSlotKeys(slot: number): void {
+    const keys = this.#slotAtlasKeys.get(slot);
+    if (keys === undefined) return;
+    this.#slotAtlasKeys.delete(slot);
+    this.#releaseKeys(keys);
+  }
+
+  #releaseKeys(keys: readonly GlyphCacheKey[]): void {
+    for (const key of keys) {
+      const count = this.#atlasKeyRefs.get(key) ?? 0;
+      if (count <= 1) {
+        this.#atlasKeyRefs.delete(key);
+        this.atlas.unpin(key);
+      } else {
+        this.#atlasKeyRefs.set(key, count - 1);
+      }
+    }
   }
 
   #rememberPrototype(slot: number, key: string): void {
@@ -533,10 +643,11 @@ export class RenderCoordinator {
     const pages = this.#batchPages.subarray(0, count);
     const modes = this.#batchModes.subarray(0, count);
     const rasterScales = this.#batchScales.subarray(0, count);
+    const uniqueKeys: GlyphCacheKey[] = [];
     for (let index = 0; index < count; index += 1) {
       const mode = this.#glyphMode(run, index);
-      const glyphText = resolveGlyphText(run, index);
       const glyphId = run.glyphIds[index] ?? 0;
+      const glyphText = lazyGlyphText(run, index, glyphId);
       const identity = resolveGlyphIdentity({
         fontFamily: run.fontFamily,
         ...(run.fontFamilies === undefined ? {} : { fontFamilies: run.fontFamilies }),
@@ -548,6 +659,7 @@ export class RenderCoordinator {
         mode,
       });
       const key = identity.key;
+      if (!uniqueKeys.includes(key)) uniqueKeys.push(key);
       const entry = this.atlas.get(key);
       if (entry === undefined) {
         throw new Error(`Atlas entry missing for positioned glyph: ${String(key)}`);
@@ -568,6 +680,7 @@ export class RenderCoordinator {
       modes[index] = modeCode(entry.mode);
       rasterScales[index] = rasterScale;
     }
+    this.#retainSlotKeys(slot, uniqueKeys);
 
     return { positions, uvs, paletteIndices, pages, modes, rasterScales };
   }
@@ -684,6 +797,14 @@ function validateChanges(changes: readonly RenderChange[]): void {
       throw new TypeError("Render change mask contains unsupported domains");
     }
   }
+}
+
+/**
+ * Packed atlas identities ignore `glyphText` when a glyph id is present, and HarfBuzz runs carry no
+ * glyph keys, so deriving the text there would slice the remaining code points per glyph.
+ */
+function lazyGlyphText(run: Readonly<PositionedRun>, index: number, glyphId: number): string {
+  return glyphId > 0 && run.source === "harfbuzz" ? "" : resolveGlyphText(run, index);
 }
 
 function resolveGlyphText(run: Readonly<PositionedRun>, index: number): string {

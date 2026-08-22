@@ -19,7 +19,11 @@ export const DIRTY_MAX_RANGES = 8;
 export const DIRTY_WHOLE_BUFFER_BPS = 7_500;
 
 export class DirtyRanges {
-  readonly #ranges: DirtyByteRange[] = [];
+  // Flat (offset, end) pairs: recording allocates nothing, adjacent writers merge into
+  // the tail, and a storm of ascending offsets publishes without the O(n log n) sort.
+  #bounds = new Float64Array(128);
+  #count = 0;
+  #sorted = true;
 
   record(offset: number, length: number): void {
     if (!Number.isSafeInteger(offset) || offset < 0) {
@@ -28,50 +32,85 @@ export class DirtyRanges {
     if (!Number.isSafeInteger(length) || length <= 0) {
       throw new TypeError("Dirty byte length must be a positive safe integer");
     }
-    if (!Number.isSafeInteger(offset + length)) {
+    const end = offset + length;
+    if (!Number.isSafeInteger(end)) {
       throw new RangeError("Dirty byte range exceeds safe integer capacity");
     }
-    this.#ranges.push({ offset, length });
+    if (this.#count > 0) {
+      const tail = (this.#count - 1) * 2;
+      const tailOffset = this.#bounds[tail] ?? 0;
+      const tailEnd = this.#bounds[tail + 1] ?? 0;
+      if (offset >= tailOffset && offset <= tailEnd) {
+        if (end > tailEnd) this.#bounds[tail + 1] = end;
+        return;
+      }
+      if (offset < tailOffset) this.#sorted = false;
+    }
+    if (this.#count * 2 === this.#bounds.length) {
+      const next = new Float64Array(this.#bounds.length * 2);
+      next.set(this.#bounds);
+      this.#bounds = next;
+    }
+    const base = this.#count * 2;
+    this.#bounds[base] = offset;
+    this.#bounds[base + 1] = end;
+    this.#count += 1;
   }
 
   publish(options: DirtyPublishOptions = {}): readonly Readonly<DirtyByteRange>[] {
-    if (this.#ranges.length === 0) {
+    const count = this.#count;
+    if (count === 0) {
       return Object.freeze([]);
     }
-    this.#ranges.sort((left, right) => left.offset - right.offset);
+    if (!this.#sorted) this.#sortPairs();
+    const bounds = this.#bounds;
     const acceptedGap = options.acceptedGap ?? 0;
     const published: DirtyByteRange[] = [];
-    let current = this.#ranges[0];
-    if (current === undefined) {
-      return Object.freeze([]);
-    }
-    for (let index = 1; index < this.#ranges.length; index += 1) {
-      const next = this.#ranges[index];
-      if (next === undefined) continue;
-      const currentEnd: number = current.offset + current.length;
-      if (next.offset <= currentEnd + acceptedGap) {
-        current = {
-          offset: current.offset,
-          length: Math.max(currentEnd, next.offset + next.length) - current.offset,
-        };
+    let currentOffset = bounds[0] ?? 0;
+    let currentEnd = bounds[1] ?? 0;
+    for (let index = 1; index < count; index += 1) {
+      const nextOffset = bounds[index * 2] ?? 0;
+      const nextEnd = bounds[index * 2 + 1] ?? 0;
+      if (nextOffset <= currentEnd + acceptedGap) {
+        if (nextEnd > currentEnd) currentEnd = nextEnd;
       } else {
-        published.push(Object.freeze(current));
-        current = next;
+        published.push(
+          Object.freeze({ offset: currentOffset, length: currentEnd - currentOffset }),
+        );
+        currentOffset = nextOffset;
+        currentEnd = nextEnd;
       }
     }
-    published.push(Object.freeze(current));
-    this.#ranges.length = 0;
+    published.push(Object.freeze({ offset: currentOffset, length: currentEnd - currentOffset }));
+    this.#count = 0;
+    this.#sorted = true;
 
     const collapsed = collapseRanges(published, options.maxRanges);
     return Object.freeze(promoteWholeBuffer(collapsed, options.liveBytes, options.wholeBufferBps));
   }
 
   clear(): void {
-    this.#ranges.length = 0;
+    this.#count = 0;
+    this.#sorted = true;
   }
 
   get pendingRanges(): number {
-    return this.#ranges.length;
+    return this.#count;
+  }
+
+  #sortPairs(): void {
+    const pairs: Array<readonly [number, number]> = [];
+    for (let index = 0; index < this.#count; index += 1) {
+      pairs.push([this.#bounds[index * 2] ?? 0, this.#bounds[index * 2 + 1] ?? 0]);
+    }
+    pairs.sort((left, right) => left[0] - right[0]);
+    for (let index = 0; index < pairs.length; index += 1) {
+      const pair = pairs[index];
+      if (pair === undefined) continue;
+      this.#bounds[index * 2] = pair[0];
+      this.#bounds[index * 2 + 1] = pair[1];
+    }
+    this.#sorted = true;
   }
 }
 

@@ -123,6 +123,28 @@ export class TransformPalette {
     return true;
   }
 
+  /** Patch x/y texels for a sorted slot column without per-label objects or validation. */
+  writePositions(slots: Uint32Array, count: number, xy: Float32Array): number {
+    this.#assertActive();
+    const data = this.#data;
+    const occupied = this.#occupied;
+    let written = 0;
+    for (let index = 0; index < count; index += 1) {
+      const slot = slots[index] ?? 0;
+      if (slot >= this.#capacity || occupied[slot] !== 1) continue;
+      const offset = slot * FLOATS_PER_LABEL;
+      const nextX = Math.fround(xy[index * 2] ?? 0);
+      const nextY = Math.fround(xy[index * 2 + 1] ?? 0);
+      if (data[offset] === nextX && data[offset + 1] === nextY) continue;
+      data[offset] = nextX;
+      data[offset + 1] = nextY;
+      this.#dirty.record(slot * TRANSFORM_PALETTE_STRIDE, 16);
+      written += 1;
+    }
+
+    return written;
+  }
+
   /** Patch only the x/y texels of an occupied slot. */
   setPosition(slot: number, x: number, y: number): boolean {
     this.#assertActive();

@@ -4,9 +4,9 @@ import { dirname, resolve } from "node:path";
 import { chromium } from "@playwright/test";
 import { createServer } from "vite";
 
+import { benchmarkRuntime } from "./runtime";
 import {
   BENCHMARK_SCHEMA_VERSION,
-  benchmarkRuntime,
   summarize,
   type BrowserBenchmarkArtifact,
   type BrowserBenchmarkFixture,
@@ -102,6 +102,12 @@ try {
   await server.close();
 }
 
+const defaults = getBenchmarkWorkload(options.workload);
+const exploratory =
+  options.labels !== defaults.labelCount ||
+  options.mutations !== defaults.mutationCount ||
+  options.warmupFrames !== defaults.warmupFrames ||
+  options.sampleFrames !== defaults.sampleFrames;
 const artifact: BrowserBenchmarkArtifact = {
   schemaVersion: BENCHMARK_SCHEMA_VERSION,
   benchmark: "browser-workloads",
@@ -110,6 +116,7 @@ const artifact: BrowserBenchmarkArtifact = {
   runtime: benchmarkRuntime(),
   workload: options.workload,
   status: failures.length === 0 ? "complete" : "capacity-limit",
+  ...(exploratory ? { exploratory: true } : {}),
   samples,
   failures,
   summaries: Object.fromEntries(
@@ -122,9 +129,10 @@ const artifact: BrowserBenchmarkArtifact = {
     ]),
   ),
 };
+// A scale override must not overwrite the formal artifact for this workload.
 const outputPath = resolve(
   import.meta.dir,
-  `results/browser-${options.workload}-${packageMetadata.version}.json`,
+  `results/browser-${options.workload}-${packageMetadata.version}${exploratory ? "-exploratory" : ""}.json`,
 );
 await mkdir(dirname(outputPath), { recursive: true });
 await Bun.write(outputPath, `${JSON.stringify(artifact, undefined, 2)}\n`);

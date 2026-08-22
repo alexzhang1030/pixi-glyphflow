@@ -52,6 +52,8 @@ export class RasterGlyphProvider {
   #generatorStarts = 0;
   readonly #faces = new Map<string, FontFace>();
   readonly #prebuilt: PrebuiltGlyphProvider | undefined;
+  readonly #msdfBatches = new Map<string, MsdfBatch>();
+  #msdfFlushScheduled = false;
   #destroyed = false;
 
   constructor(registry: FontRegistry, options: RasterGlyphProviderOptions = {}) {
@@ -187,18 +189,96 @@ export class RasterGlyphProvider {
     const prepared = prepareGlyphFont(bytes, request.glyphId, request.glyphText);
     const rasterFontSize = Math.max(request.fontSize, this.#distanceFieldMinFontSize);
     const rasterScale = rasterFontSize / request.fontSize;
-    const textureSize = nextPowerOfTwo(Math.max(32, Math.ceil(rasterFontSize * 2)));
-    const atlas = await this.#generateAtlas({
-      font: prepared.bytes,
-      charset: prepared.glyphText,
-      fontSize: rasterFontSize,
-      textureSize: [textureSize, textureSize],
-      fieldRange: 4,
-      padding: 2,
-      fixOverlaps: true,
-    });
+    if (prepared.bytes !== bytes) {
+      // A patched cmap font is unique to this glyph; it cannot share a generator pass.
+      const textureSize = nextPowerOfTwo(Math.max(32, Math.ceil(rasterFontSize * 2)));
+      const atlas = await this.#generateAtlas({
+        font: prepared.bytes,
+        charset: prepared.glyphText,
+        fontSize: rasterFontSize,
+        textureSize: [textureSize, textureSize],
+        fieldRange: 4,
+        padding: 2,
+        fixOverlaps: true,
+      });
+      return extractDistanceField(request, atlas, prepared.glyphText, rasterScale);
+    }
 
-    return extractDistanceField(request, atlas, prepared.glyphText, rasterScale);
+    // The generator re-parses the posted font on every call, so a commit's misses for one
+    // (family, revision, size) share a single pass: one parse plus N crops instead of N parses.
+    return new Promise((resolve, reject) => {
+      const key = `${request.family}\u0000${String(request.fontRevision)}\u0000${String(rasterFontSize)}`;
+      let batch = this.#msdfBatches.get(key);
+      if (batch === undefined) {
+        batch = { bytes, rasterFontSize, members: [] };
+        this.#msdfBatches.set(key, batch);
+      }
+      batch.members.push({
+        request,
+        glyphText: prepared.glyphText,
+        rasterScale,
+        resolve,
+        reject,
+      });
+      if (!this.#msdfFlushScheduled) {
+        this.#msdfFlushScheduled = true;
+        queueMicrotask(() => {
+          this.#msdfFlushScheduled = false;
+          this.#flushMsdfBatches();
+        });
+      }
+    });
+  }
+
+  #flushMsdfBatches(): void {
+    const batches = [...this.#msdfBatches.values()];
+    this.#msdfBatches.clear();
+    for (const batch of batches) {
+      for (let start = 0; start < batch.members.length; start += MSDF_BATCH_LIMIT) {
+        void this.#rasterizeMsdfChunk(batch, batch.members.slice(start, start + MSDF_BATCH_LIMIT));
+      }
+    }
+  }
+
+  async #rasterizeMsdfChunk(
+    batch: Readonly<MsdfBatch>,
+    chunk: readonly MsdfBatchMember[],
+  ): Promise<void> {
+    if (this.#destroyed) {
+      const error = new Error("RasterGlyphProvider was destroyed before the batch generated");
+      for (const member of chunk) member.reject(error);
+      return;
+    }
+    try {
+      const cell = Math.ceil(batch.rasterFontSize * 1.5) + 8;
+      const side = nextPowerOfTwo(
+        Math.max(
+          32,
+          Math.ceil(batch.rasterFontSize * 2),
+          Math.ceil(Math.sqrt(chunk.length)) * cell,
+        ),
+      );
+      const atlas = await this.#generateAtlas({
+        font: batch.bytes,
+        charset: chunk.map((member) => member.glyphText).join(""),
+        fontSize: batch.rasterFontSize,
+        textureSize: [side, side],
+        fieldRange: 4,
+        padding: 2,
+        fixOverlaps: true,
+      });
+      for (const member of chunk) {
+        try {
+          member.resolve(
+            extractDistanceField(member.request, atlas, member.glyphText, member.rasterScale),
+          );
+        } catch (error: unknown) {
+          member.reject(error);
+        }
+      }
+    } catch (error: unknown) {
+      for (const member of chunk) member.reject(error);
+    }
   }
 
   async #tinySdfRaster(request: RasterGlyphRequest): Promise<Readonly<GlyphRaster>> {
@@ -225,14 +305,13 @@ export class RasterGlyphProvider {
       ...(metrics === undefined
         ? {}
         : {
-            metrics: {
-              ...metrics,
-              bearingX: metrics.bearingX / rasterScale,
-              bearingY: metrics.bearingY / rasterScale,
-              advance: metrics.advance / rasterScale,
-              fieldRange: TINY_SDF_RADIUS / rasterScale,
-              ...(rasterScale === 1 ? {} : { rasterScale }),
-            },
+            metrics: scaledFieldMetrics(
+              metrics.bearingX,
+              metrics.bearingY,
+              metrics.advance,
+              TINY_SDF_RADIUS,
+              rasterScale,
+            ),
           }),
     };
   }
@@ -292,8 +371,10 @@ function extractDistanceField(
   generatedGlyphText: string,
   rasterScale: number,
 ): Readonly<GlyphRaster> {
+  // Batched atlases carry many glyphs; falling back to glyphs[0] would crop a stranger.
   const glyph =
-    atlas.glyphs.find((candidate) => candidate.char === generatedGlyphText) ?? atlas.glyphs[0];
+    atlas.glyphs.find((candidate) => candidate.char === generatedGlyphText) ??
+    (atlas.glyphs.length === 1 ? atlas.glyphs[0] : undefined);
   if (glyph === undefined) {
     throw new RangeError(`MSDF generator returned no glyph for: ${request.glyphText}`);
   }
@@ -318,13 +399,13 @@ function extractDistanceField(
     const sourceStart = ((y + row) * atlas.texture.width + x) * 4;
     rgba.set(atlas.texture.data.subarray(sourceStart, sourceStart + width * 4), row * width * 4);
   }
-  const metrics: Readonly<GlyphMetrics> = Object.freeze({
-    bearingX: glyph.bounds.left / rasterScale,
-    bearingY: glyph.bounds.top / rasterScale,
-    advance: glyph.advance / rasterScale,
-    fieldRange: atlas.fieldRange / rasterScale,
-    ...(rasterScale === 1 ? {} : { rasterScale }),
-  });
+  const metrics = scaledFieldMetrics(
+    glyph.bounds.left,
+    glyph.bounds.top,
+    glyph.advance,
+    atlas.fieldRange,
+    rasterScale,
+  );
   if (request.mode === "msdf") {
     return Object.freeze({ mode: "msdf", width, height, pixels: rgba, metrics });
   }
@@ -336,6 +417,39 @@ function extractDistanceField(
   }
 
   return Object.freeze({ mode: "sdf", width, height, pixels, metrics });
+}
+
+const MSDF_BATCH_LIMIT = 64;
+
+interface MsdfBatchMember {
+  readonly request: RasterGlyphRequest;
+  readonly glyphText: string;
+  readonly rasterScale: number;
+  readonly resolve: (raster: Readonly<GlyphRaster>) => void;
+  readonly reject: (error: unknown) => void;
+}
+
+interface MsdfBatch {
+  readonly bytes: Uint8Array;
+  readonly rasterFontSize: number;
+  readonly members: MsdfBatchMember[];
+}
+
+/** Distance-field metrics scale together or the shader's screen-space math drifts. */
+function scaledFieldMetrics(
+  bearingX: number,
+  bearingY: number,
+  advance: number,
+  fieldRange: number,
+  rasterScale: number,
+): Readonly<GlyphMetrics> {
+  return Object.freeze({
+    bearingX: bearingX / rasterScale,
+    bearingY: bearingY / rasterScale,
+    advance: advance / rasterScale,
+    fieldRange: fieldRange / rasterScale,
+    ...(rasterScale === 1 ? {} : { rasterScale }),
+  });
 }
 
 async function defaultMsdfGenerator(): Promise<MsdfGeneratorLike> {

@@ -15,6 +15,7 @@ const COORD_BIAS = 2 ** 24;
 const COORD_MIN = -COORD_BIAS;
 const COORD_MAX = COORD_BIAS - 1;
 const LINEAR_CELL_FRACTION = 8;
+const LINEAR_RESULT_FRACTION = 4;
 
 export class SpatialIndex {
   readonly #maxCapacity: number;
@@ -404,7 +405,32 @@ export class SpatialIndex {
       const maxCY = Math.floor((maximumY + expand) / size);
       cells += (maxCX - minCX + 1) * (maxCY - minCY + 1);
     }
-    return cells * LINEAR_CELL_FRACTION > this.#entries;
+    if (cells * LINEAR_CELL_FRACTION > this.#entries) return true;
+    // Grid output restores insertion order with an O(K log K) sort, so dense results
+    // (mid-zoom viewports) cost more than the ascending dense scan. Sum candidate
+    // bucket sizes without visiting entries; the dense case exits after a few buckets.
+    const limit = this.#entries / LINEAR_RESULT_FRACTION;
+    let candidates = this.#spill.length;
+    if (candidates > limit) return true;
+    for (let level = 0; level < CELL_SIZES.length; level += 1) {
+      const size = CELL_SIZES[level] ?? 64;
+      const expand = size * 0.5;
+      const minCX = Math.floor((minimumX - expand) / size);
+      const maxCX = Math.floor((maximumX + expand) / size);
+      const minCY = Math.floor((minimumY - expand) / size);
+      const maxCY = Math.floor((maximumY + expand) / size);
+      for (let cy = minCY; cy <= maxCY; cy += 1) {
+        for (let cx = minCX; cx <= maxCX; cx += 1) {
+          const packed = packCell(level, cx, cy);
+          if (packed === undefined) continue;
+          const bucket = this.#cells.get(packed);
+          if (bucket === undefined) continue;
+          candidates += bucket.length;
+          if (candidates > limit) return true;
+        }
+      }
+    }
+    return false;
   }
 
   #visitOverlapping(

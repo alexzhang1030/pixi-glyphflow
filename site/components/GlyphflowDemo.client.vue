@@ -281,8 +281,8 @@ async function initialize(backend: RendererBackend, runId: number): Promise<void
     preference: [backend],
     preferWebGLVersion: 2 as const,
     powerPreference: "high-performance" as const,
-    antialias: false as const,
-    autoDensity: true as const,
+    antialias: false,
+    autoDensity: true,
     resolution: Math.min(window.devicePixelRatio, 2),
     background: "#080d12",
   };

@@ -1,5 +1,3 @@
-import { cpus, platform, release } from "node:os";
-
 export interface BenchmarkDistribution {
   readonly unit: "bytes" | "count" | "fps" | "ms" | "ratio";
   readonly samples: readonly number[];
@@ -16,7 +14,9 @@ export type BrowserBenchmarkFixture = "bitmap-text" | "glyphflow" | "html-text" 
 
 export type BrowserBenchmarkWorkload =
   | "atlas-pressure"
+  | "camera-live"
   | "dynamic-counters"
+  | "first-seen"
   | "million-full"
   | "million-live"
   | "million-viewport"
@@ -110,6 +110,8 @@ export interface BrowserBenchmarkArtifact {
   readonly runtime: Readonly<BenchmarkRuntime>;
   readonly workload: BrowserBenchmarkWorkload;
   readonly status: "capacity-limit" | "complete";
+  /** Scale overrides mark the artifact exploratory; it never replaces the formal file. */
+  readonly exploratory?: boolean;
   readonly samples: readonly Readonly<BrowserBenchmarkSample>[];
   readonly failures: readonly Readonly<BrowserBenchmarkFailure>[];
   readonly summaries: Readonly<
@@ -149,16 +151,6 @@ export function summarize(
     p95: percentile(sorted, 0.95),
     p99: percentile(sorted, 0.99),
     max: sorted.at(-1) ?? 0,
-  });
-}
-
-export function benchmarkRuntime(): BenchmarkRuntime {
-  return Object.freeze({
-    bun: Bun.version,
-    cpu: cpus()[0]?.model ?? "unknown",
-    platform: platform(),
-    release: release(),
-    architecture: process.arch,
   });
 }
 

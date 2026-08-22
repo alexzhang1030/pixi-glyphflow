@@ -49,6 +49,14 @@ the palette. Re-query only on show/hide/add/remove or when the camera leaves the
 `getRange` must return the live range. Copying and freezing it on every pack or segment walk is the
 hot leaf.
 
+Mirror instance dirty ranges into the compute pass on every compute frame. A patch-path commit that
+skips the mirror leaves stale glyph bytes and stale record offsets in `instances_in`; content edits
+can relocate a range, so record patches must rewrite offset and count, not only the AABB.
+
+`ComputeCullPass.ensureCapacity` pushes the CPU-side indirect args (instance count 0) to the GPU.
+An idle compute frame must return before touching it, or the previous dispatch's draw count is
+clobbered without a new dispatch to restore it.
+
 Leaving the working set must not delete the run, instances, or palette. A later homepage trace
 spent the pan windows in `RenderCoordinator.#prepare` / `#ensureGlyph` / `#buildInstances` because
 re-entry used `ALL_DIRTY` after a full remove. Drop the draw state and cull records only. `remove()`
@@ -103,6 +111,24 @@ still skip before the stamp so they never enter the draw set.
 ## Live atlas keys omit `glyphText` when a glyph id is present
 
 Packed identities are family intern + glyph id + size bucket + weight class + mode + font revision. Rasterize must use the same size bucket as the key. String keys stay valid for `atlas-pressure` (`glyph-${index}`), prebuilt pages, non-BMP text with glyph id 0, and unusual weights. Do not put `glyphText` back into the packed key, and do not fall back to `float16x4` instance attributes.
+
+## The browser benchmark page must stay free of node builtins
+
+`benchmarks/browser/*` runs in Chrome through Vite. Any VALUE import from a module whose top level
+touches `node:os` (or other node builtins) breaks the page before `__glyphflowBenchmark.done` is
+set, and every browser workload then "times out" instead of failing loudly. Wave 0 did this by
+importing `BENCHMARK_SCHEMA_VERSION` from `schema.ts` while `benchmarkRuntime()` lived there; the
+suite was unrunnable until `benchmarks/runtime.ts` took the node-only half. Keep `schema.ts`
+isomorphic; put node-only helpers in `runtime.ts`. Type-only imports are safe.
+
+## Spatial queries with dense results must not pay the grid sort
+
+Hash-grid output restores insertion order with an `O(K log K)` sort. A mid-zoom viewport at one
+million labels returns hundreds of thousands of hits, and the sort alone cost ~37 ms per frame
+(viewport-zoom 38.2 ms vs 9.0 ms on the 1.1.0 linear scan, same machine). `#shouldScanLinear` must
+stay result-aware: it sums candidate bucket sizes with an early exit and falls back to the
+ascending dense scan once candidates exceed a quarter of all entries. Do not judge the grid by
+small-viewport queries alone; zoom sweeps cross the density spectrum.
 
 ## Do not fail CI on the 1.1.0 atlas-pressure frame
 

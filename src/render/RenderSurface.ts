@@ -8,30 +8,37 @@ import {
   type WebGPURenderer,
 } from "pixi.js";
 
-import type { AtlasCommit, AtlasPageInfo, GlyphMode } from "../atlas/types";
+import type { AtlasCommit, AtlasPageInfo, AtlasUpload, GlyphMode } from "../atlas/types";
 import {
   aabbVisible,
   CULL_RECORD_STRIDE,
   computeCullStructurallyEligible,
   cullViewportsEqual,
   type CullPath,
+  type CullRecordDirty,
   type CullViewport,
   resolveCullPath,
 } from "../culling/computeCull";
 import { ComputeCullPass } from "./ComputeCullPass";
 import { GlyphMesh } from "./GlyphMesh";
-import type { RenderCommitResult, RenderCoordinator } from "./RenderCoordinator";
+import type { RenderCommitResult, RenderCoordinator, RenderDrawState } from "./RenderCoordinator";
 import { GLYPH_INSTANCE_STRIDE, GLYPH_TEXTURE_BANK_SIZE, type DirtyByteRange } from "./types";
 
 const ACTIVE_BIT = 0x8000_0000;
 const PAGE_MASK = 0x0000_ffff;
 const PALETTE_BYTES_PER_TEXEL = 16;
+const EMPTY_DIRTY_RANGES: readonly Readonly<DirtyByteRange>[] = Object.freeze([]);
+
+function emptySegmentWalk(): SegmentWalk {
+  return { segments: [], naturalOrder: true, count: 0, lastSourceIndex: -1 };
+}
 
 interface AtlasTexturePage {
   readonly info: Readonly<AtlasPageInfo>;
   readonly pixels: Uint8Array;
   readonly source: BufferImageSource;
   readonly texture: Texture;
+  initialized: boolean;
 }
 
 interface SurfaceMesh {
@@ -49,6 +56,19 @@ interface DrawSpan {
   count: number;
 }
 
+interface SegmentWalk {
+  segments: DrawSegment[];
+  naturalOrder: boolean;
+  count: number;
+  lastSourceIndex: number;
+}
+
+interface DrawSegmentCache extends SegmentWalk {
+  drawEpoch: number;
+  segmentEpoch: number;
+  stateCount: number;
+}
+
 interface DrawSegment {
   readonly bank: number;
   readonly zIndex: number;
@@ -58,10 +78,11 @@ interface DrawSegment {
 }
 
 export interface RenderComputeCullUpdate {
-  readonly records: ArrayBuffer | undefined;
+  /** The complete packed record buffer, so a stale GPU mirror can always resync in full. */
+  readonly records: ArrayBuffer;
   readonly recordCount: number;
+  readonly recordDirty: CullRecordDirty;
   readonly viewport: CullViewport;
-  readonly mirrorInstances: boolean;
 }
 
 export interface RenderSurfaceStats {
@@ -102,6 +123,7 @@ export class RenderSurface {
   #computeEligible = true;
   readonly #computeCull: boolean | "auto";
   #lastCullViewport: CullViewport | undefined;
+  #segmentCache: DrawSegmentCache | undefined;
   #destroyed = false;
 
   constructor(
@@ -138,45 +160,49 @@ export class RenderSurface {
     this.#assertActive();
     if (this.#coordinator.getDrawStates().length !== 0) return;
     this.#destroyMeshes();
-    this.#submittedGlyphs = 0;
   }
 
   refreshComputeCull(update: Readonly<RenderComputeCullUpdate>): CullPath {
     this.#assertActive();
     const uploadStart = performance.now();
-    const path = this.#refreshComputeCull(update);
+    const path = this.#refreshComputeCull(update, EMPTY_DIRTY_RANGES);
     this.#lastUploadMs = performance.now() - uploadStart;
     return path;
   }
 
-  #refreshComputeCull(update: Readonly<RenderComputeCullUpdate>): CullPath {
+  #refreshComputeCull(
+    update: Readonly<RenderComputeCullUpdate>,
+    instanceRanges: readonly Readonly<DirtyByteRange>[],
+  ): CullPath {
     if (this.prepareCullPath() !== "compute-cull") {
       return this.#useCpuCull();
     }
-    if (update.records !== undefined && update.recordCount === 0) {
+    if (update.recordDirty === "all" && update.recordCount === 0) {
       this.#destroyMeshes();
-      this.#submittedGlyphs = 0;
     } else if (!this.#hasDirectComputeMesh()) this.#syncMeshes([], update);
     const pass = this.#cullPass;
     const surface = this.#meshes.get(0);
     if (pass === undefined || surface === undefined || !this.#hasDirectComputeMesh()) {
       return this.#useCpuCull();
     }
-    const store = this.#coordinator.instances;
-    const instanceBytes = store.stats.highWater * GLYPH_INSTANCE_STRIDE;
-    if (update.records !== undefined) {
-      if (!pass.ensureCapacity(update.recordCount, instanceBytes)) {
-        return this.#useCpuCull();
-      }
-      pass.uploadRecords(update.records, update.recordCount);
-      if (update.mirrorInstances) pass.uploadInstances(store.buffer, instanceBytes);
-    }
     pass.trackGeometry(surface.mesh.geometry);
-    const viewportUnchanged = cullViewportsEqual(this.#lastCullViewport, update.viewport);
-    if (update.records === undefined && viewportUnchanged) {
+    // ensureCapacity resets the indirect args, so an idle frame must return before it.
+    if (
+      update.recordDirty === "none" &&
+      instanceRanges.length === 0 &&
+      pass.synced &&
+      cullViewportsEqual(this.#lastCullViewport, update.viewport)
+    ) {
       this.#cullPath = "compute-cull";
       return this.#cullPath;
     }
+    const store = this.#coordinator.instances;
+    const instanceBytes = store.stats.highWater * GLYPH_INSTANCE_STRIDE;
+    if (!pass.ensureCapacity(update.recordCount, instanceBytes)) {
+      return this.#useCpuCull();
+    }
+    pass.uploadRecords(update.records, update.recordCount, update.recordDirty);
+    pass.uploadInstances(store.buffer, instanceBytes, instanceRanges);
     if (!pass.dispatch(update.viewport)) {
       this.#syncCompactDraw(update);
       return this.#useCpuCull();
@@ -196,25 +222,25 @@ export class RenderSurface {
     const transformRanges = this.#coordinator.transforms.consumeDirty();
     const instanceRanges = this.#coordinator.instances.consumeDirty();
     this.#syncPalette(transformRanges);
+    const needsComputeRebuild = this.#needsComputeMeshRebuild(computeCull);
     const skipSegmentWalk =
       computeCull !== undefined &&
       this.#hasDirectComputeMesh() &&
       instanceRanges.length === 0 &&
-      !this.#needsComputeMeshRebuild(computeCull);
+      !needsComputeRebuild;
     if (this.#coordinator.getDrawStates().length === 0) {
       this.#destroyMeshes();
-      this.#submittedGlyphs = 0;
     } else if (
       !skipSegmentWalk &&
       (instanceRanges.length > 0 ||
         result.drawOrderChanged ||
         this.#meshes.size === 0 ||
-        this.#needsComputeMeshRebuild(computeCull))
+        needsComputeRebuild)
     ) {
       this.#syncMeshes(instanceRanges, computeCull);
     }
     if (computeCull === undefined) this.#useCpuCull();
-    else this.#refreshComputeCull(computeCull);
+    else this.#refreshComputeCull(computeCull, instanceRanges);
     this.#lastUploadMs = performance.now() - uploadStart;
   }
 
@@ -256,7 +282,7 @@ export class RenderSurface {
   }
 
   #applyAtlasCommit(commit: Readonly<AtlasCommit>): void {
-    const dirtyPages = new Set<number>();
+    const dirtyPages = new Map<number, Readonly<AtlasUpload>[]>();
     for (const upload of commit.uploads) {
       const page = this.#ensureAtlasPage(upload.entry.page);
       copyAtlasUpload(
@@ -268,9 +294,28 @@ export class RenderSurface {
         upload.pixels,
       );
       this.#atlasUploadBytes += upload.pixels.byteLength;
-      dirtyPages.add(upload.entry.page);
+      const uploads = dirtyPages.get(upload.entry.page);
+      if (uploads === undefined) dirtyPages.set(upload.entry.page, [upload]);
+      else uploads.push(upload);
     }
-    for (const page of dirtyPages) this.#pages.get(page)?.source.update();
+    for (const [pageId, uploads] of dirtyPages) {
+      const page = this.#pages.get(pageId);
+      if (page === undefined) continue;
+      if (!page.initialized) {
+        initializeTexture(this.#renderer, page.source);
+        page.initialized = true;
+        continue;
+      }
+      // Four-channel pages keep the whole-page upload: PixiJS premultiplies their alpha on
+      // upload and a raw sub-rect write would not. Single-channel fields have no such step.
+      const singleChannel = page.info.mode === "alpha" || page.info.mode === "sdf";
+      const rectBytes = uploads.reduce((sum, upload) => sum + upload.pixels.byteLength, 0);
+      if (!singleChannel || rectBytes * 2 > page.pixels.byteLength) {
+        page.source.update();
+        continue;
+      }
+      uploadAtlasRects(this.#renderer, page, uploads);
+    }
   }
 
   #ensureAtlasPage(pageId: number): AtlasTexturePage {
@@ -294,6 +339,7 @@ export class RenderSurface {
       pixels,
       source,
       texture: new Texture({ source }),
+      initialized: false,
     };
     this.#pages.set(pageId, page);
 
@@ -341,7 +387,6 @@ export class RenderSurface {
     const storeStats = store.stats;
     if (storeStats.activeInstances === 0 || this.#coordinator.getDrawStates().length === 0) {
       this.#destroyMeshes();
-      this.#submittedGlyphs = 0;
       return;
     }
     const data = store.buffer;
@@ -355,12 +400,19 @@ export class RenderSurface {
     if (this.#computeEligible && (draw.naturalOrder || computeCull !== undefined)) {
       const segment = draw.segments[0];
       if (segment === undefined) throw new Error("Active glyph segment is unavailable");
-      this.#syncDirectMesh(segment.bank, segment.blendMode, data, storeStats.highWater, ranges);
+      this.#syncDirectMesh(
+        segment.bank,
+        segment.blendMode,
+        data,
+        storeStats.highWater,
+        ranges,
+        computeCull !== undefined,
+      );
       this.#submittedGlyphs = storeStats.activeInstances;
       return;
     }
     const compactDraw =
-      computeCull?.records === undefined
+      computeCull === undefined
         ? draw
         : this.#buildDrawSegments(
             view,
@@ -374,6 +426,7 @@ export class RenderSurface {
     this.#submittedGlyphs = compactDraw.count;
   }
 
+  /** Full walks are cached; while both epochs hold, states only append and pages are stable. */
   #buildDrawSegments(
     view: DataView,
     included: Uint8Array | undefined = undefined,
@@ -382,26 +435,64 @@ export class RenderSurface {
     naturalOrder: boolean;
     count: number;
   }> {
-    const segments: DrawSegment[] = [];
-    let lastSourceIndex = -1;
-    let naturalOrder = true;
-    let count = 0;
     const states = this.#coordinator.getDrawStates();
-    for (let stateIndex = 0; stateIndex < states.length; stateIndex += 1) {
+    if (included !== undefined) {
+      const walk = emptySegmentWalk();
+      this.#appendDrawSegments(walk, view, states, 0, included);
+      return walk;
+    }
+    const drawEpoch = this.#coordinator.drawListEpoch;
+    const segmentEpoch = this.#coordinator.instances.segmentEpoch;
+    const cached = this.#segmentCache;
+    if (
+      cached !== undefined &&
+      cached.drawEpoch === drawEpoch &&
+      cached.segmentEpoch === segmentEpoch &&
+      cached.stateCount <= states.length
+    ) {
+      if (cached.stateCount < states.length) {
+        this.#appendDrawSegments(cached, view, states, cached.stateCount, undefined);
+        cached.stateCount = states.length;
+      }
+      return cached;
+    }
+    const walk: DrawSegmentCache = {
+      ...emptySegmentWalk(),
+      drawEpoch,
+      segmentEpoch,
+      stateCount: states.length,
+    };
+    this.#appendDrawSegments(walk, view, states, 0, undefined);
+    if (walk.segments.reduce((sum, segment) => sum + segment.count, 0) !== walk.count) {
+      throw new Error("Draw segment glyph count differs from active instance count");
+    }
+    this.#segmentCache = walk;
+    return walk;
+  }
+
+  #appendDrawSegments(
+    walk: SegmentWalk,
+    view: DataView,
+    states: readonly Readonly<RenderDrawState>[],
+    startIndex: number,
+    included: Uint8Array | undefined,
+  ): void {
+    const segments = walk.segments;
+    for (let stateIndex = startIndex; stateIndex < states.length; stateIndex += 1) {
       if (included !== undefined && included[stateIndex] !== 1) continue;
       const state = states[stateIndex];
       if (state === undefined) throw new Error("Draw state list is incomplete");
       const range = this.#coordinator.instances.getRange(state.slot);
       if (range === undefined) continue;
-      count += range.count;
+      walk.count += range.count;
       for (let index = 0; index < range.count; index += 1) {
         const sourceIndex = range.offset + index;
         const metadata = view.getUint32(sourceIndex * GLYPH_INSTANCE_STRIDE + 20, true);
         if ((metadata & ACTIVE_BIT) === 0) {
           throw new Error(`Inactive glyph found in label range ${String(state.slot)}`);
         }
-        if (sourceIndex <= lastSourceIndex) naturalOrder = false;
-        lastSourceIndex = sourceIndex;
+        if (sourceIndex <= walk.lastSourceIndex) walk.naturalOrder = false;
+        walk.lastSourceIndex = sourceIndex;
         const page = metadata & PAGE_MASK;
         const bank = Math.floor(page / GLYPH_TEXTURE_BANK_SIZE);
         let segment = segments[segments.length - 1];
@@ -429,10 +520,6 @@ export class RenderSurface {
         segment.count += 1;
       }
     }
-    if (segments.reduce((sum, segment) => sum + segment.count, 0) !== count) {
-      throw new Error("Draw segment glyph count differs from active instance count");
-    }
-    return { segments, naturalOrder, count };
   }
 
   #visibleCullRecords(
@@ -468,6 +555,7 @@ export class RenderSurface {
     data: ArrayBuffer,
     instanceCount: number,
     ranges: readonly Readonly<DirtyByteRange>[],
+    computeCullActive: boolean,
   ): void {
     for (const [key, surface] of this.#meshes) {
       if (key !== 0) this.#destroyMesh(key, surface);
@@ -493,6 +581,12 @@ export class RenderSurface {
       return;
     }
     surface.mesh.setInstanceCount(instanceCount);
+    if (computeCullActive) {
+      // The indirect draw binds the compute pass's compacted buffer, so the mesh's own
+      // GPU copy is unread; leave it stale and let a cull fallback re-initialize it.
+      surface.initialized = false;
+      return;
+    }
     if (!surface.initialized) {
       initializeBuffer(this.#renderer, surface.mesh);
       surface.initialized = true;
@@ -637,6 +731,7 @@ export class RenderSurface {
 
   #destroyMeshes(): void {
     for (const [key, surface] of this.#meshes) this.#destroyMesh(key, surface);
+    this.#submittedGlyphs = 0;
   }
 
   #hasDirectComputeMesh(): boolean {
@@ -652,17 +747,13 @@ export class RenderSurface {
     const store = this.#coordinator.instances;
     if (store.stats.activeInstances === 0) {
       this.#destroyMeshes();
-      this.#submittedGlyphs = 0;
       return;
     }
     const view = new DataView(store.buffer);
-    const draw =
-      update.records === undefined
-        ? this.#buildDrawSegments(view)
-        : this.#buildDrawSegments(
-            view,
-            this.#visibleCullRecords(update.records, update.viewport, update.recordCount),
-          );
+    const draw = this.#buildDrawSegments(
+      view,
+      this.#visibleCullRecords(update.records, update.viewport, update.recordCount),
+    );
     this.#syncCompactMeshes(store.buffer, draw.segments);
     this.#submittedGlyphs = draw.count;
   }
@@ -670,6 +761,15 @@ export class RenderSurface {
   #useCpuCull(): CullPath {
     for (const surface of this.#meshes.values()) {
       this.#cullPass?.untrackGeometry(surface.mesh.geometry);
+    }
+    this.#cullPass?.invalidateSync();
+    // A direct mesh skipped its uploads while the compute pass owned the draw.
+    const direct = this.#meshes.get(0);
+    if (direct !== undefined && !direct.compact && !direct.initialized) {
+      initializeBuffer(this.#renderer, direct.mesh);
+      direct.initialized = true;
+      this.#instanceUploadBytes += direct.data.byteLength;
+      this.#instanceWrites += 1;
     }
     this.#cullPath = "cpu-grid";
     this.#lastCullViewport = undefined;
@@ -711,6 +811,52 @@ function copyAtlasUpload(
     const targetOffset = (y + row) * targetRowBytes + x * bytesPerPixel;
     page.pixels.set(pixels.subarray(sourceOffset, sourceOffset + sourceRowBytes), targetOffset);
   }
+}
+
+/** One new glyph must not re-upload its whole page; write the staged rectangles instead. */
+function uploadAtlasRects(
+  renderer: Renderer,
+  page: AtlasTexturePage,
+  uploads: readonly Readonly<AtlasUpload>[],
+): void {
+  if (isWebGLRenderer(renderer)) {
+    const gl = renderer.gl;
+    const resource = renderer.texture.getGlSource(page.source);
+    const previousAlignment = gl.getParameter(gl.UNPACK_ALIGNMENT) as number;
+    gl.bindTexture(resource.target, resource.texture);
+    gl.pixelStorei(gl.UNPACK_ALIGNMENT, 1);
+    try {
+      for (const upload of uploads) {
+        gl.texSubImage2D(
+          resource.target,
+          0,
+          upload.entry.x,
+          upload.entry.y,
+          upload.entry.width,
+          upload.entry.height,
+          resource.format,
+          resource.type,
+          upload.pixels,
+        );
+      }
+    } finally {
+      gl.pixelStorei(gl.UNPACK_ALIGNMENT, previousAlignment);
+    }
+    return;
+  }
+  if (isWebGPURenderer(renderer)) {
+    const texture = renderer.texture.getGpuSource(page.source);
+    for (const upload of uploads) {
+      renderer.gpu.device.queue.writeTexture(
+        { texture, origin: { x: upload.entry.x, y: upload.entry.y } },
+        upload.pixels,
+        { bytesPerRow: upload.entry.width, rowsPerImage: upload.entry.height },
+        { width: upload.entry.width, height: upload.entry.height },
+      );
+    }
+    return;
+  }
+  page.source.update();
 }
 
 function initializeTexture(renderer: Renderer, source: BufferImageSource): void {

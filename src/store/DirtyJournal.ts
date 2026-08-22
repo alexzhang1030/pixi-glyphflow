@@ -120,9 +120,8 @@ export class DirtyJournal {
     });
     this.#length = 0;
     this.#aggregateMask = TextDirty.None;
-    if (this.#slots.length > SLOT_LIST_FLOOR) {
-      this.#slots = new Uint32Array(SLOT_LIST_FLOOR);
-    }
+    // Keep the slot list at its high water: a repeating storm otherwise re-grows it
+    // through ~14 doublings every publish for a few hundred kilobytes of retained memory.
 
     return published;
   }

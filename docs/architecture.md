@@ -120,7 +120,11 @@ transform, coalesces the current input burst, updates culling bounds, and publis
 WebGPU compute culling keeps two sets. The CPU grid shapes and instances labels from an expanded
 working viewport. A stable prefix sum and scatter compact those resident glyphs against the tight
 padded draw viewport. Camera motion inside the working viewport does not query the grid or write the
-instance store. Crossing its edge refreshes residency and uploads cull records.
+instance store, and it skips the first-seen ring query while the draw viewport stays inside the last
+prepared ring. Crossing the working-set edge refreshes residency. GPU mirrors sync incrementally:
+commits upload only dirty instance byte ranges and changed or appended cull records, keyed by a
+draw-list epoch that appends preserve; re-sorts, removals, and cull-path fallbacks force a full
+repack or resync.
 
 The direct `GlyphMesh` rebinds its instance attributes to the compact buffer and uses an indexed
 indirect draw. The encoder hook checks geometry ownership and is removed when the pass is

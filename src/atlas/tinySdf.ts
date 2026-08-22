@@ -1,8 +1,16 @@
 /** Edge of the encoded field. Matches the shader `smoothstep(0.5, …)` contour. */
-export const TINY_SDF_EDGE = 0.5;
+const TINY_SDF_EDGE = 0.5;
 export const TINY_SDF_RADIUS = 8;
 
 const INF = 1e20;
+
+// Miss bursts raster many glyphs back to back; grow-only scratch keeps the EDT allocation-free.
+let outsideScratch = new Float64Array(0);
+let insideScratch = new Float64Array(0);
+let edtSource = new Float64Array(0);
+let edtDest = new Float64Array(0);
+let edtSites = new Int32Array(0);
+let edtBounds = new Float64Array(0);
 
 /** Encode an 8-bit alpha mask as a single-channel SDF with the edge at 0.5. */
 export function encodeTinySdf(
@@ -24,8 +32,13 @@ export function encodeTinySdf(
     throw new TypeError("SDF radius must be a positive finite number");
   }
 
-  const outside = new Float64Array(width * height);
-  const inside = new Float64Array(width * height);
+  const area = width * height;
+  if (outsideScratch.length < area) {
+    outsideScratch = new Float64Array(area);
+    insideScratch = new Float64Array(area);
+  }
+  const outside = outsideScratch;
+  const inside = insideScratch;
   for (let index = 0; index < alpha.length; index += 1) {
     const filled = (alpha[index] ?? 0) >= 128;
     outside[index] = filled ? INF : 0;
@@ -45,10 +58,16 @@ export function encodeTinySdf(
 
 function edt(grid: Float64Array, width: number, height: number): void {
   const length = Math.max(width, height);
-  const source = new Float64Array(length);
-  const dest = new Float64Array(length);
-  const sites = new Int32Array(length);
-  const bounds = new Float64Array(length + 1);
+  if (edtSource.length < length) {
+    edtSource = new Float64Array(length);
+    edtDest = new Float64Array(length);
+    edtSites = new Int32Array(length);
+    edtBounds = new Float64Array(length + 1);
+  }
+  const source = edtSource;
+  const dest = edtDest;
+  const sites = edtSites;
+  const bounds = edtBounds;
   for (let x = 0; x < width; x += 1) {
     for (let y = 0; y < height; y += 1) source[y] = grid[y * width + x] ?? INF;
     edt1d(source, dest, sites, bounds, height);
