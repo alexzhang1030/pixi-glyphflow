@@ -58,6 +58,59 @@ mutated field and the grid re-hashes per moved label. Wave 1's ≤ 8 ms target i
 plausible without batch-aware packing or a cheaper grid update. Reference M1 Pro artifacts are
 still required before changing any published number.
 
+## Whole-repo audit (2026-08-22)
+
+Four parallel code audits (CPU core, glyph pipeline, render pipeline, laboratory) against this
+plan. Full evidence lives in the audit conversation; the durable conclusions:
+
+**Delivered and near floor — stop optimizing here.** Skyline/waste/shelf packing, per-mode O(1)
+LRU, 52-bit keys, the 48 MiB store (test-pinned, 44.9 MiB measured), the sparse journal, the
+4-level hash grid, 24-byte instances, 32-byte fill transforms, camera-only WebGPU frames
+(~50–100 µs CPU), and packing CPU (~µs/glyph). Verified in code, not just claimed.
+
+**Where the next order of magnitude actually is, ranked:**
+
+1. **MSDF first-miss batching.** `@zappar/msdf-generator` re-posts and WASM-re-parses the entire
+   font per glyph (one worker atlas per glyph, 10–60 ms each) and it is the default HarfBuzz mode.
+   Batch a commit's misses per (family, size, mode) through one generator call with per-worker
+   `loadFont` caching: O(N·font) becomes O(font + N), ~10–50× on the first-miss hitch.
+2. **Draw-segment cache keyed on `drawListEpoch`.** Any instance-dirty commit walks every draw
+   state and every active glyph (`#buildDrawSegments`), ~4–10 ms at the homepage working set; the
+   epoch added for cull records is exactly the invalidation key. ~5–10× on content/first-seen
+   commits. Companion: stop mirroring dirty ranges into the mesh vertex buffer on compute frames —
+   every dirty byte currently uploads twice, and the indirect draw never reads the mesh copy.
+3. **Columnar position-only commit lane.** The Wave 1 `writePositions(slots, xy)` was never built;
+   each rendered mover costs ~5–6 heap objects, ~6 Map lookups, 2–4 `performance.now()` calls, and
+   a boxed dirty range. A slot-array lane into palette/AABB/record patches is ~4–6× on storms.
+4. **Atlas upload shape.** One new glyph re-uploads its whole 1–4 MiB page (`source.update()`),
+   commits await every missing raster, and the budgeted upload adapters in `src/render/*Adapter.ts`
+   are wired to nothing. Sub-rect uploads + a per-frame byte budget are Wave 4's real content.
+
+**Regressions and traps the audits confirmed:**
+
+- dynamic-counters (see A/B table): intake pays f16 packs, an O(len) `estimateTextBounds` with
+  unconditional sin/cos per `updateMany` entry, and megamorphic patch probing; commit pays the
+  per-label object pipeline. The workload never renders, so this is store+spatial cost only.
+- The dirty-range 8-range collapse degenerates scattered edits into a first-to-last span (a
+  scattered 100k storm can balloon toward a 32 MB palette upload); the 256-byte-gap model is fine
+  for dense edits.
+- `atlasCommit.evictedKeys` has no consumer and `pin`/`unpin` have no callers: under real atlas
+  pressure, evicted rectangles can be reused while live instances still sample them — silent glyph
+  corruption. Wave 4 must wire residency before it tunes anything.
+- `sourceRevision` is u16 and throws at 65,535 content edits per label: a 10 Hz counter dies in
+  ~1.8 hours. Needs a wrap or promotion decision before "extreme" dynamic workloads.
+- One nonzero z-index ever seen sets a permanent sort ratchet, defeating the append-only record
+  fast path for z-using scenes.
+
+**Laboratory limits that gate all published claims:** five headline workloads never create a
+renderer (their "frame" is store+spatial commit cost — honest numbers, misleading names);
+million-live samples static redraws, its product cost lives in setup; no workload can reach the
+WebGPU compute-cull path at all (rendering off, culling off, WebGL default), so Wave 3's own
+acceptance criterion is unmeasurable; there is no first-seen/working-set-miss workload, so the
+100× target moment has no probe; a `--labels` override silently overwrites formal artifacts; and
+p95 on 5–7 samples is the max. The browser suite was also unrunnable from Wave 0 until the
+`node:os` split (see gotchas).
+
 ## Structural diagnosis
 
 These are code facts, not profiler folklore. Each item names the structure that has to change.
