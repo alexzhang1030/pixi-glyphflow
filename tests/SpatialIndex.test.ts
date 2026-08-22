@@ -81,6 +81,26 @@ describe("SpatialIndex", () => {
     index.destroy();
   });
 
+  test("scans linearly when candidate buckets hold most entries, keeping insertion order cheap", () => {
+    const index = new SpatialIndex({ initialCapacity: 4_096 });
+    // 4,096 small labels tiled densely: a half-world query returns thousands of hits.
+    for (let slot = 0; slot < 4_096; slot += 1) {
+      index.set(slot, { x: (slot % 64) * 10, y: Math.floor(slot / 64) * 10, width: 8, height: 8 });
+    }
+    const output = new Uint32Array(4_096);
+    const before = index.stats.testedEntries;
+    const count = index.query({ x: 0, y: 0, width: 640, height: 320 }, output);
+    expect(count).toBeGreaterThan(1_000);
+    // The dense scan tests every entry; the grid path would test only the candidates.
+    expect(index.stats.testedEntries - before).toBe(4_096);
+    for (let position = 1; position < count; position += 1) {
+      const previous = output[position - 1] ?? 0;
+      expect(output[position] ?? 0).toBeGreaterThan(previous);
+    }
+
+    index.destroy();
+  });
+
   test("validates output capacity and finite geometry transactionally", () => {
     const index = new SpatialIndex();
     index.set(0, { x: 0, y: 0, width: 1, height: 1 });
