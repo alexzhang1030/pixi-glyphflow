@@ -112,6 +112,24 @@ still skip before the stamp so they never enter the draw set.
 
 Packed identities are family intern + glyph id + size bucket + weight class + mode + font revision. Rasterize must use the same size bucket as the key. String keys stay valid for `atlas-pressure` (`glyph-${index}`), prebuilt pages, non-BMP text with glyph id 0, and unusual weights. Do not put `glyphText` back into the packed key, and do not fall back to `float16x4` instance attributes.
 
+## The browser benchmark page must stay free of node builtins
+
+`benchmarks/browser/*` runs in Chrome through Vite. Any VALUE import from a module whose top level
+touches `node:os` (or other node builtins) breaks the page before `__glyphflowBenchmark.done` is
+set, and every browser workload then "times out" instead of failing loudly. Wave 0 did this by
+importing `BENCHMARK_SCHEMA_VERSION` from `schema.ts` while `benchmarkRuntime()` lived there; the
+suite was unrunnable until `benchmarks/runtime.ts` took the node-only half. Keep `schema.ts`
+isomorphic; put node-only helpers in `runtime.ts`. Type-only imports are safe.
+
+## Spatial queries with dense results must not pay the grid sort
+
+Hash-grid output restores insertion order with an `O(K log K)` sort. A mid-zoom viewport at one
+million labels returns hundreds of thousands of hits, and the sort alone cost ~37 ms per frame
+(viewport-zoom 38.2 ms vs 9.0 ms on the 1.1.0 linear scan, same machine). `#shouldScanLinear` must
+stay result-aware: it sums candidate bucket sizes with an early exit and falls back to the
+ascending dense scan once candidates exceed a quarter of all entries. Do not judge the grid by
+small-viewport queries alone; zoom sweeps cross the density spectrum.
+
 ## Do not fail CI on the 1.1.0 atlas-pressure frame
 
 `atlas-pressure` frame p95 is 638.50 ms in the published 1.1.0 artifact. Wave 1 changed the packer in source, but the committed artifact is still the old run. Measure the frame p95; do not add a 16.67 ms fail gate against that file. Same rule as the deferred 40 KiB gzip check.

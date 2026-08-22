@@ -37,6 +37,27 @@ Source: generated 1.1.0 report in [`benchmarks/PERFORMANCE.md`](../../benchmarks
 
 Storage on the same artifacts: 72 MiB CPU store, 64-byte transform records, 32-byte glyph instances, 244.14 MiB for the 8M-glyph buffer. Those match the specification ceilings. They are not yet extreme.
 
+## Same-machine A/B evidence (2026-08-22, non-reference)
+
+Cloud VM, headless system Chrome on SwiftShader WebGL 2, identical harness semantics per workload
+(drivers diffed against v1.1.0). Relative deltas only; not reference artifacts. The browser suite
+had been unrunnable since Wave 0 (node:os in the page bundle — see gotchas); these are the first
+post-Wave-1/2/3 browser numbers at all.
+
+| Workload | v1.1.0 p95 | HEAD p95 | Read |
+| --- | ---: | ---: | --- |
+| atlas-pressure | 550.1 ms | 4.0 ms | Wave 1 packer/LRU delivered (~137×) |
+| million-viewport | 6.4 ms | 0.3 ms | hash grid delivered (~21×) |
+| position-storm | 10.3 ms | 8.3 ms | packed positions delivered (~1.2×) |
+| viewport-zoom | 9.0 ms | 38.2 → 11.5 ms | grid sort cliff at dense results; fixed by the result-aware linear fallback |
+| dynamic-counters | 15.1–16.6 ms | 23.5–24.9 ms | REGRESSION: mutation intake 14.5 → 19.6 ms (f16 column packs), commit 0.7 → 4.0 ms (2.9 ms hash-grid updates). Open. |
+| million-live (HEAD only) | — | 0.10 ms | product-path 8M-glyph submission at the GPU floor |
+
+The dynamic-counters regression is the Wave 1/2 trade surfacing: the store packs f16 columns per
+mutated field and the grid re-hashes per moved label. Wave 1's ≤ 8 ms target is currently not
+plausible without batch-aware packing or a cheaper grid update. Reference M1 Pro artifacts are
+still required before changing any published number.
+
 ## Structural diagnosis
 
 These are code facts, not profiler folklore. Each item names the structure that has to change.
