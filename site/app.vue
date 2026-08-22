@@ -169,7 +169,7 @@ const guides = [
         <a class="brand" href="#top" aria-label="pixi-glyphflow home">
           <img src="/glyphflow-mark.svg" alt="" />
           <span>pixi-glyphflow</span>
-          <small>v1.1.0</small>
+          <small>v1.2.0</small>
         </a>
 
         <nav aria-label="Primary navigation">

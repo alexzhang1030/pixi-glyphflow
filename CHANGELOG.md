@@ -1,6 +1,43 @@
 # Changelog
 
-## Unreleased
+## 1.2.0 - 2026-08-22
+
+Published browser artifacts must be regenerated on the reference Apple M1 Pro Chrome fixture at
+this version before release; `benchmark:check` binds artifacts to the package version. Published
+frame and storage budgets are unchanged.
+
+### Added
+
+- `requestComputeCullGpu()` requests a WebGPU adapter and device whose storage-binding limits fit
+  million-label compute culling, for `Application.init({ gpu })`.
+- `culling.computeCull` (`true` / `false` / `"auto"`) and `culling.lod` options; `cullPath`
+  diagnostics report the path that ran.
+- `rasterizerOptions.tinySdf` builds HarfBuzz glyphs as a local SDF from the canvas mask;
+  `rasterizerOptions.prebuilt` serves packed pages before any generator; `prebuiltGlyphKey` is
+  exported from the advanced surface.
+- Laboratory: `million-live` draws the coordinator mesh for one million labels; `first-seen` jumps
+  the camera onto never-rendered regions each frame; `camera-live` records which cull path a
+  rendering camera ran. Scale overrides write `-exploratory` artifacts instead of overwriting
+  formal ones. `TextLayer.stats` records layout, instance-write, palette-write, spatial, and
+  upload timers.
+
+### Fixed
+
+- Bulk updates with duplicate ids could grow a scratch column past store capacity and crash the
+  next commit.
+- Every zero-z label insert re-sorted the whole draw list; sorts now trigger only on out-of-order
+  inserts, z or order changes, or while any nonzero z-index is live.
+- Compute-cull commits that patched resident labels left stale instance bytes and stale record
+  offsets on the GPU; content edits now re-upload their dirty ranges and rewrite record
+  offset/count.
+- The browser benchmark suite had been unrunnable since the laboratory split pulled `node:os` into
+  the page bundle; `benchmarkRuntime()` now lives in a node-only module.
+- Dense spatial queries paid an O(K log K) insertion-order sort; the linear fallback now sums
+  candidate bucket sizes with an early exit before walking the grid.
+- `sourceRevision` is `u32`; a 10 Hz counter no longer throws after ~1.8 hours of edits.
+- Atlas eviction could reuse rectangles that live instances still sample; the coordinator now
+  refcounts each label's atlas keys and pins live entries, and all-pinned pressure reports
+  capacity loudly.
 
 ### Performance
 
@@ -48,6 +85,25 @@
   with a local SDF from the canvas mask and skips the MSDF worker. `rasterizerOptions.prebuilt`
   serves packed pages before generation. `culling.lod` drops labels whose projected font height is
   below one pixel.
+- Compute-cull GPU mirrors sync incrementally: commits upload only dirty instance byte ranges and
+  changed or appended cull records, keyed by a draw-list epoch that appends preserve; re-sorts,
+  removals, and cull-path fallbacks force a full resync. Camera frames skip the first-seen ring
+  query while the draw viewport stays inside the last prepared ring.
+- Same-font MSDF misses batch per (family, revision, raster size) into one generator pass — one
+  font parse plus N crops instead of N parses — and TinySDF's distance transform reuses grow-only
+  scratch. Multi-glyph atlases no longer fall back to the first glyph when a char is missing.
+- Draw segments cache on the draw-list and instance-segment epochs, so content commits that keep
+  glyph counts and pages stop walking every draw state and every glyph. The mesh vertex buffer
+  skips its uploads while compute cull owns the draw and re-initializes on fallback.
+- Rendered position-only movers take a columnar lane (`TransformPalette.writePositions`) instead
+  of building two frozen snapshots and two wrapper objects per label. Dirty ranges store flat
+  pairs with tail merging and skip the publish sort while offsets stay monotonic.
+- Bulk intake memoizes text-bounds estimates by (text, style) identity, skips trigonometry at
+  rotation zero, keeps the journal slot list at its high water, and skips `resolveGlyphText` on
+  packed-identity paths (it sliced the remaining code points per HarfBuzz glyph). Duplicate-run
+  labels ensure atlas glyphs once per (run, size, weight) per commit.
+- Single-channel atlas pages upload staged glyph rectangles instead of re-uploading the whole page
+  for one new glyph, promoting to a full upload when rectangles exceed half the page.
 
 ## 1.1.0 - 2026-08-15
 
