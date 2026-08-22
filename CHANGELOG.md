@@ -2,9 +2,9 @@
 
 ## 1.2.0 - 2026-08-22
 
-Published browser artifacts must be regenerated on the reference Apple M1 Pro Chrome fixture at
-this version before release; `benchmark:check` binds artifacts to the package version. Published
-frame and storage budgets are unchanged.
+Published frame and storage budgets are unchanged. `benchmark:check` reads the newest committed
+formal artifacts so a version bump does not fail CI. `release:check` passes `--require-current`,
+so npm publish still needs Apple M1 Pro Chrome files named for this version.
 
 ### Added
 
