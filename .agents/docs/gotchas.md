@@ -112,6 +112,17 @@ still skip before the stamp so they never enter the draw set.
 
 Packed identities are family intern + glyph id + size bucket + weight class + mode + font revision. Rasterize must use the same size bucket as the key. String keys stay valid for `atlas-pressure` (`glyph-${index}`), prebuilt pages, non-BMP text with glyph id 0, and unusual weights. Do not put `glyphText` back into the packed key, and do not fall back to `float16x4` instance attributes.
 
+## Publish still needs this version's reference artifacts
+
+`benchmark:check` loads `results/browser-<workload>-<packageVersion>.json` when that file exists,
+otherwise the newest older formal file for the same workload. Exploratory files and newer versions
+than `package.json` are ignored. That keeps PR CI green across a version bump without renaming
+1.1.0 measurements into 1.2.0 names.
+
+`release:check` (and the publish workflow) pass `--require-current`. An unmeasured version cannot
+reach npm. Run `bun run benchmark` and `bun run benchmark:report` on the reference Apple M1 Pro
+Chrome fixture and commit those files before tagging.
+
 ## The browser benchmark page must stay free of node builtins
 
 `benchmarks/browser/*` runs in Chrome through Vite. Any VALUE import from a module whose top level

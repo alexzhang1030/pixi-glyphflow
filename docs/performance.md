@@ -33,9 +33,11 @@ Raw artifacts live in [`benchmarks/results`](../benchmarks/results). The generat
 | Atlas textures per ordered draw bank    |                  8 |
 | Full-visibility draw submission         | One instanced draw |
 
-`bun run benchmark:check` validates artifact presence, formal scale, browser completion, boolean
-invariants, frame budgets, mutation budgets, storage ceilings, atlas eviction, and draw submission.
-It still measures the core ESM gzip graph and does not fail that size.
+`bun run benchmark:check` validates artifact presence (the current package version, or the newest
+older formal file), formal scale, browser completion, boolean invariants, frame budgets, mutation
+budgets, storage ceilings, atlas eviction, and draw submission. It still measures the core ESM gzip
+graph and does not fail that size. `bun run benchmark:check -- --require-current` is what
+`release:check` runs; it refuses a version that has no matching artifacts.
 
 ## Running the suite
 

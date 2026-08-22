@@ -1,6 +1,8 @@
+import { readdir } from "node:fs/promises";
 import { resolve } from "node:path";
 import { gzipSync } from "node:zlib";
 
+import { resolveBrowserArtifact } from "./artifacts";
 import { summarize, type BrowserBenchmarkArtifact, type BrowserBenchmarkSample } from "./schema";
 import { BENCHMARK_WORKLOADS } from "./workloads";
 
@@ -17,23 +19,31 @@ const packageMetadata = (await Bun.file(resolve(projectRoot, "package.json")).js
 };
 const artifacts = new Map<string, BrowserBenchmarkArtifact>();
 const checks: BudgetResult[] = [];
+const resultsDir = resolve(import.meta.dir, "results");
+const artifactFiles = await readdir(resultsDir);
+const requireCurrent = process.argv.includes("--require-current");
 
 for (const definition of BENCHMARK_WORKLOADS) {
-  const path = resolve(
-    import.meta.dir,
-    `results/browser-${definition.id}-${packageMetadata.version}.json`,
-  );
-  const file = Bun.file(path);
-  const exists = await file.exists();
+  const resolved = resolveBrowserArtifact(definition.id, packageMetadata.version, artifactFiles, {
+    requireCurrent,
+  });
   const artifactRequired = definition.artifactRequired !== false;
+  const limit = artifactRequired
+    ? requireCurrent
+      ? packageMetadata.version
+      : "present"
+    : "optional";
+  const present = requireCurrent ? resolved?.current === true : resolved !== undefined;
   record(
     `artifact:${definition.id}`,
-    exists ? "present" : "missing",
-    artifactRequired ? "present" : "optional",
-    exists || !artifactRequired,
+    resolved === undefined ? "missing" : resolved.version,
+    limit,
+    present || !artifactRequired,
   );
-  if (!exists) continue;
-  const artifact = (await file.json()) as BrowserBenchmarkArtifact;
+  if (resolved === undefined) continue;
+  const artifact = (await Bun.file(
+    resolve(resultsDir, resolved.fileName),
+  ).json()) as BrowserBenchmarkArtifact;
   artifacts.set(definition.id, artifact);
   record(`status:${definition.id}`, artifact.status, "complete", artifact.status === "complete");
   const expectedSamples = definition.id === "static-hud" ? 4 : 1;
