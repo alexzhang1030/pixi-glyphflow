@@ -1,7 +1,8 @@
 import { mkdir } from "node:fs/promises";
 import { dirname, resolve } from "node:path";
 
-import { benchmarkRuntime, summarize } from "./schema";
+import { benchmarkRuntime } from "./runtime";
+import { summarize } from "./schema";
 import type { StoreWorkerFailure, StoreWorkerResult, StoreWorkerSuccess } from "./store-worker";
 
 const packageMetadata = (await Bun.file(resolve(import.meta.dir, "../package.json")).json()) as {

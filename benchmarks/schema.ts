@@ -1,5 +1,3 @@
-import { cpus, platform, release } from "node:os";
-
 export interface BenchmarkDistribution {
   readonly unit: "bytes" | "count" | "fps" | "ms" | "ratio";
   readonly samples: readonly number[];
@@ -149,16 +147,6 @@ export function summarize(
     p95: percentile(sorted, 0.95),
     p99: percentile(sorted, 0.99),
     max: sorted.at(-1) ?? 0,
-  });
-}
-
-export function benchmarkRuntime(): BenchmarkRuntime {
-  return Object.freeze({
-    bun: Bun.version,
-    cpu: cpus()[0]?.model ?? "unknown",
-    platform: platform(),
-    release: release(),
-    architecture: process.arch,
   });
 }
 

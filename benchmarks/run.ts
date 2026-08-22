@@ -4,9 +4,9 @@ import { dirname, resolve } from "node:path";
 import { chromium } from "@playwright/test";
 import { createServer } from "vite";
 
+import { benchmarkRuntime } from "./runtime";
 import {
   BENCHMARK_SCHEMA_VERSION,
-  benchmarkRuntime,
   summarize,
   type BrowserBenchmarkArtifact,
   type BrowserBenchmarkFixture,
