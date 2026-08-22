@@ -309,6 +309,25 @@ export class RenderCoordinator {
     return this.#result(revision, false, appliedLabels, atlasCommit, drawOrderChanged);
   }
 
+  /**
+   * Position-only movers bypass the per-label change pipeline: sorted slot and xy columns patch
+   * palette texels directly. Draw states, runs, and instances are untouched.
+   */
+  applyPositionLane(
+    slots: Uint32Array,
+    count: number,
+    xy: Float32Array,
+  ): Readonly<RenderCommitResult> {
+    this.#assertActive();
+    const paletteStart = performance.now();
+    const written = this.transforms.writePositions(slots, count, xy);
+    this.#lastPaletteWriteMs += performance.now() - paletteStart;
+    this.#transformOnlyLabels += count;
+    this.#appliedLabels += count;
+
+    return this.#result(0, false, written, EMPTY_ATLAS_COMMIT, false);
+  }
+
   getRun(slot: number): Readonly<PositionedRun> | undefined {
     this.#assertActive();
     return this.#runs.get(slot);

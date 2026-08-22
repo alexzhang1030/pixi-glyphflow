@@ -229,6 +229,15 @@ export class TextStore {
     return slot < this.#highWater && this.#occupied(slot);
   }
 
+  /** Copy x/y columns for a slot list into packed pairs without snapshots. @internal */
+  positionsInto(slots: Uint32Array, count: number, xy: Float32Array): void {
+    for (let index = 0; index < count; index += 1) {
+      const slot = slots[index] ?? 0;
+      xy[index * 2] = this.#x[slot] ?? 0;
+      xy[index * 2 + 1] = this.#y[slot] ?? 0;
+    }
+  }
+
   update(id: TextId, patch: TextStoreLabelPatch): TextDirtyMask {
     assertPatch(patch);
     const slot = this.#requireSlot(id);

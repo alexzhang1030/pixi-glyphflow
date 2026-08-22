@@ -27,6 +27,7 @@ import { FontRegistry } from "./FontRegistry";
 import {
   RenderCoordinator,
   type RenderChange,
+  type RenderCommitResult,
   type RenderDrawState,
   type RenderLabelSnapshot,
 } from "./render/RenderCoordinator";
@@ -147,6 +148,7 @@ export class TextLayer extends Container {
   #cullRecordEpoch = -1;
   readonly #cullRecordDirtyScratch: DirtyByteRange[] = [];
   #preparedRing: CullViewport | undefined;
+  #laneSlots: Uint32Array;
   readonly #boundsScratch: MutableBoundsData = { x: 0, y: 0, width: 0, height: 0 };
   // Broadcast mutations reuse one text/style reference across the batch; estimating once
   // per identity pair removes an O(text) scan per label from bulk intake.
@@ -187,6 +189,7 @@ export class TextLayer extends Container {
     this.#positionOnly = new Uint8Array(this.#store.capacity);
     this.#dirtySlots = new Uint32Array(this.#store.capacity);
     this.#bulkSlots = new Uint32Array(this.#store.capacity);
+    this.#laneSlots = new Uint32Array(this.#store.capacity);
     this.#visibleSlots = new Uint32Array(this.#store.capacity);
     this.#renderedEpochs = new Uint32Array(this.#store.capacity);
     this.#cullRecordIndex = new Int32Array(this.#store.capacity).fill(-1);
@@ -777,6 +780,7 @@ export class TextLayer extends Container {
     if (this.#lod) this.#lodWorldScaleY = worldScaleY;
     const spatialStart = performance.now();
     let changes: LayerRenderChange[] = [];
+    let laneCount = 0;
     if (refreshResidency) {
       this.#visibleCount = this.#queryVisible(cullPath, drawViewport);
       this.#visibilityDirty = false;
@@ -785,7 +789,11 @@ export class TextLayer extends Container {
       if (lodScaleChanged) {
         changes = this.#buildRenderChanges(cullPath, drawViewport);
       } else {
-        if (hasLabelChanges) changes = this.#buildResidentDirtyChanges();
+        if (hasLabelChanges) {
+          const dirty = this.#buildResidentDirtyChanges();
+          changes = dirty.changes;
+          laneCount = dirty.laneCount;
+        }
         if (
           cameraMoved &&
           cullPath === "compute-cull" &&
@@ -797,6 +805,15 @@ export class TextLayer extends Container {
         }
       }
     }
+    // Copy the lane at publish time so later intake cannot skew what this revision draws.
+    let laneSlots: Uint32Array | undefined;
+    let laneXy: Float32Array | undefined;
+    if (laneCount > 0) {
+      laneSlots = this.#laneSlots.slice(0, laneCount);
+      laneSlots.sort();
+      laneXy = new Float32Array(laneCount * 2);
+      this.#store.positionsInto(laneSlots, laneCount, laneXy);
+    }
     this.#lastSpatialUpdateMs = performance.now() - spatialStart;
     this.#lastLayoutMs = 0;
     this.#lastInstanceWriteMs = 0;
@@ -805,7 +822,10 @@ export class TextLayer extends Container {
     this.#clearDirtyMasks();
 
     const needsComputeDispatch = cullPath === "compute-cull";
-    if (coordinator === undefined || (changes.length === 0 && !needsComputeDispatch)) {
+    if (
+      coordinator === undefined ||
+      (changes.length === 0 && laneCount === 0 && !needsComputeDispatch)
+    ) {
       if (this.#visibleCount === 0) this.#renderSurface?.dropIdleMeshes();
       this.#lastCommitDurationMs = performance.now() - start;
       this.#lastCommitPromise = this.#renderTail.then(() => {
@@ -824,15 +844,22 @@ export class TextLayer extends Container {
       renderSequence = this.#renderSequence;
     }
     const renderWork = this.#renderTail.then(async () => {
-      const result =
+      const commitResult =
         changes.length === 0 ? undefined : await coordinator.commit(renderSequence, changes);
-      if (result !== undefined) {
+      if (commitResult !== undefined) {
         this.#lastLayoutMs = coordinator.stats.lastLayoutMs;
         this.#lastInstanceWriteMs = coordinator.stats.lastInstanceWriteMs;
         this.#lastPaletteWriteMs = coordinator.stats.lastPaletteWriteMs;
       }
+      let laneResult: RenderCommitResult | undefined;
+      if (laneSlots !== undefined && laneXy !== undefined) {
+        const laneStart = performance.now();
+        laneResult = coordinator.applyPositionLane(laneSlots, laneCount, laneXy);
+        this.#lastPaletteWriteMs += performance.now() - laneStart;
+      }
+      const result = commitResult ?? laneResult;
       const spatialWriteStart = performance.now();
-      if (result !== undefined) {
+      if (commitResult !== undefined) {
         for (const change of changes) {
           if (change.snapshot === undefined || change.positionOnly === true) continue;
           const run = coordinator.getRun(change.slot);
@@ -857,7 +884,7 @@ export class TextLayer extends Container {
       this.#lastSpatialUpdateMs += performance.now() - spatialWriteStart;
       const computeUpdate: RenderComputeCullUpdate | undefined =
         cullPath === "compute-cull"
-          ? this.#buildComputeCullUpdate(coordinator, changes, drawViewport)
+          ? this.#buildComputeCullUpdate(coordinator, changes, laneSlots, laneCount, drawViewport)
           : undefined;
       if (result !== undefined) surface?.apply(result, computeUpdate);
       else if (computeUpdate !== undefined) surface?.refreshComputeCull(computeUpdate);
@@ -1128,6 +1155,7 @@ export class TextLayer extends Container {
     this.#visibleSlots = growTypedArray(this.#visibleSlots, required);
     this.#renderedEpochs = growTypedArray(this.#renderedEpochs, required);
     this.#bulkSlots = growTypedArray(this.#bulkSlots, required);
+    this.#laneSlots = growTypedArray(this.#laneSlots, required);
     if (this.#cullRecordIndex.length < required) {
       const next = new Int32Array(required).fill(-1);
       next.set(this.#cullRecordIndex);
@@ -1177,6 +1205,8 @@ export class TextLayer extends Container {
   #buildComputeCullUpdate(
     coordinator: RenderCoordinator,
     changes: readonly LayerRenderChange[],
+    laneSlots: Uint32Array | undefined,
+    laneCount: number,
     draw: CullViewport | undefined,
   ): RenderComputeCullUpdate {
     const states = coordinator.getDrawStates();
@@ -1192,6 +1222,10 @@ export class TextLayer extends Container {
       ranges.length = 0;
       const patched = this.#patchCullRecords(coordinator, changes);
       if (patched !== undefined) ranges.push(patched);
+      if (laneSlots !== undefined && laneCount > 0) {
+        const lanePatched = this.#patchLaneCullRecords(coordinator, laneSlots, laneCount);
+        if (lanePatched !== undefined) ranges.push(lanePatched);
+      }
       if (states.length > this.#cullRecordCount) {
         ranges.push(this.#appendCullRecords(coordinator, states));
       }
@@ -1294,6 +1328,40 @@ export class TextLayer extends Container {
     };
   }
 
+  #patchLaneCullRecords(
+    coordinator: RenderCoordinator,
+    laneSlots: Uint32Array,
+    laneCount: number,
+  ): DirtyByteRange | undefined {
+    if (this.#cullRecordCount === 0) return undefined;
+    let first = -1;
+    let last = -1;
+    for (let position = 0; position < laneCount; position += 1) {
+      const slot = laneSlots[position] ?? 0;
+      const index = this.#cullRecordIndex[slot] ?? -1;
+      if (index < 0) continue;
+      const range = coordinator.instances.getRange(slot);
+      if (range === undefined) continue;
+      const box = this.#spatial.get(slot, this.#boundsScratch);
+      if (box === undefined) continue;
+      writeCullRecordAt(this.#cullRecordFloats, this.#cullRecordUints, index, {
+        minX: box.x,
+        minY: box.y,
+        maxX: box.x + box.width,
+        maxY: box.y + box.height,
+        instanceOffset: range.offset,
+        instanceCount: range.count,
+      });
+      if (first < 0 || index < first) first = index;
+      if (index > last) last = index;
+    }
+    if (first < 0) return undefined;
+    return {
+      offset: first * CULL_RECORD_STRIDE,
+      length: (last - first + 1) * CULL_RECORD_STRIDE,
+    };
+  }
+
   #ensureCullRecordCapacity(count: number): void {
     if (this.#cullRecordSlots.length >= count) return;
     let capacity = Math.max(64, this.#cullRecordSlots.length * 2);
@@ -1322,10 +1390,11 @@ export class TextLayer extends Container {
     return this.#renderSurface?.prepareCullPath() ?? "cpu-grid";
   }
 
-  #buildResidentDirtyChanges(): LayerRenderChange[] {
+  #buildResidentDirtyChanges(): { changes: LayerRenderChange[]; laneCount: number } {
     const changes: LayerRenderChange[] = [];
+    let laneCount = 0;
     const epoch = this.#renderEpoch;
-    if (epoch === 0) return changes;
+    if (epoch === 0) return { changes, laneCount };
     const cullPath = this.#resolveCullPath();
     const draw = this.#drawViewport();
     const ring = draw === undefined ? undefined : expandPrepareRing(draw);
@@ -1360,10 +1429,16 @@ export class TextLayer extends Container {
         }
         continue;
       }
+      // Rendered position-only movers take the columnar lane instead of the object pipeline.
+      if (this.#positionOnly[slot] === 1 && this.#dirtyMasks[slot] === TextDirty.Transform) {
+        this.#laneSlots[laneCount] = slot;
+        laneCount += 1;
+        continue;
+      }
       const change = this.#renderChangeForSlot(slot, true);
       if (change !== undefined) changes.push(change);
     }
-    return changes;
+    return { changes, laneCount };
   }
 
   #buildTightFirstSeen(): LayerRenderChange[] {

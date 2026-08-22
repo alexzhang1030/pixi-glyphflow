@@ -3,6 +3,7 @@ import { describe, expect, test } from "bun:test";
 import type { Renderer } from "pixi.js";
 
 import { TextLayer, type PositionedRun } from "../src";
+import { TransformPalette } from "../src/advanced";
 
 const RUN: PositionedRun = Object.freeze({
   source: "bitmap",
@@ -32,6 +33,54 @@ function alphaRaster() {
 }
 
 describe("TextLayer commit and maintenance", () => {
+  test("routes position storms through the columnar lane without relayout or object changes", async () => {
+    let layouts = 0;
+    const transforms = new TransformPalette({ initialCapacity: 8, textureWidth: 8 });
+    const layer = new TextLayer({
+      renderer: {} as Renderer,
+      rendering: {
+        transforms,
+        layoutEngine: {
+          layout() {
+            layouts += 1;
+            return RUN;
+          },
+          destroy() {},
+        },
+        glyphProvider: {
+          async rasterize() {
+            return alphaRaster();
+          },
+          destroy() {},
+        },
+        atlasOptions: { pageWidth: 32, pageHeight: 32, maxBytes: 4_096 },
+      },
+    });
+    const ids = layer.createMany([
+      { text: "A", x: 1, y: 1 },
+      { text: "A", x: 2, y: 2 },
+      { text: "A", x: 3, y: 3 },
+    ]);
+    await layer.commit();
+    transforms.consumeDirty();
+    expect(layouts).toBe(3);
+
+    const first = ids[0];
+    const third = ids[2];
+    if (first === undefined || third === undefined) throw new Error("Fixture ids missing");
+    layer.updatePositions(new Float64Array([first, third]), new Float32Array([40, 50, 60, 70]));
+    await layer.commit();
+
+    expect(layouts).toBe(3);
+    expect(Array.from(transforms.data.subarray(0, 2))).toEqual([40, 50]);
+    expect(Array.from(transforms.data.subarray(16, 18))).toEqual([60, 70]);
+    // Slot 0 and slot 2 patches sit 48 bytes apart, inside the 256-byte merge gap.
+    expect(transforms.consumeDirty()).toEqual([{ offset: 0, length: 80 }]);
+    expect(layer.stats.transformOnlyLabels).toBe(2);
+
+    layer.destroy();
+  });
+
   test("publishes coalesced dirty domains and reports zero work for no-op commits", async () => {
     const layer = new TextLayer();
     const [first, second] = layer.createMany([{ text: "one" }, { text: "two" }]);
