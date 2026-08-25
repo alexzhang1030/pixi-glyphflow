@@ -1,6 +1,12 @@
 import { describe, expect, test } from "bun:test";
 
-import { packF16, packHalf2x16, unpackF16, unpackHalf2x16 } from "../src/render/pack";
+import {
+  packF16,
+  packHalf2x16,
+  premultiplyRgba8,
+  unpackF16,
+  unpackHalf2x16,
+} from "../src/render/pack";
 
 describe("packHalf2x16", () => {
   test("round-trips unit rotation and integer anchors", () => {
@@ -17,5 +23,14 @@ describe("packF16", () => {
     expect(unpackF16(packF16(0.5))).toBe(0.5);
     expect(unpackF16(packF16(1))).toBe(1);
     expect(unpackF16(packF16(-1))).toBe(-1);
+  });
+});
+
+describe("premultiplyRgba8", () => {
+  test("scales RGB by alpha and leaves opaque pixels unchanged", () => {
+    const source = new Uint8Array([255, 128, 64, 255, 255, 128, 64, 128, 10, 20, 30, 0]);
+    expect([...premultiplyRgba8(source)]).toEqual([
+      255, 128, 64, 255, 128, 64, 32, 128, 0, 0, 0, 0,
+    ]);
   });
 });

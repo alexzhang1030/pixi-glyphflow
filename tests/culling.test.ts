@@ -135,6 +135,29 @@ describe("TextLayer culling and hit bounds", () => {
     expect(layer.hitTest({ x: 101, y: 101 })).toBe(ids[0]);
     expect(layer.hitTest({ x: 1, y: 1 })).toBeUndefined();
 
+    expect(layer.updateTextPositions(ids, ["A", "B"], new Float32Array([0, 0, 20, 20]))).toBe(2);
+    expect(layer.hitTest({ x: 1, y: 1 })).toBe(ids[0]);
+    expect(layer.hitTest({ x: 101, y: 101 })).toBeUndefined();
+
+    layer.destroy();
+  });
+
+  test("rebuilds the full resident set after the viewport is cleared", async () => {
+    const layer = new TextLayer({
+      rendering: false,
+      culling: { enabled: true, bounds: { x: 0, y: 0, width: 50, height: 50 } },
+    });
+    layer.createMany([
+      { text: "A", x: 0, y: 0, style: { fontSize: 10 } },
+      { text: "B", x: 200, y: 0, style: { fontSize: 10 } },
+    ]);
+    await layer.commit();
+    expect(layer.stats.visibleLabelCount).toBe(1);
+
+    layer.setViewportBounds(undefined);
+    await layer.commit();
+    expect(layer.stats.visibleLabelCount).toBe(2);
+
     layer.destroy();
   });
 

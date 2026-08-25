@@ -42,8 +42,20 @@ describe("DirtyRanges", () => {
     for (let index = 0; index < DIRTY_MAX_RANGES + 1; index += 1) {
       fragmented.record(index * 1_024, 16);
     }
-    expect(fragmented.publish({ maxRanges: DIRTY_MAX_RANGES })).toEqual([
-      { offset: 0, length: DIRTY_MAX_RANGES * 1_024 + 16 },
+    const collapsed = fragmented.publish({ maxRanges: DIRTY_MAX_RANGES });
+    expect(collapsed).toHaveLength(DIRTY_MAX_RANGES);
+    expect(collapsed[0]).toEqual({ offset: 0, length: 1_024 + 16 });
+    expect(collapsed[collapsed.length - 1]).toEqual({
+      offset: DIRTY_MAX_RANGES * 1_024,
+      length: 16,
+    });
+
+    const clustered = new DirtyRanges();
+    for (let index = 0; index < 6; index += 1) clustered.record(index * 64, 16);
+    for (let index = 0; index < 6; index += 1) clustered.record(1_000_000 + index * 64, 16);
+    expect(clustered.publish({ maxRanges: DIRTY_MAX_RANGES })).toEqual([
+      { offset: 0, length: 5 * 64 + 16 },
+      { offset: 1_000_000, length: 5 * 64 + 16 },
     ]);
 
     const heavy = new DirtyRanges();

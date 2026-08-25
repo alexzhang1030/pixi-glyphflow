@@ -130,7 +130,11 @@ export function expandPrepareRing(draw: CullViewport): CullViewport {
 
 export function shouldRefreshResidency(input: ResidencyRefreshInput): boolean {
   if (input.visibilityDirty) return true;
-  if (input.instanced === undefined || input.draw === undefined) return true;
+  // No draw viewport means the resident set is every visible label. Re-query only
+  // when we just dropped a previous viewport working set; otherwise membership
+  // changes already flip visibilityDirty.
+  if (input.draw === undefined) return input.instanced !== undefined;
+  if (input.instanced === undefined) return true;
   switch (input.cullPath) {
     case "cpu-grid":
       return !cullViewportsEqual(input.instanced, input.draw);

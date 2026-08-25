@@ -222,6 +222,30 @@ describe("compute cull host reference", () => {
         draw,
       }),
     ).toBe(false);
+    expect(
+      shouldRefreshResidency({
+        cullPath: "cpu-grid",
+        visibilityDirty: false,
+        instanced: undefined,
+        draw: undefined,
+      }),
+    ).toBe(false);
+    expect(
+      shouldRefreshResidency({
+        cullPath: "cpu-grid",
+        visibilityDirty: false,
+        instanced: draw,
+        draw: undefined,
+      }),
+    ).toBe(true);
+    expect(
+      shouldRefreshResidency({
+        cullPath: "cpu-grid",
+        visibilityDirty: true,
+        instanced: undefined,
+        draw: undefined,
+      }),
+    ).toBe(true);
   });
 
   test("instances unshaped compute-cull labels against the prepare ring", () => {

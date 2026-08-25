@@ -539,7 +539,7 @@ export class TextLayer extends Container {
       ids,
       texts,
       positions,
-      (slot, index, contentChanged) => {
+      (slot, index, contentChanged, previousX, previousY) => {
         if (contentChanged && hasTrustedRuns) {
           const id = ids[index];
           if (id !== undefined) this.#trustedRuns.delete(id as TextId);
@@ -549,6 +549,16 @@ export class TextLayer extends Container {
         }
         const id = ids[index];
         if (id === undefined) throw new Error("Updated label identity is unavailable");
+        // Same text and style: keep the last world AABB and slide it. Re-estimating
+        // would replace post-layout run bounds with the intake heuristic.
+        if (!contentChanged) {
+          this.#spatial.translate(
+            slot,
+            this.#labelScratch.x - previousX,
+            this.#labelScratch.y - previousY,
+          );
+          return;
+        }
         this.#reindexCurrentSlot(slot, id as TextId, this.#labelScratch);
       },
     );
@@ -1522,6 +1532,7 @@ export class TextLayer extends Container {
     this.#preparedRing = undefined;
     this.#clearCullRecordIndex();
     this.#cullRecordEpoch = -1;
+    this.#visibilityDirty = true;
   }
 
   #renderChangeForSlot(

@@ -24,6 +24,27 @@ export function packF16(value: number): number {
   return f16Bits(value);
 }
 
+/** Premultiply RGBA8 the way PixiJS does on upload, so raw sub-rect writes match a full-page update. */
+export function premultiplyRgba8(
+  source: Uint8Array,
+  destination: Uint8Array = new Uint8Array(source.length),
+): Uint8Array {
+  if (source.length % 4 !== 0) {
+    throw new TypeError("RGBA8 pixel buffers must have a multiple-of-4 byte length");
+  }
+  if (destination.length < source.length) {
+    throw new RangeError("RGBA8 destination is smaller than the source");
+  }
+  for (let index = 0; index < source.length; index += 4) {
+    const alpha = source[index + 3] ?? 0;
+    destination[index] = Math.floor(((source[index] ?? 0) * alpha) / 255);
+    destination[index + 1] = Math.floor(((source[index + 1] ?? 0) * alpha) / 255);
+    destination[index + 2] = Math.floor(((source[index + 2] ?? 0) * alpha) / 255);
+    destination[index + 3] = alpha;
+  }
+  return destination;
+}
+
 export function unpackF16(bits: number): number {
   return f16FromBits(bits & 0xffff);
 }

@@ -426,7 +426,13 @@ export class TextStore {
     ids: readonly TextId[] | Float64Array,
     texts: string | readonly string[],
     positions: Float32Array | Float64Array,
-    visitor?: (slot: number, index: number, contentChanged: boolean) => void,
+    visitor?: (
+      slot: number,
+      index: number,
+      contentChanged: boolean,
+      previousX: number,
+      previousY: number,
+    ) => void,
   ): Readonly<TextStoreColumnUpdateResult> {
     if (positions.length !== ids.length * 2) {
       throw new TypeError("positions must contain one packed x/y pair for every TextId");
@@ -467,8 +473,10 @@ export class TextStore {
       const text = typeof texts === "string" ? texts : (texts[index] ?? "");
       const x = Math.fround(positions[index * 2] ?? 0);
       const y = Math.fround(positions[index * 2 + 1] ?? 0);
+      const previousX = this.#x[slot] ?? 0;
+      const previousY = this.#y[slot] ?? 0;
       const contentChanged = text !== this.#texts[slot];
-      const transformChanged = x !== this.#x[slot] || y !== this.#y[slot];
+      const transformChanged = x !== previousX || y !== previousY;
       if (!contentChanged && !transformChanged) continue;
       let dirty = TextDirty.None as TextDirtyMask;
       if (contentChanged) {
@@ -483,7 +491,7 @@ export class TextStore {
         this.#markTransformKind(slot, contentChanged ? FULL_TRANSFORM : POSITION_ONLY);
       }
       this.#journal.record(slot, dirty);
-      visitor?.(slot, index, contentChanged);
+      visitor?.(slot, index, contentChanged, previousX, previousY);
       changed += 1;
       mask |= dirty;
     }

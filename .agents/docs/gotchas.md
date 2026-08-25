@@ -131,6 +131,28 @@ importing `BENCHMARK_SCHEMA_VERSION` from `schema.ts` while `benchmarkRuntime()`
 suite was unrunnable until `benchmarks/runtime.ts` took the node-only half. Keep `schema.ts`
 isomorphic; put node-only helpers in `runtime.ts`. Type-only imports are safe.
 
+## Dirty uploads do not collapse leftover ranges into one first-to-last span
+
+`DirtyRanges.publish` still merges a 256-byte gap and promotes when dirty bytes reach 75% of the
+live span. After that, more than eight ranges land in equal-width bands of the first-to-last
+interval. Two tight clusters stay two uploads. A uniform scatter that fills every band still
+covers the live span and then hits the 75% whole-buffer rule. Do not restore the old single
+first-to-last collapse to "keep the 8-range cap simple."
+
+## Wiping the rendered set must dirty visibility
+
+`#resetRenderedSet` (attach, detach, a failed render tail) clears rendered epochs. The next
+commit has to walk residents again and rebuild draw states. That flag is `visibilityDirty`.
+Do not treat a post-attach camera-only commit as a no-op just because no viewport exists.
+
+## A commit with no viewport does not re-query every resident
+
+`shouldRefreshResidency` used to treat a missing draw viewport as "refresh." `dynamic-counters`
+and other `culling: false` workloads then called `queryAll` on every commit. Membership and
+show/hide already set `visibilityDirty`. Camera motion only matters once a draw viewport exists.
+Clearing a previous viewport still refreshes, because the last instanced working set would
+otherwise stay as the visible set.
+
 ## Spatial queries with dense results must not pay the grid sort
 
 Hash-grid output restores insertion order with an `O(K log K)` sort. A mid-zoom viewport at one

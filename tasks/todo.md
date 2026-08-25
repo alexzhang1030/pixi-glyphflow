@@ -282,8 +282,13 @@
   - Verify: bun run test:browser -- glyph-rendering && bun run test:browser -- viewport-integration
   - Files: src/TextLayer.ts, src/types.ts, src/render/ComputeCullPass.ts, src/render/RenderSurface.ts, src/culling/computeCull.ts, src/culling/computeCull.wgsl.ts
 
+- [x] Task 12.7a: Four-channel atlas sub-rect uploads (Wave 4 leftover).
+  - Acceptance: MSDF/color pages premultiply RGB on the CPU, use `no-premultiply-alpha`, and upload staged rectangles unless the rects exceed half the page. Single-channel rect uploads stay.
+  - Verify: bun test tests/pack.test.ts tests/DirtyRanges.test.ts tests/glyph-providers.test.ts
+  - Files: src/render/pack.ts, src/render/RenderSurface.ts
+
 - [ ] Task 12.7: Add hybrid glyph generation and upload budgets (Wave 4).
-  - Acceptance: Local TinySDF or prebaked pages serve the common set; dynamic MSDF remains the long tail; atlas uploads respect a per-frame byte budget without growing the core gzip entry.
+  - Acceptance: Local TinySDF or prebaked pages serve the common set; dynamic MSDF remains the long tail; a per-frame budget gates off-screen label admission, not texel uploads for already-instanced glyphs, without growing the core gzip entry.
   - Verify: bun test tests/glyph-providers.test.ts tests/GlyphAtlas.test.ts && bun run benchmark -- --workload atlas-pressure,multilingual-stream
   - Files: src/atlas/RasterGlyphProvider.ts, src/atlas/PrebuiltGlyphProvider.ts, src/atlas/GlyphAtlas.ts
 

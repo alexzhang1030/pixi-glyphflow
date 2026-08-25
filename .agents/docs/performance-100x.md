@@ -72,6 +72,9 @@ writes, and remirroring the store.
    supplied and TinySDF has not run. Shipping those pages in the core gzip is rejected.
 2. **Palette storage buffer and atlas texture array.** Wave 3 leftovers. Binding cost, not the
    zoom hitch.
+3. **Admission-side first-seen budget.** A large pan onto fresh text can still hitch on layout
+   and raster in one commit. Any budget must finish on-screen labels in that commit and only
+   cap off-screen working-set prep. Do not defer texel uploads for glyphs already instanced.
 
 Reject: drip-feed admission, `queryAll()` for compute-cull, BVH rebuilds on the 100k storm, and
 replacing PixiJS with a compute 2D engine.

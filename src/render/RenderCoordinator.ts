@@ -146,6 +146,7 @@ export class RenderCoordinator {
   #batchPages = new Uint16Array(0);
   #batchModes = new Uint8Array(0);
   #batchScales = new Float32Array(0);
+  readonly #seenAtlasKeys = new Set<GlyphCacheKey>();
   #ticket = 0;
   #revisions = 0;
   #staleRevisions = 0;
@@ -644,6 +645,8 @@ export class RenderCoordinator {
     const modes = this.#batchModes.subarray(0, count);
     const rasterScales = this.#batchScales.subarray(0, count);
     const uniqueKeys: GlyphCacheKey[] = [];
+    const seenKeys = this.#seenAtlasKeys;
+    seenKeys.clear();
     for (let index = 0; index < count; index += 1) {
       const mode = this.#glyphMode(run, index);
       const glyphId = run.glyphIds[index] ?? 0;
@@ -659,7 +662,10 @@ export class RenderCoordinator {
         mode,
       });
       const key = identity.key;
-      if (!uniqueKeys.includes(key)) uniqueKeys.push(key);
+      if (!seenKeys.has(key)) {
+        seenKeys.add(key);
+        uniqueKeys.push(key);
+      }
       const entry = this.atlas.get(key);
       if (entry === undefined) {
         throw new Error(`Atlas entry missing for positioned glyph: ${String(key)}`);

@@ -78,6 +78,16 @@ describe("TextLayer commit and maintenance", () => {
     expect(transforms.consumeDirty()).toEqual([{ offset: 0, length: 80 }]);
     expect(layer.stats.transformOnlyLabels).toBe(2);
 
+    layer.updateTextPositions(
+      new Float64Array([first, third]),
+      "A",
+      new Float32Array([80, 90, 100, 110]),
+    );
+    await layer.commit();
+    expect(layouts).toBe(3);
+    expect(layer.getBoundsFor(first)).toMatchObject({ x: 80, y: 90, width: 8, height: 10 });
+    expect(Array.from(transforms.data.subarray(0, 2))).toEqual([80, 90]);
+
     layer.destroy();
   });
 
