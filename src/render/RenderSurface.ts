@@ -21,13 +21,12 @@ import {
 } from "../culling/computeCull";
 import { ComputeCullPass } from "./ComputeCullPass";
 import { GlyphMesh } from "./GlyphMesh";
-import { premultiplyRgba8 } from "./pack";
+import { FLOAT_TEXEL_BYTES, paletteUploadRects, premultiplyRgba8 } from "./pack";
 import type { RenderCommitResult, RenderCoordinator, RenderDrawState } from "./RenderCoordinator";
 import { GLYPH_INSTANCE_STRIDE, GLYPH_TEXTURE_BANK_SIZE, type DirtyByteRange } from "./types";
 
 const ACTIVE_BIT = 0x8000_0000;
 const PAGE_MASK = 0x0000_ffff;
-const PALETTE_BYTES_PER_TEXEL = 16;
 const EMPTY_DIRTY_RANGES: readonly Readonly<DirtyByteRange>[] = Object.freeze([]);
 
 function emptySegmentWalk(): SegmentWalk {
@@ -944,26 +943,20 @@ function uploadFloatTextureRanges(
     gl.pixelStorei(gl.UNPACK_PREMULTIPLY_ALPHA_WEBGL, false);
     try {
       for (const range of ranges) {
-        let texel = range.offset / PALETTE_BYTES_PER_TEXEL;
-        let remaining = range.length / PALETTE_BYTES_PER_TEXEL;
-        while (remaining > 0) {
-          const x = texel % textureWidth;
-          const y = Math.floor(texel / textureWidth);
-          const width = Math.min(remaining, textureWidth - x);
+        for (const rect of paletteUploadRects(range.offset, range.length, textureWidth)) {
+          const texels = rect.width * rect.height;
           gl.texSubImage2D(
             resource.target,
             0,
-            x,
-            y,
-            width,
-            1,
+            rect.x,
+            rect.y,
+            rect.width,
+            rect.height,
             resource.format,
             resource.type,
-            data.subarray(texel * 4, (texel + width) * 4),
+            data.subarray(rect.texel * 4, (rect.texel + texels) * 4),
           );
-          texel += width;
-          remaining -= width;
-          bytes += width * PALETTE_BYTES_PER_TEXEL;
+          bytes += texels * FLOAT_TEXEL_BYTES;
           writes += 1;
         }
       }
@@ -973,21 +966,15 @@ function uploadFloatTextureRanges(
   } else if (isWebGPURenderer(renderer)) {
     const texture = renderer.texture.getGpuSource(source);
     for (const range of ranges) {
-      let texel = range.offset / PALETTE_BYTES_PER_TEXEL;
-      let remaining = range.length / PALETTE_BYTES_PER_TEXEL;
-      while (remaining > 0) {
-        const x = texel % textureWidth;
-        const y = Math.floor(texel / textureWidth);
-        const width = Math.min(remaining, textureWidth - x);
+      for (const rect of paletteUploadRects(range.offset, range.length, textureWidth)) {
+        const texels = rect.width * rect.height;
         renderer.gpu.device.queue.writeTexture(
-          { texture, origin: { x, y, z: 0 } },
-          data.subarray(texel * 4, (texel + width) * 4),
-          { bytesPerRow: width * PALETTE_BYTES_PER_TEXEL, rowsPerImage: 1 },
-          { width, height: 1, depthOrArrayLayers: 1 },
+          { texture, origin: { x: rect.x, y: rect.y, z: 0 } },
+          data.subarray(rect.texel * 4, (rect.texel + texels) * 4),
+          { bytesPerRow: rect.width * FLOAT_TEXEL_BYTES, rowsPerImage: rect.height },
+          { width: rect.width, height: rect.height, depthOrArrayLayers: 1 },
         );
-        texel += width;
-        remaining -= width;
-        bytes += width * PALETTE_BYTES_PER_TEXEL;
+        bytes += texels * FLOAT_TEXEL_BYTES;
         writes += 1;
       }
     }

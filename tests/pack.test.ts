@@ -3,6 +3,7 @@ import { describe, expect, test } from "bun:test";
 import {
   packF16,
   packHalf2x16,
+  paletteUploadRects,
   premultiplyRgba8,
   unpackF16,
   unpackHalf2x16,
@@ -31,6 +32,32 @@ describe("premultiplyRgba8", () => {
     const source = new Uint8Array([255, 128, 64, 255, 255, 128, 64, 128, 10, 20, 30, 0]);
     expect([...premultiplyRgba8(source)]).toEqual([
       255, 128, 64, 255, 128, 64, 32, 128, 0, 0, 0, 0,
+    ]);
+  });
+});
+
+describe("paletteUploadRects", () => {
+  test("stacks contiguous full rows when the row stride is 256-byte aligned", () => {
+    const textureWidth = 1024;
+    const texelBytes = 16;
+    expect(paletteUploadRects(0, 200 * textureWidth * texelBytes, textureWidth)).toEqual([
+      { x: 0, y: 0, width: 1024, height: 200, texel: 0 },
+    ]);
+    expect(
+      paletteUploadRects(3 * texelBytes, (textureWidth * 2 - 3) * texelBytes, textureWidth),
+    ).toEqual([
+      { x: 3, y: 0, width: 1021, height: 1, texel: 3 },
+      { x: 0, y: 1, width: 1024, height: 1, texel: 1024 },
+    ]);
+  });
+
+  test("keeps unaligned narrow palettes on one-row writes", () => {
+    const textureWidth = 8;
+    const texelBytes = 16;
+    expect(paletteUploadRects(0, 24 * texelBytes, textureWidth)).toEqual([
+      { x: 0, y: 0, width: 8, height: 1, texel: 0 },
+      { x: 0, y: 1, width: 8, height: 1, texel: 8 },
+      { x: 0, y: 2, width: 8, height: 1, texel: 16 },
     ]);
   });
 });

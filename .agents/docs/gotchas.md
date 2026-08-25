@@ -148,10 +148,24 @@ Do not treat a post-attach camera-only commit as a no-op just because no viewpor
 ## A commit with no viewport does not re-query every resident
 
 `shouldRefreshResidency` used to treat a missing draw viewport as "refresh." `dynamic-counters`
-and other `culling: false` workloads then called `queryAll` on every commit. Membership and
-show/hide already set `visibilityDirty`. Camera motion only matters once a draw viewport exists.
-Clearing a previous viewport still refreshes, because the last instanced working set would
-otherwise stay as the visible set.
+and other `culling: false` workloads then called `queryAll` on every commit. Hide, show, remove,
+and group visibility still set `visibilityDirty`. Creates do not: after the first residency
+query they join through `#buildResidentDirtyChanges`, which admits unrendered dirty slots that
+belong in the current set. Camera motion only matters once a draw viewport exists. Clearing a
+previous viewport still refreshes, because the last instanced working set would otherwise stay
+as the visible set.
+
+Do not restore `visibilityDirty` on `create` / `createMany` when a coordinator exists. That
+forces a full resident scan on every admission. Layers without a coordinator still flip the
+flag so `visibleLabelCount` stays honest on the `rendering: false` path.
+
+## Palette row uploads must stay 256-byte aligned when taller than one row
+
+`uploadFloatTextureRanges` stacks contiguous full palette rows into one `texSubImage2D` /
+`writeTexture`. WebGPU requires `bytesPerRow % 256 === 0` when `height > 1`. The default 1024
+texel width is 16 KiB per row and is aligned. Narrow palettes (unit tests use width 8) stay
+row-by-row so WebGL and WebGPU share the same rectangles. Do not pad `bytesPerRow` — the CPU
+buffer has no row padding.
 
 ## Spatial queries with dense results must not pay the grid sort
 

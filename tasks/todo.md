@@ -287,6 +287,11 @@
   - Verify: bun test tests/pack.test.ts tests/DirtyRanges.test.ts tests/glyph-providers.test.ts
   - Files: src/render/pack.ts, src/render/RenderSurface.ts
 
+- [x] Task 12.7b: Palette multi-row uploads and incremental create (hot-path leftovers).
+  - Acceptance: Contiguous full palette rows upload in one write when the row stride is 256-byte aligned. Creates after the first residency query do not `queryAll`; new on-screen labels still appear in that commit. Hide/show/remove/group still refresh. Published budgets stay.
+  - Verify: bun test tests/pack.test.ts tests/TextLayer.commit.test.ts tests/culling.test.ts tests/computeCull.test.ts
+  - Files: src/render/pack.ts, src/render/RenderSurface.ts, src/TextLayer.ts, src/culling/computeCull.ts
+
 - [ ] Task 12.7: Add hybrid glyph generation and upload budgets (Wave 4).
   - Acceptance: Local TinySDF or prebaked pages serve the common set; dynamic MSDF remains the long tail; a per-frame budget gates off-screen label admission, not texel uploads for already-instanced glyphs, without growing the core gzip entry.
   - Verify: bun test tests/glyph-providers.test.ts tests/GlyphAtlas.test.ts && bun run benchmark -- --workload atlas-pressure,multilingual-stream

@@ -92,6 +92,11 @@ LRU, 52-bit keys, the 48 MiB store (test-pinned, 44.9 MiB measured), the sparse 
    Still open: a per-frame byte budget with cross-frame resume must gate label admission, not texel
    uploads (deferring texels for already-instanced labels would draw stale pixels, which the
    no-drip gotcha forbids).
+5. **Palette multi-row upload and incremental create — LANDED.** Contiguous full palette rows
+   become one GPU write when the row stride is 256-byte aligned (default width 1024). Creates after
+   the first residency query no longer flip `visibilityDirty`; the resident dirty path admits
+   unrendered slots that belong in the current set. Hide/show/remove/group still refresh. On-screen
+   creates still finish in that commit.
 
 **Regressions and traps the audits confirmed:**
 

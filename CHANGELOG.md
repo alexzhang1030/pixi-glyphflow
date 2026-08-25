@@ -14,6 +14,11 @@
   same way single-channel pages already did.
 - Bitmap layout cache hits return before constructing a PixiJS `TextStyle`. Instance builds
   dedupe atlas keys with a set instead of scanning the unique list.
+- Creates after the first residency query join through the resident dirty path, so adding labels
+  into a live layer does not `queryAll` the existing set.
+- Palette uploads stack contiguous full texture rows into one write when the row stride meets
+  WebGPU's 256-byte `bytesPerRow` rule. A 100k position storm is one or two writes, not one per
+  row.
 
 ## 1.2.0 - 2026-08-22
 

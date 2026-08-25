@@ -65,6 +65,9 @@ writes, and remirroring the store.
 - HarfBuzz glyphs with ids skip `resolveGlyphText` on identity paths (it sliced the remaining
   code points per glyph, O(N²) per label); the real character is derived only on an atlas miss.
   Duplicate-string labels ensure glyphs once per (run, size, weight) per commit.
+- Later creates skip `queryAll`. They enter through the resident dirty path and still appear in
+  the same commit.
+- Palette storms upload stacked full texture rows instead of one write per row.
 
 ## Remaining slices, in order
 
