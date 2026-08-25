@@ -21,12 +21,12 @@ import {
 } from "../culling/computeCull";
 import { ComputeCullPass } from "./ComputeCullPass";
 import { GlyphMesh } from "./GlyphMesh";
+import { FLOAT_TEXEL_BYTES, paletteUploadRects, premultiplyRgba8 } from "./pack";
 import type { RenderCommitResult, RenderCoordinator, RenderDrawState } from "./RenderCoordinator";
 import { GLYPH_INSTANCE_STRIDE, GLYPH_TEXTURE_BANK_SIZE, type DirtyByteRange } from "./types";
 
 const ACTIVE_BIT = 0x8000_0000;
 const PAGE_MASK = 0x0000_ffff;
-const PALETTE_BYTES_PER_TEXEL = 16;
 const EMPTY_DIRTY_RANGES: readonly Readonly<DirtyByteRange>[] = Object.freeze([]);
 
 function emptySegmentWalk(): SegmentWalk {
@@ -285,18 +285,22 @@ export class RenderSurface {
     const dirtyPages = new Map<number, Readonly<AtlasUpload>[]>();
     for (const upload of commit.uploads) {
       const page = this.#ensureAtlasPage(upload.entry.page);
+      const pixels = fourChannelMode(page.info.mode)
+        ? premultiplyRgba8(upload.pixels)
+        : upload.pixels;
       copyAtlasUpload(
         page,
         upload.entry.x,
         upload.entry.y,
         upload.entry.width,
         upload.entry.height,
-        upload.pixels,
+        pixels,
       );
-      this.#atlasUploadBytes += upload.pixels.byteLength;
+      const staged: Readonly<AtlasUpload> =
+        pixels === upload.pixels ? upload : { entry: upload.entry, pixels };
       const uploads = dirtyPages.get(upload.entry.page);
-      if (uploads === undefined) dirtyPages.set(upload.entry.page, [upload]);
-      else uploads.push(upload);
+      if (uploads === undefined) dirtyPages.set(upload.entry.page, [staged]);
+      else uploads.push(staged);
     }
     for (const [pageId, uploads] of dirtyPages) {
       const page = this.#pages.get(pageId);
@@ -304,17 +308,17 @@ export class RenderSurface {
       if (!page.initialized) {
         initializeTexture(this.#renderer, page.source);
         page.initialized = true;
+        this.#atlasUploadBytes += page.pixels.byteLength;
         continue;
       }
-      // Four-channel pages keep the whole-page upload: PixiJS premultiplies their alpha on
-      // upload and a raw sub-rect write would not. Single-channel fields have no such step.
-      const singleChannel = page.info.mode === "alpha" || page.info.mode === "sdf";
       const rectBytes = uploads.reduce((sum, upload) => sum + upload.pixels.byteLength, 0);
-      if (!singleChannel || rectBytes * 2 > page.pixels.byteLength) {
+      if (rectBytes * 2 > page.pixels.byteLength) {
         page.source.update();
+        this.#atlasUploadBytes += page.pixels.byteLength;
         continue;
       }
       uploadAtlasRects(this.#renderer, page, uploads);
+      this.#atlasUploadBytes += rectBytes;
     }
   }
 
@@ -331,7 +335,11 @@ export class RenderSurface {
       format: textureFormat(info.mode),
       scaleMode: "linear",
       autoGenerateMipmaps: false,
-      alphaMode: "premultiply-alpha-on-upload",
+      // Four-channel pages are premultiplied in copyAtlasUpload so a raw sub-rect
+      // write matches a full-page update. Single-channel fields have no RGB step.
+      alphaMode: fourChannelMode(info.mode)
+        ? "no-premultiply-alpha"
+        : "premultiply-alpha-on-upload",
       label: `pixi-glyphflow-atlas-${String(pageId)}`,
     });
     const page: AtlasTexturePage = {
@@ -847,10 +855,14 @@ function uploadAtlasRects(
   if (isWebGPURenderer(renderer)) {
     const texture = renderer.texture.getGpuSource(page.source);
     for (const upload of uploads) {
+      const bytesPerPixel = glyphBytesPerPixel(page.info.mode);
       renderer.gpu.device.queue.writeTexture(
         { texture, origin: { x: upload.entry.x, y: upload.entry.y } },
         upload.pixels,
-        { bytesPerRow: upload.entry.width, rowsPerImage: upload.entry.height },
+        {
+          bytesPerRow: upload.entry.width * bytesPerPixel,
+          rowsPerImage: upload.entry.height,
+        },
         { width: upload.entry.width, height: upload.entry.height },
       );
     }
@@ -931,26 +943,20 @@ function uploadFloatTextureRanges(
     gl.pixelStorei(gl.UNPACK_PREMULTIPLY_ALPHA_WEBGL, false);
     try {
       for (const range of ranges) {
-        let texel = range.offset / PALETTE_BYTES_PER_TEXEL;
-        let remaining = range.length / PALETTE_BYTES_PER_TEXEL;
-        while (remaining > 0) {
-          const x = texel % textureWidth;
-          const y = Math.floor(texel / textureWidth);
-          const width = Math.min(remaining, textureWidth - x);
+        for (const rect of paletteUploadRects(range.offset, range.length, textureWidth)) {
+          const texels = rect.width * rect.height;
           gl.texSubImage2D(
             resource.target,
             0,
-            x,
-            y,
-            width,
-            1,
+            rect.x,
+            rect.y,
+            rect.width,
+            rect.height,
             resource.format,
             resource.type,
-            data.subarray(texel * 4, (texel + width) * 4),
+            data.subarray(rect.texel * 4, (rect.texel + texels) * 4),
           );
-          texel += width;
-          remaining -= width;
-          bytes += width * PALETTE_BYTES_PER_TEXEL;
+          bytes += texels * FLOAT_TEXEL_BYTES;
           writes += 1;
         }
       }
@@ -960,21 +966,15 @@ function uploadFloatTextureRanges(
   } else if (isWebGPURenderer(renderer)) {
     const texture = renderer.texture.getGpuSource(source);
     for (const range of ranges) {
-      let texel = range.offset / PALETTE_BYTES_PER_TEXEL;
-      let remaining = range.length / PALETTE_BYTES_PER_TEXEL;
-      while (remaining > 0) {
-        const x = texel % textureWidth;
-        const y = Math.floor(texel / textureWidth);
-        const width = Math.min(remaining, textureWidth - x);
+      for (const rect of paletteUploadRects(range.offset, range.length, textureWidth)) {
+        const texels = rect.width * rect.height;
         renderer.gpu.device.queue.writeTexture(
-          { texture, origin: { x, y, z: 0 } },
-          data.subarray(texel * 4, (texel + width) * 4),
-          { bytesPerRow: width * PALETTE_BYTES_PER_TEXEL, rowsPerImage: 1 },
-          { width, height: 1, depthOrArrayLayers: 1 },
+          { texture, origin: { x: rect.x, y: rect.y, z: 0 } },
+          data.subarray(rect.texel * 4, (rect.texel + texels) * 4),
+          { bytesPerRow: rect.width * FLOAT_TEXEL_BYTES, rowsPerImage: rect.height },
+          { width: rect.width, height: rect.height, depthOrArrayLayers: 1 },
         );
-        texel += width;
-        remaining -= width;
-        bytes += width * PALETTE_BYTES_PER_TEXEL;
+        bytes += texels * FLOAT_TEXEL_BYTES;
         writes += 1;
       }
     }
@@ -993,6 +993,21 @@ function textureFormat(mode: GlyphMode): "r8unorm" | "rgba8unorm" {
 
 function glyphBytesPerPixel(mode: GlyphMode): number {
   return mode === "alpha" || mode === "sdf" ? 1 : 4;
+}
+
+function fourChannelMode(mode: GlyphMode): boolean {
+  switch (mode) {
+    case "alpha":
+    case "sdf":
+      return false;
+    case "msdf":
+    case "color":
+      return true;
+    default: {
+      const _exhaustive: never = mode;
+      return _exhaustive;
+    }
+  }
 }
 
 function rendererKind(renderer: Renderer): RenderSurfaceStats["adapter"] {

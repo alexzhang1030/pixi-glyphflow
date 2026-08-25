@@ -135,6 +135,77 @@ describe("TextLayer culling and hit bounds", () => {
     expect(layer.hitTest({ x: 101, y: 101 })).toBe(ids[0]);
     expect(layer.hitTest({ x: 1, y: 1 })).toBeUndefined();
 
+    expect(layer.updateTextPositions(ids, ["A", "B"], new Float32Array([0, 0, 20, 20]))).toBe(2);
+    expect(layer.hitTest({ x: 1, y: 1 })).toBe(ids[0]);
+    expect(layer.hitTest({ x: 101, y: 101 })).toBeUndefined();
+
+    layer.destroy();
+  });
+
+  test("admits an in-view create without a residency refresh", async () => {
+    let layouts = 0;
+    const layer = new TextLayer({
+      renderer: {} as Renderer,
+      culling: { enabled: true, bounds: { x: 0, y: 0, width: 100, height: 100 } },
+      rendering: {
+        layoutEngine: {
+          async layout() {
+            layouts += 1;
+            return RUN;
+          },
+          destroy() {},
+        },
+        glyphProvider: {
+          async rasterize() {
+            return {
+              mode: "alpha" as const,
+              width: 8,
+              height: 10,
+              pixels: new Uint8Array(80).fill(255),
+            };
+          },
+          destroy() {},
+        },
+        atlasOptions: { pageWidth: 32, pageHeight: 32, maxBytes: 4_096 },
+      },
+    });
+    layer.create({ text: "A", x: 10, y: 10, style: { fontSize: 16 } });
+    expect(Number(await layer.commit())).toBe(1);
+    expect(layouts).toBe(1);
+    const queries = layer.stats.cullingQueries;
+
+    const inside = layer.create({ text: "B", x: 20, y: 10, style: { fontSize: 16 } });
+    layer.create({ text: "C", x: 1_000, y: 10, style: { fontSize: 16 } });
+    expect(Number(await layer.commit())).toBe(2);
+    expect(layer.stats.cullingQueries).toBe(queries);
+    expect(layouts).toBe(2);
+    expect(layer.stats).toMatchObject({ visibleLabelCount: 2, culledLabelCount: 1, glyphCount: 2 });
+    expect(layer.hitTest({ x: 22, y: 12 })).toBe(inside);
+
+    layer.setViewportBounds({ x: 950, y: 0, width: 100, height: 100 });
+    expect(Number(await layer.commit())).toBe(2);
+    expect(layouts).toBe(3);
+    expect(layer.stats).toMatchObject({ visibleLabelCount: 1, culledLabelCount: 2, glyphCount: 1 });
+
+    layer.destroy();
+  });
+
+  test("rebuilds the full resident set after the viewport is cleared", async () => {
+    const layer = new TextLayer({
+      rendering: false,
+      culling: { enabled: true, bounds: { x: 0, y: 0, width: 50, height: 50 } },
+    });
+    layer.createMany([
+      { text: "A", x: 0, y: 0, style: { fontSize: 10 } },
+      { text: "B", x: 200, y: 0, style: { fontSize: 10 } },
+    ]);
+    await layer.commit();
+    expect(layer.stats.visibleLabelCount).toBe(1);
+
+    layer.setViewportBounds(undefined);
+    await layer.commit();
+    expect(layer.stats.visibleLabelCount).toBe(2);
+
     layer.destroy();
   });
 

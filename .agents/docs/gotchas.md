@@ -131,6 +131,42 @@ importing `BENCHMARK_SCHEMA_VERSION` from `schema.ts` while `benchmarkRuntime()`
 suite was unrunnable until `benchmarks/runtime.ts` took the node-only half. Keep `schema.ts`
 isomorphic; put node-only helpers in `runtime.ts`. Type-only imports are safe.
 
+## Dirty uploads do not collapse leftover ranges into one first-to-last span
+
+`DirtyRanges.publish` still merges a 256-byte gap and promotes when dirty bytes reach 75% of the
+live span. After that, more than eight ranges land in equal-width bands of the first-to-last
+interval. Two tight clusters stay two uploads. A uniform scatter that fills every band still
+covers the live span and then hits the 75% whole-buffer rule. Do not restore the old single
+first-to-last collapse to "keep the 8-range cap simple."
+
+## Wiping the rendered set must dirty visibility
+
+`#resetRenderedSet` (attach, detach, a failed render tail) clears rendered epochs. The next
+commit has to walk residents again and rebuild draw states. That flag is `visibilityDirty`.
+Do not treat a post-attach camera-only commit as a no-op just because no viewport exists.
+
+## A commit with no viewport does not re-query every resident
+
+`shouldRefreshResidency` used to treat a missing draw viewport as "refresh." `dynamic-counters`
+and other `culling: false` workloads then called `queryAll` on every commit. Hide, show, remove,
+and group visibility still set `visibilityDirty`. Creates do not: after the first residency
+query they join through `#buildResidentDirtyChanges`, which admits unrendered dirty slots that
+belong in the current set. Camera motion only matters once a draw viewport exists. Clearing a
+previous viewport still refreshes, because the last instanced working set would otherwise stay
+as the visible set.
+
+Do not restore `visibilityDirty` on `create` / `createMany` when a coordinator exists. That
+forces a full resident scan on every admission. Layers without a coordinator still flip the
+flag so `visibleLabelCount` stays honest on the `rendering: false` path.
+
+## Palette row uploads must stay 256-byte aligned when taller than one row
+
+`uploadFloatTextureRanges` stacks contiguous full palette rows into one `texSubImage2D` /
+`writeTexture`. WebGPU requires `bytesPerRow % 256 === 0` when `height > 1`. The default 1024
+texel width is 16 KiB per row and is aligned. Narrow palettes (unit tests use width 8) stay
+row-by-row so WebGL and WebGPU share the same rectangles. Do not pad `bytesPerRow` — the CPU
+buffer has no row padding.
+
 ## Spatial queries with dense results must not pay the grid sort
 
 Hash-grid output restores insertion order with an `O(K log K)` sort. A mid-zoom viewport at one

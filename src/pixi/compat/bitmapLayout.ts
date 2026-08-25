@@ -30,14 +30,13 @@ export class BitmapLayoutAdapter {
 
   layout(input: BitmapLayoutInput): Readonly<PositionedRun> {
     assertInput(input);
-    const textStyle = new TextStyle(input.style);
     const fontRevision = input.fontRevision ?? 0;
     const cacheRevision = input.cacheRevision ?? fontRevision;
     const direction = input.direction ?? "ltr";
     const trimEnd = input.trimEnd ?? true;
     const maxLines = input.maxLines;
     const ellipsis = input.ellipsis ?? "…";
-    const styleKey = this.#styleKey(input.style, textStyle.styleKey);
+    const styleKey = this.#styleKey(input.style);
     const key = `${input.text}\u0000${styleKey}\u0000${String(fontRevision)}\u0000${String(cacheRevision)}\u0000${direction}\u0000${String(trimEnd)}\u0000${String(maxLines)}\u0000${ellipsis}`;
     const cached = this.#cache.get(key);
     if (cached !== undefined) {
@@ -46,6 +45,7 @@ export class BitmapLayoutAdapter {
     }
 
     this.#misses += 1;
+    const textStyle = new TextStyle(input.style);
     const font = this.#manager.getFont(input.text, textStyle);
     const layout = this.#manager.getLayout(input.text, textStyle, trimEnd);
     const lines = constrainLines(
@@ -156,19 +156,19 @@ export class BitmapLayoutAdapter {
     return entries;
   }
 
-  #styleKey(style: object, fallback: string): string {
+  #styleKey(style: object): string {
     try {
       return stableStringify(style);
     } catch {
       const existing = this.#styleIds.get(style);
       if (existing !== undefined) {
-        return `${fallback}:${String(existing)}`;
+        return `id:${String(existing)}`;
       }
       const id = this.#nextStyleId;
       this.#nextStyleId += 1;
       this.#styleIds.set(style, id);
 
-      return `${fallback}:${String(id)}`;
+      return `id:${String(id)}`;
     }
   }
 }

@@ -65,6 +65,9 @@ writes, and remirroring the store.
 - HarfBuzz glyphs with ids skip `resolveGlyphText` on identity paths (it sliced the remaining
   code points per glyph, O(N²) per label); the real character is derived only on an atlas miss.
   Duplicate-string labels ensure glyphs once per (run, size, weight) per commit.
+- Later creates skip `queryAll`. They enter through the resident dirty path and still appear in
+  the same commit.
+- Palette storms upload stacked full texture rows instead of one write per row.
 
 ## Remaining slices, in order
 
@@ -72,6 +75,9 @@ writes, and remirroring the store.
    supplied and TinySDF has not run. Shipping those pages in the core gzip is rejected.
 2. **Palette storage buffer and atlas texture array.** Wave 3 leftovers. Binding cost, not the
    zoom hitch.
+3. **Admission-side first-seen budget.** A large pan onto fresh text can still hitch on layout
+   and raster in one commit. Any budget must finish on-screen labels in that commit and only
+   cap off-screen working-set prep. Do not defer texel uploads for glyphs already instanced.
 
 Reject: drip-feed admission, `queryAll()` for compute-cull, BVH rebuilds on the 100k storm, and
 replacing PixiJS with a compute 2D engine.

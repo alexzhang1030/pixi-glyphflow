@@ -7,6 +7,7 @@ import {
 } from "pixi.js";
 
 import {
+  aabbVisible,
   cullResidency,
   expandPrepareRing,
   expandWorkingSet,
@@ -135,6 +136,7 @@ export class TextLayer extends Container {
   #bulkSlots: Uint32Array;
   #dirtyLength = 0;
   #visibleSlots: Uint32Array;
+  #visibleMember: Uint8Array;
   #visibleCount = 0;
   #renderedEpochs: Uint32Array;
   #renderEpoch = 0;
@@ -191,6 +193,7 @@ export class TextLayer extends Container {
     this.#bulkSlots = new Uint32Array(this.#store.capacity);
     this.#laneSlots = new Uint32Array(this.#store.capacity);
     this.#visibleSlots = new Uint32Array(this.#store.capacity);
+    this.#visibleMember = new Uint8Array(this.#store.capacity);
     this.#renderedEpochs = new Uint32Array(this.#store.capacity);
     this.#cullRecordIndex = new Int32Array(this.#store.capacity).fill(-1);
     this.#renderer = options.renderer;
@@ -279,7 +282,7 @@ export class TextLayer extends Container {
     if (layout !== undefined) this.#layouts.set(id, layout);
     if (shaping !== undefined) this.#shaping.set(id, shaping);
     this.#indexLabel(id, label);
-    this.#visibilityDirty = true;
+    if (this.#renderCoordinator === undefined) this.#visibilityDirty = true;
     this.#recordMutation(ALL_DIRTY, 1);
 
     return id;
@@ -311,7 +314,7 @@ export class TextLayer extends Container {
       if (shaping !== undefined) this.#shaping.set(id, shaping);
       this.#indexLabel(id, label);
     }
-    if (ids.length > 0) this.#visibilityDirty = true;
+    if (ids.length > 0 && this.#renderCoordinator === undefined) this.#visibilityDirty = true;
     this.#recordMutation(ALL_DIRTY, ids.length);
 
     return ids;
@@ -539,7 +542,7 @@ export class TextLayer extends Container {
       ids,
       texts,
       positions,
-      (slot, index, contentChanged) => {
+      (slot, index, contentChanged, previousX, previousY) => {
         if (contentChanged && hasTrustedRuns) {
           const id = ids[index];
           if (id !== undefined) this.#trustedRuns.delete(id as TextId);
@@ -549,6 +552,16 @@ export class TextLayer extends Container {
         }
         const id = ids[index];
         if (id === undefined) throw new Error("Updated label identity is unavailable");
+        // Same text and style: keep the last world AABB and slide it. Re-estimating
+        // would replace post-layout run bounds with the intake heuristic.
+        if (!contentChanged) {
+          this.#spatial.translate(
+            slot,
+            this.#labelScratch.x - previousX,
+            this.#labelScratch.y - previousY,
+          );
+          return;
+        }
         this.#reindexCurrentSlot(slot, id as TextId, this.#labelScratch);
       },
     );
@@ -1153,6 +1166,7 @@ export class TextLayer extends Container {
     this.#positionOnly = growTypedArray(this.#positionOnly, required);
     this.#dirtySlots = growTypedArray(this.#dirtySlots, required);
     this.#visibleSlots = growTypedArray(this.#visibleSlots, required);
+    this.#visibleMember = growTypedArray(this.#visibleMember, required);
     this.#renderedEpochs = growTypedArray(this.#renderedEpochs, required);
     this.#bulkSlots = growTypedArray(this.#bulkSlots, required);
     this.#laneSlots = growTypedArray(this.#laneSlots, required);
@@ -1170,11 +1184,14 @@ export class TextLayer extends Container {
   }
 
   #queryVisible(cullPath: CullPath, draw: CullViewport | undefined): number {
+    this.#clearVisibleMembership();
     const residency = cullResidency(this.#cullingEnabled, this.#viewportBounds !== undefined);
+    let count: number;
     switch (residency) {
       case "all":
         this.#instancedViewport = undefined;
-        return this.#spatial.queryAll(this.#visibleSlots);
+        count = this.#spatial.queryAll(this.#visibleSlots);
+        break;
       case "viewport": {
         const bounds = this.#viewportBounds;
         if (bounds === undefined || draw === undefined) {
@@ -1183,23 +1200,28 @@ export class TextLayer extends Container {
         switch (cullPath) {
           case "cpu-grid":
             this.#instancedViewport = draw;
-            return this.#spatial.query(bounds, this.#visibleSlots, this.#cullingPadding);
+            count = this.#spatial.query(bounds, this.#visibleSlots, this.#cullingPadding);
+            break;
           case "compute-cull": {
             const working = expandWorkingSet(draw, Math.max(draw.width, draw.height));
             this.#instancedViewport = working;
-            return this.#spatial.query(working, this.#visibleSlots, 0);
+            count = this.#spatial.query(working, this.#visibleSlots, 0);
+            break;
           }
           default: {
             const _exhaustive: never = cullPath;
             return _exhaustive;
           }
         }
+        break;
       }
       default: {
         const _exhaustive: never = residency;
         return _exhaustive;
       }
     }
+    this.#stampVisibleMembership(count);
+    return count;
   }
 
   #buildComputeCullUpdate(
@@ -1412,12 +1434,15 @@ export class TextLayer extends Container {
             snapshot: undefined,
             ...(cullPath === "compute-cull" ? { retainResources: true } : {}),
           });
+        } else {
+          this.#adoptVisibleResident(slot, cullPath, draw);
         }
         continue;
       }
       if (!rendered) {
-        if (!this.#lod || this.#positionOnly[slot] === 1) continue;
-        if (!this.#unshapedVisible(slot, cullPath, ring)) continue;
+        const admission = this.#unrenderedAdmission(slot, cullPath, ring, draw);
+        if (admission.inResidency) this.#adoptVisibleSlot(slot);
+        if (this.#positionOnly[slot] === 1 || !admission.shouldDraw) continue;
         const change = this.#renderChangeForSlot(
           slot,
           false,
@@ -1522,6 +1547,7 @@ export class TextLayer extends Container {
     this.#preparedRing = undefined;
     this.#clearCullRecordIndex();
     this.#cullRecordEpoch = -1;
+    this.#visibilityDirty = true;
   }
 
   #renderChangeForSlot(
@@ -1569,6 +1595,69 @@ export class TextLayer extends Container {
       maxX: box.x + box.width,
       maxY: box.y + box.height,
     });
+  }
+
+  #isSlotEffectivelyVisible(slot: number): boolean {
+    const snapshot = this.#store.snapshotAt(slot);
+    return snapshot !== undefined && this.#isEffectivelyVisible(snapshot.id, snapshot.visible);
+  }
+
+  #unrenderedAdmission(
+    slot: number,
+    cullPath: CullPath,
+    ring: CullViewport | undefined,
+    draw: CullViewport | undefined,
+  ): { inResidency: boolean; shouldDraw: boolean } {
+    if (!this.#isSlotEffectivelyVisible(slot)) return { inResidency: false, shouldDraw: false };
+    const box = this.#spatial.get(slot, this.#boundsScratch);
+    if (box === undefined) return { inResidency: false, shouldDraw: false };
+    const minX = box.x;
+    const minY = box.y;
+    const maxX = box.x + box.width;
+    const maxY = box.y + box.height;
+    switch (cullPath) {
+      case "cpu-grid": {
+        const inResidency = draw === undefined || aabbVisible(minX, minY, maxX, maxY, draw);
+        return { inResidency, shouldDraw: inResidency };
+      }
+      case "compute-cull": {
+        const working = this.#instancedViewport;
+        const inResidency = working !== undefined && aabbVisible(minX, minY, maxX, maxY, working);
+        const shouldDraw =
+          inResidency && ring !== undefined && aabbVisible(minX, minY, maxX, maxY, ring);
+        return { inResidency, shouldDraw };
+      }
+      default: {
+        const _exhaustive: never = cullPath;
+        return _exhaustive;
+      }
+    }
+  }
+
+  #adoptVisibleResident(slot: number, cullPath: CullPath, draw: CullViewport | undefined): void {
+    if (!this.#unrenderedAdmission(slot, cullPath, undefined, draw).inResidency) return;
+    this.#adoptVisibleSlot(slot);
+  }
+
+  #adoptVisibleSlot(slot: number): void {
+    if (this.#visibleMember[slot] === 1) return;
+    this.#visibleMember[slot] = 1;
+    this.#visibleSlots[this.#visibleCount] = slot;
+    this.#visibleCount += 1;
+  }
+
+  #clearVisibleMembership(): void {
+    for (let index = 0; index < this.#visibleCount; index += 1) {
+      const slot = this.#visibleSlots[index];
+      if (slot !== undefined) this.#visibleMember[slot] = 0;
+    }
+  }
+
+  #stampVisibleMembership(count: number): void {
+    for (let index = 0; index < count; index += 1) {
+      const slot = this.#visibleSlots[index];
+      if (slot !== undefined) this.#visibleMember[slot] = 1;
+    }
   }
 
   #shouldDropLod(slot: number): boolean {

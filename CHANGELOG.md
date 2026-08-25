@@ -1,5 +1,25 @@
 # Changelog
 
+## Unreleased
+
+### Performance
+
+- Commits with culling off no longer scan every resident through `queryAll` unless membership or
+  visibility changed. Clearing a previous viewport still rebuilds the full set.
+- `updateTextPositions` slides spatial AABBs when the text is unchanged, so a text-plus-position
+  batch does not re-estimate bounds that a prior layout already measured.
+- Dirty uploads that exceed eight coalesced ranges split into equal-width bands instead of one
+  first-to-last span, so two far-apart clusters do not upload the hole between them.
+- Four-channel atlas pages (MSDF/color) premultiply on the CPU and upload glyph rectangles, the
+  same way single-channel pages already did.
+- Bitmap layout cache hits return before constructing a PixiJS `TextStyle`. Instance builds
+  dedupe atlas keys with a set instead of scanning the unique list.
+- Creates after the first residency query join through the resident dirty path, so adding labels
+  into a live layer does not `queryAll` the existing set.
+- Palette uploads stack contiguous full texture rows into one write when the row stride meets
+  WebGPU's 256-byte `bytesPerRow` rule. A 100k position storm is one or two writes, not one per
+  row.
+
 ## 1.2.0 - 2026-08-22
 
 Published frame and storage budgets are unchanged. Formal browser artifacts remain the 1.1.0

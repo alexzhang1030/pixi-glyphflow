@@ -3,7 +3,7 @@ import type { DirtyByteRange } from "./types";
 export interface DirtyPublishOptions {
   /** Merge two ranges when the hole between them is at most this many bytes. */
   readonly acceptedGap?: number;
-  /** Collapse to first-to-last when more ranges remain after coalescing. */
+  /** Collapse leftover ranges into at most this many equal-width bands. */
   readonly maxRanges?: number;
   /** Used region of the destination buffer, in bytes. */
   readonly liveBytes?: number;
@@ -13,7 +13,7 @@ export interface DirtyPublishOptions {
 
 /** Merge dirty ranges when the hole between them is at most this many bytes. From pmndrs/glyph. */
 export const DIRTY_ACCEPTED_GAP = 256;
-/** Collapse to first-to-last when more ranges remain after coalescing. From pmndrs/glyph. */
+/** Cap published ranges after coalescing. From pmndrs/glyph; collapse is banded, not first-to-last. */
 export const DIRTY_MAX_RANGES = 8;
 /** Promote to the live span when dirty bytes are at least 75% of live bytes. From pmndrs/glyph. */
 export const DIRTY_WHOLE_BUFFER_BPS = 7_500;
@@ -123,12 +123,37 @@ function collapseRanges(ranges: DirtyByteRange[], maxRanges: number | undefined)
   if (first === undefined || last === undefined) {
     return ranges;
   }
-  return [
-    Object.freeze({
-      offset: first.offset,
-      length: last.offset + last.length - first.offset,
-    }),
-  ];
+  const spanStart = first.offset;
+  const spanEnd = last.offset + last.length;
+  const span = spanEnd - spanStart;
+  if (span <= 0) {
+    return ranges;
+  }
+  // Equal-width bands keep distant clusters as separate uploads. First-to-last
+  // collapse would fill the hole between the first and last dirty byte.
+  const bands: Array<{ offset: number; end: number } | undefined> = Array.from({
+    length: maxRanges,
+  });
+  for (const range of ranges) {
+    const band = Math.min(
+      maxRanges - 1,
+      Math.floor(((range.offset - spanStart) / span) * maxRanges),
+    );
+    const end = range.offset + range.length;
+    const existing = bands[band];
+    if (existing === undefined) {
+      bands[band] = { offset: range.offset, end };
+      continue;
+    }
+    if (range.offset < existing.offset) existing.offset = range.offset;
+    if (end > existing.end) existing.end = end;
+  }
+  const collapsed: DirtyByteRange[] = [];
+  for (const band of bands) {
+    if (band === undefined) continue;
+    collapsed.push(Object.freeze({ offset: band.offset, length: band.end - band.offset }));
+  }
+  return collapsed;
 }
 
 function promoteWholeBuffer(

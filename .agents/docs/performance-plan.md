@@ -2,7 +2,7 @@
 
 Status: unstamped research and implementation program dated 2026-08-16.
 
-The current conclusion: Waves 0–3 are in the tree. Keep the 1.1.0 public contract and instanced MSDF/SDF/alpha/color path. Atlas packing is Skyline plus a waste map, a next-fit equal-height shelf, and per-mode O(1) LRU; instances write through typed arrays; numeric fills skip `Color`; spatial queries use a hierarchical hash grid; shared styles intern to one frozen object; position-only commits patch palette x/y texels; z-index is `Float32` in the store and spatial index; fill-only GPU transforms use two `rgba32float` texels (32 bytes) and stroke/shadow live in a sparse tail after the core region; the CPU store packs scale/rotation/alpha/anchors as `f16`, generations and source revisions as `u16`, and occupied/visible/kind into one flag byte, and the dirty journal keeps a sparse slot list; live glyph instances use 24 bytes (four `f16` local-rect components, bound as `uint32x2` and unpacked in the shader). Live atlas keys pack to 52-bit integers; the instance free list is power-of-two segregated; dirty uploads merge a 256-byte gap, collapse after 8 ranges, and promote when dirty bytes reach 75% of the live span. WebGPU camera frames keep an expanded CPU working set and use stable prefix-sum compaction for the tight draw viewport on the direct natural-order mesh. WebGL and unsupported WebGPU draws keep the tight CPU grid path. Wave 0 adds `million-live` (coordinator mesh, not `createStressMesh`), splits rendering frames into CPU / upload / GPU completion, and records layout, instance-write, palette-write, spatial, and upload timers on `TextLayer.stats`. The 40 KiB core gzip and `atlas-pressure` frame CI gates stay deferred. Do not fail the 1.1.0 638 ms artifact. Published browser artifacts are still 1.1.0; `million-live` has no reference artifact yet. Slug and Vello stay optional quality tracks.
+The current conclusion: Waves 0–3 are in the tree. Keep the 1.1.0 public contract and instanced MSDF/SDF/alpha/color path. Atlas packing is Skyline plus a waste map, a next-fit equal-height shelf, and per-mode O(1) LRU; instances write through typed arrays; numeric fills skip `Color`; spatial queries use a hierarchical hash grid; shared styles intern to one frozen object; position-only commits patch palette x/y texels; z-index is `Float32` in the store and spatial index; fill-only GPU transforms use two `rgba32float` texels (32 bytes) and stroke/shadow live in a sparse tail after the core region; the CPU store packs scale/rotation/alpha/anchors as `f16`, generations and source revisions as `u16`, and occupied/visible/kind into one flag byte, and the dirty journal keeps a sparse slot list; live glyph instances use 24 bytes (four `f16` local-rect components, bound as `uint32x2` and unpacked in the shader). Live atlas keys pack to 52-bit integers; the instance free list is power-of-two segregated; dirty uploads merge a 256-byte gap, band leftover ranges after 8, and promote when dirty bytes reach 75% of the live span. WebGPU camera frames keep an expanded CPU working set and use stable prefix-sum compaction for the tight draw viewport on the direct natural-order mesh. WebGL and unsupported WebGPU draws keep the tight CPU grid path. Wave 0 adds `million-live` (coordinator mesh, not `createStressMesh`), splits rendering frames into CPU / upload / GPU completion, and records layout, instance-write, palette-write, spatial, and upload timers on `TextLayer.stats`. The 40 KiB core gzip and `atlas-pressure` frame CI gates stay deferred. Do not fail the 1.1.0 638 ms artifact. Published browser artifacts are still 1.1.0; `million-live` has no reference artifact yet. Slug and Vello stay optional quality tracks.
 
 This record is the research ledger and delivery sequence. Published numbers stay in [`docs/performance.md`](../../docs/performance.md) and [`benchmarks/PERFORMANCE.md`](../../benchmarks/PERFORMANCE.md). The 1.0 specification still owns budgets until a human tightens them.
 
@@ -83,16 +83,20 @@ LRU, 52-bit keys, the 48 MiB store (test-pinned, 44.9 MiB measured), the sparse 
    slot/xy column copies at publish time; rendered movers skip the two frozen snapshots, the change
    object, and the prepared wrapper. Same-machine dynamic-counters returned to the 1.1.0 range
    (16.7 ms vs 15.1–16.6 baseline) while keeping the 48 MiB store and the hash grid.
-4. **Atlas upload shape — PARTLY LANDED.** Single-channel pages (alpha/SDF — the homepage TinySDF
-   path) now upload staged glyph rectangles instead of the whole 1 MiB page, promoting to a full
-   upload when rects exceed half the page. Four-channel pages (MSDF/color) keep the whole-page
-   upload because PixiJS premultiplies their alpha on upload and a raw sub-rect write would not;
-   fixing that means owning premultiplication CPU-side. Atlas residency is wired: the coordinator
-   refcounts each label's atlas keys and pins/unpins entries, so eviction can no longer reuse
-   rectangles that live instances sample — under all-pinned pressure the atlas now reports
-   capacity loudly instead of corrupting silently. Still open: a per-frame byte budget with
-   cross-frame resume must gate label admission, not texel uploads (deferring texels for
-   already-instanced labels would draw stale pixels, which the no-drip gotcha forbids).
+4. **Atlas upload shape — LANDED except admission budget.** Single-channel and four-channel pages
+   upload staged glyph rectangles, promoting to a full upload when rects exceed half the page.
+   Four-channel RGB is premultiplied on the CPU so a raw sub-rect write matches Pixi's former
+   upload-time step. Atlas residency is wired: the coordinator refcounts each label's atlas keys
+   and pins/unpins entries, so eviction can no longer reuse rectangles that live instances sample —
+   under all-pinned pressure the atlas now reports capacity loudly instead of corrupting silently.
+   Still open: a per-frame byte budget with cross-frame resume must gate label admission, not texel
+   uploads (deferring texels for already-instanced labels would draw stale pixels, which the
+   no-drip gotcha forbids).
+5. **Palette multi-row upload and incremental create — LANDED.** Contiguous full palette rows
+   become one GPU write when the row stride is 256-byte aligned (default width 1024). Creates after
+   the first residency query no longer flip `visibilityDirty`; the resident dirty path admits
+   unrendered slots that belong in the current set. Hide/show/remove/group still refresh. On-screen
+   creates still finish in that commit.
 
 **Regressions and traps the audits confirmed:**
 
@@ -104,9 +108,10 @@ LRU, 52-bit keys, the 48 MiB store (test-pinned, 44.9 MiB measured), the sparse 
   lane removed the object pipeline. Same-machine result: 23.5–24.9 → 16.7 ms, inside the 1.1.0
   range. `sourceRevision` is also u32 now, so the 65,535-edit counter death is gone (store is
   ~46.9 MiB per million slots, still under the 48 MiB target).
-- The dirty-range 8-range collapse degenerates scattered edits into a first-to-last span (a
-  scattered 100k storm can balloon toward a 32 MB palette upload); the 256-byte-gap model is fine
-  for dense edits.
+- The dirty-range 8-range cap used to collapse leftover ranges into one first-to-last span. It now
+  buckets them into equal-width bands so two tight clusters do not upload the hole between them.
+  The 256-byte-gap model is still the merge for dense edits. A uniform scatter across the live
+  buffer can still promote to a whole-buffer upload via the 75% rule.
 - `atlasCommit.evictedKeys` had no consumer and `pin`/`unpin` had no callers: under real atlas
   pressure, evicted rectangles could be reused while live instances still sampled them. CLOSED the
   same day: the coordinator refcounts per-label atlas keys and pins live entries (clones share the
@@ -172,7 +177,7 @@ still goes through the store. WebGL and multi-segment meshes keep the tight CPU-
 
 ### String maps sit on every hot cache
 
-Atlas entries, pins, LRU clocks, and pending rasters accept `string | number`. The coordinator intern packs family, glyph id, size bucket, weight class, mode, and font revision so the inner glyph loop does not build strings. Layout runs and some draw states still use string maps.
+Atlas entries, pins, LRU clocks, and pending rasters accept `string | number`. The coordinator intern packs family, glyph id, size bucket, weight class, mode, and font revision so the inner glyph loop does not build strings. Bitmap layout now builds the cache key and returns a hit before constructing PixiJS `TextStyle`. Shape-plan keys and some draw-state maps are still strings.
 
 ## Research map
 

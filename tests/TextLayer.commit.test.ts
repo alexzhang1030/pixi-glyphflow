@@ -78,6 +78,16 @@ describe("TextLayer commit and maintenance", () => {
     expect(transforms.consumeDirty()).toEqual([{ offset: 0, length: 80 }]);
     expect(layer.stats.transformOnlyLabels).toBe(2);
 
+    layer.updateTextPositions(
+      new Float64Array([first, third]),
+      "A",
+      new Float32Array([80, 90, 100, 110]),
+    );
+    await layer.commit();
+    expect(layouts).toBe(3);
+    expect(layer.getBoundsFor(first)).toMatchObject({ x: 80, y: 90, width: 8, height: 10 });
+    expect(Array.from(transforms.data.subarray(0, 2))).toEqual([80, 90]);
+
     layer.destroy();
   });
 
@@ -302,6 +312,59 @@ describe("TextLayer commit and maintenance", () => {
     expect(inputs[1]?.writingMode).toBeUndefined();
     expect(rasterWeights).toEqual(["700", "normal"]);
     expect(layer.stats.lastCommitStyleLabels).toBe(1);
+
+    layer.destroy();
+  });
+
+  test("keeps rendering-off creates on a residency refresh so visible counts stay honest", async () => {
+    const layer = new TextLayer({ rendering: false });
+    layer.create({ text: "one" });
+    await layer.commit();
+    expect(layer.stats.visibleLabelCount).toBe(1);
+    const queries = layer.stats.cullingQueries;
+
+    layer.create({ text: "two" });
+    await layer.commit();
+    expect(layer.stats.visibleLabelCount).toBe(2);
+    expect(layer.stats.cullingQueries).toBeGreaterThan(queries);
+
+    layer.destroy();
+  });
+
+  test("admits later creates without scanning the resident set", async () => {
+    let layouts = 0;
+    const layer = new TextLayer({
+      renderer: {} as Renderer,
+      rendering: {
+        layoutEngine: {
+          async layout() {
+            layouts += 1;
+            return RUN;
+          },
+          destroy() {},
+        },
+        glyphProvider: {
+          async rasterize() {
+            return alphaRaster();
+          },
+          destroy() {},
+        },
+        atlasOptions: { pageWidth: 32, pageHeight: 32, maxBytes: 4_096 },
+      },
+    });
+    layer.createMany(Array.from({ length: 8 }, (_, index) => ({ text: "A", x: index * 12, y: 0 })));
+    await layer.commit();
+    expect(layouts).toBe(8);
+    const queries = layer.stats.cullingQueries;
+
+    layer.createMany(
+      Array.from({ length: 4 }, (_, index) => ({ text: "A", x: 100 + index * 12, y: 0 })),
+    );
+    await layer.commit();
+    expect(layer.stats.cullingQueries).toBe(queries);
+    expect(layouts).toBe(12);
+    expect(layer.stats.glyphCount).toBe(12);
+    expect(layer.stats.visibleLabelCount).toBe(12);
 
     layer.destroy();
   });

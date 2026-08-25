@@ -265,6 +265,17 @@ describe("TextLayer 1.0 CRUD", () => {
     await layer.commit();
     const packedIds = new Float64Array(ids);
 
+    expect(layer.updateTextPositions(packedIds, "old", new Float32Array([10, 20, 30, 40]))).toBe(2);
+    expect(layer.get(ids[0] as TextId)).toMatchObject({ text: "old", x: 10, y: 20 });
+    expect(layer.get(ids[1] as TextId)).toMatchObject({ text: "old", x: 30, y: 40 });
+    expect(layer.getBoundsFor(ids[0] as TextId)).toMatchObject({ x: 10, y: 20 });
+
+    const queriesAfterMove = layer.stats.cullingQueries;
+    await layer.commit();
+    expect(layer.stats.cullingQueries).toBe(queriesAfterMove);
+    expect(layer.stats.lastCommitContentLabels).toBe(0);
+    expect(layer.stats.lastCommitTransformLabels).toBe(2);
+
     expect(layer.updateTextPositions(packedIds, "new", new Float32Array([10, 20, 30, 40]))).toBe(2);
     expect(layer.get(ids[0] as TextId)).toMatchObject({ text: "new", x: 10, y: 20 });
     expect(layer.get(ids[1] as TextId)).toMatchObject({ text: "new", x: 30, y: 40 });
@@ -275,7 +286,7 @@ describe("TextLayer 1.0 CRUD", () => {
 
     await layer.commit();
     expect(layer.stats.lastCommitContentLabels).toBe(2);
-    expect(layer.stats.lastCommitTransformLabels).toBe(2);
+    expect(layer.stats.lastCommitTransformLabels).toBe(0);
     layer.destroy();
   });
 
