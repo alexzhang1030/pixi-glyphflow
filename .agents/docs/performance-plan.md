@@ -121,8 +121,9 @@ LRU, 52-bit keys, the 48 MiB store (test-pinned, 44.9 MiB measured), the sparse 
     Shaders fetch the unique 24-byte store from an RGBA32F prototype texture. UV is packed as f16
     and metadata as two integer floats (raw store uints are NaN in RGBA32F). Width comes from the
     texture, not a third glyph uniform. Scatter and CPU compact write 8 bytes per visible glyph.
-    Palette growth replaces the proto source with a new pixel buffer so Pixi's first-upload
-    snapshot cannot drop dirty glyphs after texel 0. One mesh per unique string stays rejected.
+    Palette growth rewrites the existing proto texture so Pixi's first-upload snapshot cannot
+    drop dirty glyphs after texel 0. Replacing the proto `Texture` leaves vertex fetches empty.
+    One mesh per unique string stays rejected.
 
 **Regressions and traps the audits confirmed:**
 

@@ -95,9 +95,9 @@ writes, and remirroring the store.
 - Draw instances are 8 bytes: store glyph index plus palette index. Shaders `texelFetch` rect, UV,
   and metadata from an RGBA32F prototype texture packed from the unique store. CPU compact and
   WebGPU scatter write two uints per visible glyph. The 24-byte store is not the instance buffer.
-  Palette growth allocates a new proto pixel buffer so Pixi's first-upload snapshot cannot drop
-  dirty glyphs after texel 0. One `GlyphMesh`, insertion order and z stay. One mesh per unique
-  string is still rejected.
+  Palette growth rewrites the existing proto texture so Pixi's first-upload snapshot cannot drop
+  dirty glyphs after texel 0. Replacing that `Texture` leaves vertex fetches empty. One
+  `GlyphMesh`, insertion order and z stay. One mesh per unique string is still rejected.
 
 ## Remaining slices, in order
 

@@ -421,18 +421,23 @@ export class RenderSurface {
     }
   }
 
-  /** Palette growth re-inits proto from the first upload. See `.agents/docs/gotchas.md`. */
+  /** Rewrite the live store into the existing proto texture. See `.agents/docs/gotchas.md`. */
   #refreshPrototypeTexture(): void {
     const highWater = this.#coordinator.instances.stats.highWater;
     if (this.#protoPixels.length === 0) return;
-    const height = Math.max(1, this.#protoPixels.length / (this.#protoWidth * 4));
-    const pixels = allocatePrototypePixels(this.#protoWidth, height);
-    writePrototypeGlyphs(pixels, this.#coordinator.instances.buffer, 0, highWater);
-    this.#adoptPrototypePixels(pixels, this.#protoWidth);
+    writePrototypeGlyphs(this.#protoPixels, this.#coordinator.instances.buffer, 0, highWater);
+    this.#protoSource.update();
+    const uploaded = uploadFloatTextureRanges(
+      this.#renderer,
+      this.#protoSource,
+      this.#protoPixels,
+      this.#protoWidth,
+      [{ offset: 0, length: this.#protoPixels.byteLength }],
+    );
     initializeTexture(this.#renderer, this.#protoSource);
     this.#protoInitialized = true;
-    this.#instanceUploadBytes += pixels.byteLength;
-    this.#instanceWrites += 1;
+    this.#instanceUploadBytes += uploaded.bytes;
+    this.#instanceWrites += uploaded.writes;
   }
 
   #adoptPrototypePixels(pixels: Float32Array, width: number): void {

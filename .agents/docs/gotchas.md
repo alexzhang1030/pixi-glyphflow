@@ -29,12 +29,12 @@ The first proto `initializeTexture` uploads whatever `highWater` is at that mome
 only). Three appearance glyphs still fit in one 1024-wide row, so the texture size does not grow
 and later glyphs live on the GPU only through dirty rects. Growing the palette recreates a vertex
 texture and Pixi re-inits sibling sources from that first upload, so protoIndex ≥ 1 becomes
-inactive. After a palette buffer replace, allocate a new proto pixel buffer, write the live store,
-create a new `BufferImageSource`, and `initializeTexture` it. That upload is the new first-upload
-snapshot. Do not wrap the same `Float32Array` and `destroy` the old `Texture`: Pixi keys the GL
-texture by the resource buffer, and destroy(old) kills the replacement. `source.update()` on the
-old source also leaves the first-upload snapshot stale. A first-stroke-only label stays on
-protoIndex 0 and hides this. W→AB→W plus stroke does not.
+inactive. After a palette buffer replace, rewrite the live store into the existing proto pixels
+and upload that same texture (`source.update()` plus a full float range write). Do not create a
+new `BufferImageSource` / `Texture` and `destroy` the old one: readPixels of the replacement
+looks fine, but vertex `texelFetch` returns zeros, the instance rect collapses, and
+W→AB→W plus stroke draws 0 pixels. A first-stroke-only label stays on protoIndex 0 and hides
+this. Rebuild the mesh if you want, it does not fix the empty fetch.
 
 Do not revert to 32-byte `float32x4` rects to make CI green. Do not bind the 24-byte store as the
 instance buffer: after `share`, `highWater` is unique glyphs and their baked palette is the
