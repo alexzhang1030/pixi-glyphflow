@@ -4,6 +4,13 @@
 
 ### Performance
 
+- Duplicate strings intern one layout result per (family, size, weight, text). Later first-seen
+  copies and broadcast `updateTextPositions` skip `LayoutEngine.layout` until the font registry
+  revision changes.
+- `clone` rewrites an existing dest range in place when capacity already fits, and copies instance
+  bytes with `copyWithin`.
+- Broadcast text-plus-position updates keep the position-only transform kind. Labels with default
+  zero anchors patch 16 palette bytes; non-zero anchors still rewrite the fill record.
 - Commits with culling off no longer scan every resident through `queryAll` unless membership or
   visibility changed. Clearing a previous viewport still rebuilds the full set.
 - `updateTextPositions` slides spatial AABBs when the text is unchanged, so a text-plus-position

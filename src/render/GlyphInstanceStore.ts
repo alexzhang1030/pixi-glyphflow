@@ -54,8 +54,9 @@ export class GlyphInstanceStore {
   #highWater = 0;
   #activeInstances = 0;
   #buffer: ArrayBuffer;
-  #uint16: Uint16Array;
-  #uint32: Uint32Array;
+  #uint8!: Uint8Array;
+  #uint16!: Uint16Array;
+  #uint32!: Uint32Array;
   #destroyed = false;
 
   constructor(options: GlyphInstanceStoreOptions = {}) {
@@ -70,9 +71,7 @@ export class GlyphInstanceStore {
     this.#maxCapacity = maxCapacity;
     this.#capacity = this.#minimumCapacity;
     this.#buffer = new ArrayBuffer(this.#capacity * GLYPH_INSTANCE_STRIDE);
-    const views = bindInstanceViews(this.#buffer);
-    this.#uint16 = views.uint16;
-    this.#uint32 = views.uint32;
+    this.#bindViews(this.#buffer);
   }
 
   get buffer(): ArrayBuffer {
@@ -161,6 +160,22 @@ export class GlyphInstanceStore {
     const count = source.count;
     const sourceOffset = source.offset;
     const current = this.#ranges.get(destId);
+    if (current !== undefined && current.capacity >= count) {
+      this.#copyInstances(sourceOffset, current.offset, count);
+      this.#patchPalette(current.offset, count, destId);
+      if (count < current.count) {
+        this.#clearMetadata(current.offset + count, current.count - count);
+      }
+      this.#activeInstances += count - current.count;
+      this.#segmentEpoch += 1;
+      const dirtyCount = Math.max(current.count, count);
+      current.count = count;
+      this.#dirty.record(
+        current.offset * GLYPH_INSTANCE_STRIDE,
+        dirtyCount * GLYPH_INSTANCE_STRIDE,
+      );
+      return true;
+    }
     if (current !== undefined) this.#releaseLabelRange(destId, current);
 
     const range = this.#allocateRange(nextPowerOfTwo(count));
@@ -206,9 +221,7 @@ export class GlyphInstanceStore {
       offset += range.count;
     }
     this.#buffer = buffer;
-    const views = bindInstanceViews(buffer);
-    this.#uint16 = views.uint16;
-    this.#uint32 = views.uint32;
+    this.#bindViews(buffer);
     this.#capacity = afterCapacity;
     this.#highWater = offset;
     this.#segmentEpoch += 1;
@@ -249,9 +262,7 @@ export class GlyphInstanceStore {
     this.#free.clear();
     this.#dirty.clear();
     this.#buffer = new ArrayBuffer(0);
-    const views = bindInstanceViews(this.#buffer);
-    this.#uint16 = views.uint16;
-    this.#uint32 = views.uint32;
+    this.#bindViews(this.#buffer);
     this.#capacity = 0;
     this.#highWater = 0;
     this.#activeInstances = 0;
@@ -286,9 +297,8 @@ export class GlyphInstanceStore {
 
   #copyInstances(sourceOffset: number, destOffset: number, count: number): void {
     const bytes = count * GLYPH_INSTANCE_STRIDE;
-    new Uint8Array(this.#buffer, destOffset * GLYPH_INSTANCE_STRIDE, bytes).set(
-      new Uint8Array(this.#buffer, sourceOffset * GLYPH_INSTANCE_STRIDE, bytes),
-    );
+    const sourceByte = sourceOffset * GLYPH_INSTANCE_STRIDE;
+    this.#uint8.copyWithin(destOffset * GLYPH_INSTANCE_STRIDE, sourceByte, sourceByte + bytes);
   }
 
   #patchPalette(offset: number, count: number, paletteIndex: number): void {
@@ -367,16 +377,21 @@ export class GlyphInstanceStore {
     while (capacity < required) capacity *= 2;
     capacity = Math.min(capacity, this.#maxCapacity);
     const buffer = new ArrayBuffer(capacity * GLYPH_INSTANCE_STRIDE);
-    new Uint8Array(buffer).set(new Uint8Array(this.#buffer));
+    new Uint8Array(buffer).set(this.#uint8);
     this.#buffer = buffer;
-    const views = bindInstanceViews(buffer);
-    this.#uint16 = views.uint16;
-    this.#uint32 = views.uint32;
+    this.#bindViews(buffer);
     this.#capacity = capacity;
     this.#dirty.clear();
     if (this.#highWater > 0) {
       this.#dirty.record(0, this.#highWater * GLYPH_INSTANCE_STRIDE);
     }
+  }
+
+  #bindViews(buffer: ArrayBuffer): void {
+    const views = bindInstanceViews(buffer);
+    this.#uint8 = views.uint8;
+    this.#uint16 = views.uint16;
+    this.#uint32 = views.uint32;
   }
 
   #assertActive(): void {
@@ -552,10 +567,12 @@ function assertPositiveCapacity(name: string, value: number): void {
 }
 
 function bindInstanceViews(buffer: ArrayBuffer): {
+  readonly uint8: Uint8Array;
   readonly uint16: Uint16Array;
   readonly uint32: Uint32Array;
 } {
   return {
+    uint8: new Uint8Array(buffer),
     uint16: new Uint16Array(buffer),
     uint32: new Uint32Array(buffer),
   };

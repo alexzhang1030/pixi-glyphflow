@@ -172,7 +172,7 @@ export class TextStore {
       return undefined;
     }
 
-    return this.#snapshot(slot, id);
+    return this.#snapshot(slot, id, true);
   }
 
   /** Return the current slot for a layer-local identity. @internal */
@@ -191,17 +191,17 @@ export class TextStore {
     const generation = this.#generations[slot] ?? 1;
     const id = (this.#idBase + generation * SLOT_RADIX + slot) as TextId;
 
-    return this.#snapshot(slot, id);
+    return this.#snapshot(slot, id, false);
   }
 
-  #snapshot(slot: number, id: TextId): Readonly<TextStoreSnapshot> {
+  #snapshot(slot: number, id: TextId, freeze: boolean): Readonly<TextStoreSnapshot> {
     const text = this.#texts[slot];
     const style = this.#styles[slot];
     if (text === undefined || style === undefined) {
       throw new Error("TextStore invariant violation: occupied slot is incomplete");
     }
 
-    return Object.freeze({
+    const snapshot = {
       id,
       sourceRevision: this.#sourceRevisions[slot] ?? 1,
       text,
@@ -217,7 +217,8 @@ export class TextStore {
       anchorX: readF16(this.#anchorX, slot),
       anchorY: readF16(this.#anchorY, slot),
       style,
-    });
+    };
+    return freeze ? Object.freeze(snapshot) : snapshot;
   }
 
   has(id: TextId): boolean {
@@ -488,7 +489,7 @@ export class TextStore {
         this.#x[slot] = x;
         this.#y[slot] = y;
         dirty |= TextDirty.Transform;
-        this.#markTransformKind(slot, contentChanged ? FULL_TRANSFORM : POSITION_ONLY);
+        this.#markTransformKind(slot, POSITION_ONLY);
       }
       this.#journal.record(slot, dirty);
       visitor?.(slot, index, contentChanged, previousX, previousY);

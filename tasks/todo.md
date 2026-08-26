@@ -292,6 +292,13 @@
   - Verify: bun test tests/pack.test.ts tests/TextLayer.commit.test.ts tests/culling.test.ts tests/computeCull.test.ts
   - Files: src/render/pack.ts, src/render/RenderSurface.ts, src/TextLayer.ts, src/culling/computeCull.ts
 
+- [x] Task 12.10: Intern duplicate-string layout and clone dest ranges in place.
+  - Acceptance: Shared (family, size, weight, text) labels layout once; `clone` reuses dest
+    capacity; broadcast `updateTextPositions` with zero anchors patches 16 palette bytes.
+    On-screen first-seen labels still finish in that commit. Published budgets stay.
+  - Verify: bun test tests/RenderCoordinator.test.ts tests/GlyphInstanceStore.test.ts tests/TextLayer.commit.test.ts tests/TextStore.test.ts tests/culling.test.ts
+  - Files: src/render/RenderCoordinator.ts, src/render/GlyphInstanceStore.ts, src/store/TextStore.ts, src/TextLayer.ts
+
 - [ ] Task 12.7: Add hybrid glyph generation and upload budgets (Wave 4).
   - Acceptance: Local TinySDF or prebaked pages serve the common set; dynamic MSDF remains the long tail; a per-frame budget gates off-screen label admission, not texel uploads for already-instanced glyphs, without growing the core gzip entry.
   - Verify: bun test tests/glyph-providers.test.ts tests/GlyphAtlas.test.ts && bun run benchmark -- --workload atlas-pressure,multilingual-stream

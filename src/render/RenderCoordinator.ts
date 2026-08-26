@@ -162,6 +162,12 @@ export class RenderCoordinator {
   #drawListEpoch = 0;
   readonly #ensuredRuns = new Map<Readonly<PositionedRun>, Map<string, Promise<void> | "done">>();
   #ensuredTicket = 0;
+  readonly #registry: FontRegistry;
+  #runsByStyle = new WeakMap<object, Map<string, LayoutResult>>();
+  readonly #runsByFace = new Map<string, Map<number, Map<string, LayoutResult>>>();
+  readonly #runsByExtra = new Map<string, LayoutResult>();
+  readonly #prototypeByRun = new WeakMap<object, number>();
+  #internRevision = -1;
   #lastLayoutMs = 0;
   #lastInstanceWriteMs = 0;
   #lastPaletteWriteMs = 0;
@@ -181,6 +187,7 @@ export class RenderCoordinator {
     this.#ownsAtlas = options.atlas === undefined;
     this.#ownsInstances = options.instances === undefined;
     this.#ownsTransforms = options.transforms === undefined;
+    this.#registry = options.registry;
     this.#tinySdf = options.rasterizerOptions?.tinySdf === true;
   }
 
@@ -209,6 +216,8 @@ export class RenderCoordinator {
     const atlasCommit = this.atlas.commitFrame();
     let appliedLabels = 0;
     let drawOrderChanged = false;
+    let wroteInstances = false;
+    const writeStart = performance.now();
     for (const item of prepared) {
       const { change, run } = item;
       if (change.snapshot === undefined) {
@@ -224,8 +233,8 @@ export class RenderCoordinator {
           appliedLabels += 1;
           continue;
         }
-        this.#runs.delete(change.slot);
         this.#forgetPrototype(change.slot);
+        this.#runs.delete(change.slot);
         this.#releaseSlotKeys(change.slot);
         const instanceStart = performance.now();
         this.instances.remove(change.slot);
@@ -284,43 +293,48 @@ export class RenderCoordinator {
         this.#drawStatesDirty = true;
       }
       const sourceChanged = this.#sourceChanged(change);
-      let paletteStart: number;
       if (sourceChanged) {
         this.#runs.set(change.slot, run);
-        const instanceStart = performance.now();
         this.#writeInstances(change.slot, run, change.snapshot);
-        paletteStart = performance.now();
-        this.#lastInstanceWriteMs += paletteStart - instanceStart;
+        wroteInstances = true;
         this.#shapedLabels += 1;
       } else {
         this.#transformOnlyLabels += 1;
-        paletteStart = performance.now();
       }
-      if (change.positionOnly === true && !sourceChanged) {
-        this.transforms.setPosition(change.slot, change.snapshot.x, change.snapshot.y);
-      } else {
-        this.transforms.set(
-          change.slot,
-          {
-            x: change.snapshot.x,
-            y: change.snapshot.y,
-            scaleX: change.snapshot.scaleX,
-            scaleY: change.snapshot.scaleY,
-            rotation: change.snapshot.rotation,
-            alpha: change.snapshot.alpha,
-            visible: change.snapshot.visible,
-            anchorX: change.snapshot.anchorX,
-            anchorY: change.snapshot.anchorY,
-            fill: change.snapshot.style.fill,
-            stroke: change.snapshot.style.stroke,
-            dropShadow: change.snapshot.style.dropShadow,
-          },
-          run.bounds,
-        );
+      const keepFill =
+        change.positionOnly === true &&
+        change.snapshot.anchorX === 0 &&
+        change.snapshot.anchorY === 0;
+      if (
+        keepFill &&
+        this.transforms.setPosition(change.slot, change.snapshot.x, change.snapshot.y)
+      ) {
+        appliedLabels += 1;
+        continue;
       }
-      this.#lastPaletteWriteMs += performance.now() - paletteStart;
+      this.transforms.set(
+        change.slot,
+        {
+          x: change.snapshot.x,
+          y: change.snapshot.y,
+          scaleX: change.snapshot.scaleX,
+          scaleY: change.snapshot.scaleY,
+          rotation: change.snapshot.rotation,
+          alpha: change.snapshot.alpha,
+          visible: change.snapshot.visible,
+          anchorX: change.snapshot.anchorX,
+          anchorY: change.snapshot.anchorY,
+          fill: change.snapshot.style.fill,
+          stroke: change.snapshot.style.stroke,
+          dropShadow: change.snapshot.style.dropShadow,
+        },
+        run.bounds,
+      );
       appliedLabels += 1;
     }
+    const writeMs = performance.now() - writeStart;
+    if (wroteInstances) this.#lastInstanceWriteMs = writeMs;
+    else this.#lastPaletteWriteMs = writeMs;
     this.#revisions += 1;
     this.#appliedLabels += appliedLabels;
 
@@ -398,6 +412,7 @@ export class RenderCoordinator {
     this.#pendingGlyphs.clear();
     this.#prototypeSlots.clear();
     this.#slotPrototypeKeys.clear();
+    this.#clearIntern();
     this.#slotAtlasKeys.clear();
     this.#atlasKeyRefs.clear();
     this.#ensuredRuns.clear();
@@ -457,14 +472,25 @@ export class RenderCoordinator {
     if (change.trustedRun !== undefined) {
       return this.#finishPrepare(change, snapshot, ticket, change.trustedRun);
     }
+    const interned = this.#lookupIntern(snapshot);
+    if (interned !== undefined) {
+      if (isPromise(interned)) {
+        return interned.then((run) => this.#finishPrepare(change, snapshot, ticket, run));
+      }
+      return this.#finishPrepare(change, snapshot, ticket, interned);
+    }
     const laidOut = this.#layout.layout(change.slot, snapshot.sourceRevision, {
       text: snapshot.text,
       style: snapshot.style,
       ...snapshot.layout,
       ...snapshot.shaping,
     });
+    this.#storeIntern(snapshot, laidOut);
     if (isPromise(laidOut)) {
-      return laidOut.then((run) => this.#finishPrepare(change, snapshot, ticket, run));
+      return laidOut.then((run) => {
+        this.#storeIntern(snapshot, run);
+        return this.#finishPrepare(change, snapshot, ticket, run);
+      });
     }
     return this.#finishPrepare(change, snapshot, ticket, laidOut);
   }
@@ -572,7 +598,11 @@ export class RenderCoordinator {
     snapshot: Readonly<RenderLabelSnapshot>,
   ): void {
     const key = prototypeKey(run, snapshot);
-    const prototype = this.#prototypeSlots.get(key);
+    const runPrototype = this.#prototypeByRun.get(run);
+    const prototype =
+      runPrototype !== undefined && runPrototype !== slot
+        ? runPrototype
+        : this.#prototypeSlots.get(key);
     if (prototype !== undefined && prototype !== slot && this.instances.clone(prototype, slot)) {
       const prototypeKeys = this.#slotAtlasKeys.get(prototype);
       if (prototypeKeys !== undefined) this.#retainSlotKeys(slot, prototypeKeys);
@@ -580,7 +610,7 @@ export class RenderCoordinator {
     } else {
       this.instances.set(slot, this.#buildInstances(slot, run, snapshot), { skipEquality: true });
     }
-    this.#rememberPrototype(slot, key);
+    this.#rememberPrototype(slot, key, run);
   }
 
   /** Pin the label's atlas entries so eviction cannot reuse rectangles live instances sample. */
@@ -614,21 +644,77 @@ export class RenderCoordinator {
     }
   }
 
-  #rememberPrototype(slot: number, key: string): void {
+  #rememberPrototype(slot: number, key: string, run: Readonly<PositionedRun>): void {
     const previous = this.#slotPrototypeKeys.get(slot);
     if (previous !== undefined && previous !== key && this.#prototypeSlots.get(previous) === slot) {
       this.#prototypeSlots.delete(previous);
     }
     this.#slotPrototypeKeys.set(slot, key);
     if (this.#prototypeSlots.get(key) === undefined) this.#prototypeSlots.set(key, slot);
+    if (this.#prototypeByRun.get(run) === undefined) this.#prototypeByRun.set(run, slot);
   }
 
   #forgetPrototype(slot: number): void {
+    const run = this.#runs.get(slot);
+    if (run !== undefined && this.#prototypeByRun.get(run) === slot) {
+      this.#prototypeByRun.delete(run);
+    }
     const key = this.#slotPrototypeKeys.get(slot);
     this.#slotPrototypeKeys.delete(slot);
     if (key !== undefined && this.#prototypeSlots.get(key) === slot) {
       this.#prototypeSlots.delete(key);
     }
+  }
+
+  #lookupIntern(snapshot: Readonly<RenderLabelSnapshot>): LayoutResult | undefined {
+    this.#syncInternRevision();
+    if (!internUsesFaceMap(snapshot)) return this.#runsByExtra.get(extraInternKey(snapshot));
+    const byStyle = this.#runsByStyle.get(snapshot.style)?.get(snapshot.text);
+    if (byStyle !== undefined) return byStyle;
+    const family = internFamily(snapshot.style.fontFamily);
+    const quant = internFaceQuant(snapshot.style);
+    return this.#runsByFace.get(family)?.get(quant)?.get(snapshot.text);
+  }
+
+  #storeIntern(snapshot: Readonly<RenderLabelSnapshot>, result: LayoutResult): void {
+    this.#syncInternRevision();
+    if (!internUsesFaceMap(snapshot)) {
+      this.#runsByExtra.set(extraInternKey(snapshot), result);
+      return;
+    }
+    let byText = this.#runsByStyle.get(snapshot.style);
+    if (byText === undefined) {
+      byText = new Map();
+      this.#runsByStyle.set(snapshot.style, byText);
+    }
+    byText.set(snapshot.text, result);
+    const family = internFamily(snapshot.style.fontFamily);
+    let byQuant = this.#runsByFace.get(family);
+    if (byQuant === undefined) {
+      byQuant = new Map();
+      this.#runsByFace.set(family, byQuant);
+    }
+    const quant = internFaceQuant(snapshot.style);
+    let byFaceText = byQuant.get(quant);
+    if (byFaceText === undefined) {
+      byFaceText = new Map();
+      byQuant.set(quant, byFaceText);
+    }
+    byFaceText.set(snapshot.text, result);
+  }
+
+  #syncInternRevision(): void {
+    const revision = this.#registry.stats.revision;
+    if (revision === this.#internRevision) return;
+    this.#clearIntern();
+    this.#internRevision = revision;
+  }
+
+  #clearIntern(): void {
+    this.#runsByStyle = new WeakMap();
+    this.#runsByFace.clear();
+    this.#runsByExtra.clear();
+    this.#internRevision = -1;
   }
 
   #buildInstances(
@@ -776,6 +862,58 @@ class LazyRasterGlyphProvider implements GlyphProviderLike {
 
 function isPromise<T>(value: T | Promise<T>): value is Promise<T> {
   return value instanceof Promise;
+}
+
+function internUsesFaceMap(snapshot: Readonly<RenderLabelSnapshot>): boolean {
+  const writingMode = snapshot.layout?.writingMode;
+  if (writingMode !== undefined && writingMode !== "horizontal-tb") return false;
+  if (snapshot.shaping !== undefined) return false;
+  const italic = snapshot.style.fontStyle;
+  if (italic !== undefined && italic !== "normal") return false;
+  const family = snapshot.style.fontFamily;
+  return typeof family === "string" || family === undefined;
+}
+
+function internFamily(family: unknown): string {
+  return typeof family === "string" && family.length > 0 ? family : "Arial";
+}
+
+function internFaceQuant(style: Readonly<TextStyleOptions>): number {
+  return resolveFontSize(style.fontSize) * 1024 + internWeightClass(style.fontWeight);
+}
+
+function internWeightClass(weight: unknown): number {
+  if (typeof weight === "number" && Number.isFinite(weight)) {
+    return Math.max(1, Math.min(1000, Math.round(weight)));
+  }
+  if (weight === "bold") return 700;
+  if (weight === "lighter") return 300;
+  if (weight === "bolder") return 800;
+  return 400;
+}
+
+function extraInternKey(snapshot: Readonly<RenderLabelSnapshot>): string {
+  const shaping = snapshot.shaping;
+  const variations =
+    shaping?.variations === undefined
+      ? ""
+      : Object.entries(shaping.variations)
+          .sort(([left], [right]) => left.localeCompare(right))
+          .map(([axis, value]) => `${axis}=${String(value)}`)
+          .join(",");
+  return [
+    snapshot.text,
+    String(snapshot.style.fontFamily ?? ""),
+    String(resolveFontSize(snapshot.style.fontSize)),
+    String(snapshot.style.fontWeight ?? ""),
+    String(snapshot.style.fontStyle ?? ""),
+    snapshot.layout?.writingMode ?? "",
+    shaping?.direction ?? "",
+    shaping?.language ?? "",
+    shaping?.script ?? "",
+    shaping?.features?.join(",") ?? "",
+    variations,
+  ].join("\0");
 }
 
 function prototypeKey(

@@ -97,6 +97,10 @@ LRU, 52-bit keys, the 48 MiB store (test-pinned, 44.9 MiB measured), the sparse 
    the first residency query no longer flip `visibilityDirty`; the resident dirty path admits
    unrendered slots that belong in the current set. Hide/show/remove/group still refresh. On-screen
    creates still finish in that commit.
+6. **Duplicate-string layout intern and in-place clone — LANDED.** First-seen copies of a known
+   (family, size, weight, text) skip `LayoutEngine.layout`. `clone` keeps a dest range that already
+   fits. Broadcast text-plus-position with zero anchors patches 16 palette bytes. Unique-glyph
+   raster in the seeing commit is unchanged.
 
 **Regressions and traps the audits confirmed:**
 

@@ -177,6 +177,14 @@ describe("TextStore", () => {
     store.update(second, { x: 31, rotation: 0.25 });
     expect(store.consumePositionOnly(store.slotOf(second) ?? -1)).toBe(false);
 
+    store.publishDirty();
+    expect(
+      store.updateTextPositions([first, second], "next", new Float32Array([12, 22, 32, 42]))
+        .changed,
+    ).toBe(2);
+    expect(store.consumePositionOnly(store.slotOf(first) ?? -1)).toBe(true);
+    expect(store.consumePositionOnly(store.slotOf(second) ?? -1)).toBe(true);
+
     store.dispose();
   });
 

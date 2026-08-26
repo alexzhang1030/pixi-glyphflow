@@ -61,7 +61,7 @@ describe("TextLayer culling and hit bounds", () => {
 
     layer.setViewportBounds({ x: 950, y: 0, width: 100, height: 100 });
     expect(Number(await layer.commit())).toBe(1);
-    expect(layouts).toBe(2);
+    expect(layouts).toBe(1);
     expect(layer.stats).toMatchObject({ visibleLabelCount: 1, culledLabelCount: 1, glyphCount: 1 });
     expect(layer.hitTest({ x: 1_002, y: 12 })).toBe(second);
 

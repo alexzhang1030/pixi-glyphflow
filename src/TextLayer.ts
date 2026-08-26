@@ -1578,9 +1578,7 @@ export class TextLayer extends Container {
         this.#shaping.get(snapshot.id),
       ),
       ...(trustedRun === undefined ? {} : { trustedRun }),
-      ...(wasRendered && this.#positionOnly[slot] === 1 && mask === TextDirty.Transform
-        ? { positionOnly: true }
-        : {}),
+      ...(wasRendered && this.#positionOnly[slot] === 1 ? { positionOnly: true } : {}),
     };
   }
 
@@ -1746,7 +1744,7 @@ function toRenderSnapshot(
   layout: Readonly<TextLayoutOptions> | undefined,
   shaping: Readonly<TextShapingOptions> | undefined,
 ): Readonly<RenderLabelSnapshot> {
-  return Object.freeze({
+  return {
     sourceRevision: snapshot.sourceRevision,
     text: snapshot.text,
     x: snapshot.x,
@@ -1764,7 +1762,7 @@ function toRenderSnapshot(
     style: snapshot.style,
     ...(layout === undefined ? {} : { layout }),
     ...(shaping === undefined ? {} : { shaping }),
-  });
+  };
 }
 
 type NormalizedLayoutPatch = Readonly<TextLayoutOptions> | null | undefined;

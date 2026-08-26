@@ -159,6 +159,18 @@ Do not restore `visibilityDirty` on `create` / `createMany` when a coordinator e
 forces a full resident scan on every admission. Layers without a coordinator still flip the
 flag so `visibleLabelCount` stays honest on the `rendering: false` path.
 
+## Duplicate-string layout intern keys on face plus text
+
+`RenderCoordinator` reuses a layout result for later labels that share family, size, weight, and
+text (or the same interned style object). A font register or unregister bumps
+`FontRegistry.stats.revision` and drops that intern so a new face cannot keep a stale run.
+
+Shaping overrides, vertical writing, and italic faces skip the face map and use a slower extra
+key. Do not intern trusted runs; those stay per-label.
+
+Content-plus-position commits with default zero anchors patch palette x/y only. Non-zero anchors
+still rewrite the fill record because packed anchors are `anchor * run bounds`.
+
 ## Palette row uploads must stay 256-byte aligned when taller than one row
 
 `uploadFloatTextureRanges` stacks contiguous full palette rows into one `texSubImage2D` /

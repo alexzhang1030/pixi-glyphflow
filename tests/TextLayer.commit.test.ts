@@ -63,7 +63,7 @@ describe("TextLayer commit and maintenance", () => {
     ]);
     await layer.commit();
     transforms.consumeDirty();
-    expect(layouts).toBe(3);
+    expect(layouts).toBe(1);
 
     const first = ids[0];
     const third = ids[2];
@@ -71,7 +71,7 @@ describe("TextLayer commit and maintenance", () => {
     layer.updatePositions(new Float64Array([first, third]), new Float32Array([40, 50, 60, 70]));
     await layer.commit();
 
-    expect(layouts).toBe(3);
+    expect(layouts).toBe(1);
     expect(Array.from(transforms.data.subarray(0, 2))).toEqual([40, 50]);
     expect(Array.from(transforms.data.subarray(16, 18))).toEqual([60, 70]);
     // Slot 0 and slot 2 patches sit 48 bytes apart, inside the 256-byte merge gap.
@@ -84,9 +84,20 @@ describe("TextLayer commit and maintenance", () => {
       new Float32Array([80, 90, 100, 110]),
     );
     await layer.commit();
-    expect(layouts).toBe(3);
+    expect(layouts).toBe(1);
     expect(layer.getBoundsFor(first)).toMatchObject({ x: 80, y: 90, width: 8, height: 10 });
     expect(Array.from(transforms.data.subarray(0, 2))).toEqual([80, 90]);
+
+    transforms.consumeDirty();
+    layer.updateTextPositions(
+      new Float64Array([first, third]),
+      "B",
+      new Float32Array([81, 91, 101, 111]),
+    );
+    await layer.commit();
+    expect(layouts).toBe(2);
+    expect(Array.from(transforms.data.subarray(0, 2))).toEqual([81, 91]);
+    expect(transforms.consumeDirty()).toEqual([{ offset: 0, length: 80 }]);
 
     layer.destroy();
   });
@@ -354,7 +365,7 @@ describe("TextLayer commit and maintenance", () => {
     });
     layer.createMany(Array.from({ length: 8 }, (_, index) => ({ text: "A", x: index * 12, y: 0 })));
     await layer.commit();
-    expect(layouts).toBe(8);
+    expect(layouts).toBe(1);
     const queries = layer.stats.cullingQueries;
 
     layer.createMany(
@@ -362,7 +373,7 @@ describe("TextLayer commit and maintenance", () => {
     );
     await layer.commit();
     expect(layer.stats.cullingQueries).toBe(queries);
-    expect(layouts).toBe(12);
+    expect(layouts).toBe(1);
     expect(layer.stats.glyphCount).toBe(12);
     expect(layer.stats.visibleLabelCount).toBe(12);
 
@@ -395,18 +406,18 @@ describe("TextLayer commit and maintenance", () => {
     );
 
     await layer.commit();
-    expect(layouts).toBe(10);
+    expect(layouts).toBe(1);
     expect(layer.stats.glyphCount).toBe(10);
 
     await layer.commit();
-    expect(layouts).toBe(10);
+    expect(layouts).toBe(1);
     expect(layer.stats.glyphCount).toBe(10);
 
     layer.hideAll();
     await layer.commit();
     expect(layer.stats.visibleLabelCount).toBe(0);
     expect(layer.stats.glyphCount).toBe(0);
-    expect(layouts).toBe(10);
+    expect(layouts).toBe(1);
 
     layer.destroy();
   });

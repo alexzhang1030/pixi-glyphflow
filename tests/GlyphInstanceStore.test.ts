@@ -145,6 +145,29 @@ describe("GlyphInstanceStore", () => {
     store.destroy();
   });
 
+  test("rewrites an existing dest range in place when capacity is enough", () => {
+    const store = new GlyphInstanceStore({ initialCapacity: 16 });
+    store.set(1, batch(2, 1));
+    store.set(2, batch(2, 2));
+    const dest = store.getRange(2);
+    expect(dest).toEqual({ offset: 2, count: 2, capacity: 2 });
+    const highWater = store.stats.highWater;
+
+    expect(store.clone(1, 2)).toBe(true);
+    expect(store.getRange(2)).toEqual(dest);
+    expect(store.stats.highWater).toBe(highWater);
+    expect(store.stats.activeInstances).toBe(4);
+    expect(readInstance(store.buffer, 2)).toMatchObject({
+      x: 1,
+      y: 2,
+      paletteIndex: 2,
+      page: 0,
+      active: true,
+    });
+
+    store.destroy();
+  });
+
   test("reuses a leftover hole from a larger power-of-two range", () => {
     const store = new GlyphInstanceStore({ initialCapacity: 16 });
     store.set(1, batch(8, 1));

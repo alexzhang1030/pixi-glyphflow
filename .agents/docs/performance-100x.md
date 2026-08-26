@@ -68,6 +68,15 @@ writes, and remirroring the store.
 - Later creates skip `queryAll`. They enter through the resident dirty path and still appear in
   the same commit.
 - Palette storms upload stacked full texture rows instead of one write per row.
+- Duplicate strings intern one layout result per (family, size, weight, text) and skip
+  `LayoutEngine.layout` for the rest of that commit and later first-seen copies. Font-registry
+  revision drops the intern.
+- `GlyphInstanceStore.clone` rewrites a dest range in place when its capacity already fits, and
+  copies with `copyWithin` instead of allocating two `Uint8Array` views.
+- Broadcast `updateTextPositions` keeps the position-only transform kind when only x/y move, so a
+  content storm with default anchors patches 16 palette bytes instead of rewriting the fill
+  record. Non-zero anchors still take the full palette write because packed anchors include
+  run bounds.
 
 ## Remaining slices, in order
 
@@ -78,6 +87,8 @@ writes, and remirroring the store.
 3. **Admission-side first-seen budget.** A large pan onto fresh text can still hitch on layout
    and raster in one commit. Any budget must finish on-screen labels in that commit and only
    cap off-screen working-set prep. Do not defer texel uploads for glyphs already instanced.
+   Duplicate-string intern removes the per-label layout tax; unique glyphs still raster in the
+   seeing commit.
 
 Reject: drip-feed admission, `queryAll()` for compute-cull, BVH rebuilds on the 100k storm, and
 replacing PixiJS with a compute 2D engine.

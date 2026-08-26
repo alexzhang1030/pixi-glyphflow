@@ -335,10 +335,64 @@ describe("RenderCoordinator", () => {
 
     const first = await coordinator.commit(1, duplicates);
     expect(first).toMatchObject({ stale: false, appliedLabels: 8, glyphs: 16, atlasUploads: 2 });
-    expect(layoutCalls).toBe(8);
+    expect(layoutCalls).toBe(1);
     expect(rasterCalls).toBe(2);
     expect(coordinator.instances.getRange(0)).toEqual({ offset: 0, count: 2, capacity: 2 });
     expect(coordinator.instances.getRange(7)).toEqual({ offset: 14, count: 2, capacity: 2 });
+
+    coordinator.destroy();
+    registry.destroy();
+  });
+
+  test("patches palette x/y for content plus position when anchors stay zero", async () => {
+    const registry = new FontRegistry();
+    await registry.register({ family: "Fixture" });
+    let layoutCalls = 0;
+    const coordinator = new RenderCoordinator({
+      registry,
+      layoutEngine: {
+        layout(_slot, _revision, input) {
+          layoutCalls += 1;
+          return run(input.text);
+        },
+        destroy() {},
+      },
+      glyphProvider: {
+        async rasterize(): Promise<GlyphRaster> {
+          return {
+            mode: "alpha",
+            width: 4,
+            height: 6,
+            pixels: new Uint8Array(24).fill(255),
+            metrics: { bearingX: 0, bearingY: 5, advance: 4 },
+          };
+        },
+        destroy() {},
+      },
+      atlasOptions: { pageWidth: 64, pageHeight: 64, maxBytes: 4_096 },
+      instanceOptions: { initialCapacity: 8 },
+      transformOptions: { initialCapacity: 4, textureWidth: 4 },
+    });
+
+    await coordinator.commit(1, [
+      { slot: 0, mask: CONTENT | TRANSFORM | STYLE, snapshot: label(1, 0, 0, "AB") },
+    ]);
+    coordinator.transforms.consumeDirty();
+    const dest = coordinator.instances.getRange(0);
+
+    const next = await coordinator.commit(2, [
+      {
+        slot: 0,
+        mask: CONTENT | TRANSFORM,
+        snapshot: label(2, 12, 24, "CD"),
+        positionOnly: true,
+      },
+    ]);
+    expect(next).toMatchObject({ stale: false, appliedLabels: 1, glyphs: 2 });
+    expect(layoutCalls).toBe(2);
+    expect(coordinator.instances.getRange(0)).toEqual(dest);
+    expect(coordinator.transforms.consumeDirty()).toEqual([{ offset: 0, length: 16 }]);
+    expect(Array.from(coordinator.transforms.data.subarray(0, 2))).toEqual([12, 24]);
 
     coordinator.destroy();
     registry.destroy();
