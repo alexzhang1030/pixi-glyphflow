@@ -153,12 +153,7 @@ export class SpatialIndex {
    * Place occupied slots at packed origins using one shared local box (zero anchors, unit
    * scale/rotation). Keeps z-index and visibility. @internal
    */
-  placeMany(
-    slots: Uint32Array,
-    count: number,
-    xy: Float32Array,
-    local: BoundsData,
-  ): number {
+  placeMany(slots: Uint32Array, count: number, xy: Float32Array, local: BoundsData): number {
     this.#assertActive();
     if (count <= 0) return 0;
     if (slots.length < count) {

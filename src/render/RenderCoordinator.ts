@@ -654,8 +654,8 @@ export class RenderCoordinator {
   }
 
   /**
-   * Shared-string column: build or reuse one prototype, cloneMany the rest, retain atlas keys
-   * once per unique previous set.
+   * Shared-string column: build or reuse one prototype, cloneMany the rest, retain atlas keys once
+   * per unique previous set.
    */
   #writeInstanceColumn(
     slots: Uint32Array,

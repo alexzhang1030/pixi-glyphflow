@@ -109,9 +109,7 @@ describe("SpatialIndex", () => {
     const slots = new Uint32Array([0, 2, 3]);
     const xy = new Float32Array([10, 20, 30, 40, 50, 60]);
 
-    expect(
-      index.placeMany(slots, 3, xy, { x: 0, y: 0, width: 12, height: 14 }),
-    ).toBe(3);
+    expect(index.placeMany(slots, 3, xy, { x: 0, y: 0, width: 12, height: 14 })).toBe(3);
     expect(index.get(0)).toEqual({ x: 10, y: 20, width: 12, height: 14 });
     expect(index.get(2)).toEqual({ x: 30, y: 40, width: 12, height: 14 });
     expect(index.get(3)).toEqual({ x: 50, y: 60, width: 12, height: 14 });
