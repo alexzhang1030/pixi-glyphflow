@@ -26,6 +26,10 @@ interface FreeRange {
   capacity: number;
 }
 
+interface InstanceBlock {
+  refs: number;
+}
+
 const DEFAULT_CAPACITY = 16;
 const DEFAULT_MAX_CAPACITY = 0x100_0000;
 const ACTIVE_BIT = 0x8000_0000;
@@ -47,6 +51,7 @@ export class GlyphInstanceStore {
   readonly #minimumCapacity: number;
   readonly #maxCapacity: number;
   readonly #ranges = new Map<number, MutableInstanceRange>();
+  readonly #blocks = new Map<number, InstanceBlock>();
   readonly #free = new InstanceFreeList();
   readonly #dirty = new DirtyRanges();
   #segmentEpoch = 0;
@@ -54,8 +59,9 @@ export class GlyphInstanceStore {
   #highWater = 0;
   #activeInstances = 0;
   #buffer: ArrayBuffer;
-  #uint16: Uint16Array;
-  #uint32: Uint32Array;
+  #uint8!: Uint8Array;
+  #uint16!: Uint16Array;
+  #uint32!: Uint32Array;
   #destroyed = false;
 
   constructor(options: GlyphInstanceStoreOptions = {}) {
@@ -70,9 +76,7 @@ export class GlyphInstanceStore {
     this.#maxCapacity = maxCapacity;
     this.#capacity = this.#minimumCapacity;
     this.#buffer = new ArrayBuffer(this.#capacity * GLYPH_INSTANCE_STRIDE);
-    const views = bindInstanceViews(this.#buffer);
-    this.#uint16 = views.uint16;
-    this.#uint32 = views.uint32;
+    this.#bindViews(this.#buffer);
   }
 
   get buffer(): ArrayBuffer {
@@ -107,7 +111,9 @@ export class GlyphInstanceStore {
       return false;
     }
 
-    if (current !== undefined && count <= current.capacity) {
+    if (current !== undefined && this.#shared(current.offset)) {
+      this.#releaseLabelRange(labelId, current);
+    } else if (current !== undefined && count <= current.capacity) {
       const dirtyCount = Math.max(current.count, count);
       this.#activeInstances += count - current.count;
       const metadataChanged = this.#write(current.offset, batch);
@@ -119,9 +125,9 @@ export class GlyphInstanceStore {
         dirtyCount * GLYPH_INSTANCE_STRIDE,
       );
       return true;
+    } else if (current !== undefined) {
+      this.#releaseLabelRange(labelId, current);
     }
-
-    if (current !== undefined) this.#releaseLabelRange(labelId, current);
 
     const capacity = nextPowerOfTwo(count);
     const range = this.#allocateRange(capacity);
@@ -158,19 +164,97 @@ export class GlyphInstanceStore {
     if (sourceId === destId) return false;
     const source = this.#ranges.get(sourceId);
     if (source === undefined || source.count === 0) return false;
-    const count = source.count;
-    const sourceOffset = source.offset;
-    const current = this.#ranges.get(destId);
-    if (current !== undefined) this.#releaseLabelRange(destId, current);
-
-    const range = this.#allocateRange(nextPowerOfTwo(count));
-    this.#copyInstances(sourceOffset, range.offset, count);
-    this.#patchPalette(range.offset, count, destId);
-    range.count = count;
-    this.#ranges.set(destId, range);
-    this.#activeInstances += count;
-    this.#dirty.record(range.offset * GLYPH_INSTANCE_STRIDE, count * GLYPH_INSTANCE_STRIDE);
+    this.#cloneExclusive(source.offset, destId, source.count);
+    this.#segmentEpoch += 1;
     return true;
+  }
+
+  /**
+   * Clone one source range onto a dest column. Dest === source is a success and copies nothing.
+   * Bumps `segmentEpoch` once if any dest was written.
+   */
+  cloneMany(sourceId: number, dests: Uint32Array, count: number): number {
+    this.#assertActive();
+    assertLabelId(sourceId);
+    if (count <= 0) return 0;
+    if (dests.length < count) {
+      throw new TypeError("cloneMany dest list is shorter than count");
+    }
+    const source = this.#ranges.get(sourceId);
+    if (source === undefined || source.count === 0) return 0;
+    const glyphCount = source.count;
+    const sourceOffset = source.offset;
+    let cloned = 0;
+    let wrote = false;
+    for (let index = 0; index < count; index += 1) {
+      const destId = dests[index];
+      if (destId === undefined) {
+        throw new Error("cloneMany dest list is incomplete");
+      }
+      assertLabelId(destId);
+      if (destId === sourceId) {
+        cloned += 1;
+        continue;
+      }
+      this.#cloneExclusive(sourceOffset, destId, glyphCount);
+      cloned += 1;
+      wrote = true;
+    }
+    if (wrote) this.#segmentEpoch += 1;
+    return cloned;
+  }
+
+  /**
+   * Point dest at source's bytes. No copy. Compact/draw writes dest's palette index. Dest ===
+   * source is false.
+   */
+  share(sourceId: number, destId: number): boolean {
+    this.#assertActive();
+    assertLabelId(sourceId);
+    assertLabelId(destId);
+    if (sourceId === destId) return false;
+    const source = this.#ranges.get(sourceId);
+    if (source === undefined || source.count === 0) return false;
+    if (this.#sameBlock(this.#ranges.get(destId), source)) return true;
+    if (this.#shareDest(sourceId, destId)) {
+      this.#segmentEpoch += 1;
+      return true;
+    }
+    return false;
+  }
+
+  /**
+   * Point a dest column at one source range. Dest === source counts as success. Bumps
+   * `segmentEpoch` once if any dest retargeted.
+   */
+  shareMany(sourceId: number, dests: Uint32Array, count: number): number {
+    this.#assertActive();
+    assertLabelId(sourceId);
+    if (count <= 0) return 0;
+    if (dests.length < count) {
+      throw new TypeError("shareMany dest list is shorter than count");
+    }
+    const source = this.#ranges.get(sourceId);
+    if (source === undefined || source.count === 0) return 0;
+    let shared = 0;
+    let retargeted = false;
+    for (let index = 0; index < count; index += 1) {
+      const destId = dests[index];
+      if (destId === undefined) {
+        throw new Error("shareMany dest list is incomplete");
+      }
+      assertLabelId(destId);
+      if (destId === sourceId || this.#sameBlock(this.#ranges.get(destId), source)) {
+        shared += 1;
+        continue;
+      }
+      if (this.#shareDest(sourceId, destId)) {
+        shared += 1;
+        retargeted = true;
+      }
+    }
+    if (retargeted) this.#segmentEpoch += 1;
+    return shared;
   }
 
   consumeDirty(): readonly Readonly<DirtyByteRange>[] {
@@ -187,12 +271,27 @@ export class GlyphInstanceStore {
     this.#assertActive();
     const beforeCapacity = this.#capacity;
     const beforeBytes = this.#buffer.byteLength;
-    const afterCapacity = nextPowerOfTwo(Math.max(this.#minimumCapacity, this.#activeInstances));
+    const remap = new Map<number, number>();
+    const uniqueOffsets = new Set<number>();
+    let packed = 0;
+    for (const range of this.#ranges.values()) {
+      if (uniqueOffsets.has(range.offset)) continue;
+      uniqueOffsets.add(range.offset);
+      packed += range.count;
+    }
+    const afterCapacity = nextPowerOfTwo(Math.max(this.#minimumCapacity, packed));
     const buffer = new ArrayBuffer(afterCapacity * GLYPH_INSTANCE_STRIDE);
     const source = new Uint8Array(this.#buffer);
     const target = new Uint8Array(buffer);
+    const nextBlocks = new Map<number, InstanceBlock>();
     let offset = 0;
     for (const range of this.#ranges.values()) {
+      const existing = remap.get(range.offset);
+      if (existing !== undefined) {
+        range.offset = existing;
+        range.capacity = range.count;
+        continue;
+      }
       const byteLength = range.count * GLYPH_INSTANCE_STRIDE;
       target.set(
         source.subarray(
@@ -201,14 +300,17 @@ export class GlyphInstanceStore {
         ),
         offset * GLYPH_INSTANCE_STRIDE,
       );
+      const block = this.#blocks.get(range.offset);
+      remap.set(range.offset, offset);
+      nextBlocks.set(offset, { refs: block?.refs ?? 1 });
       range.offset = offset;
       range.capacity = range.count;
       offset += range.count;
     }
+    this.#blocks.clear();
+    for (const [key, block] of nextBlocks) this.#blocks.set(key, block);
     this.#buffer = buffer;
-    const views = bindInstanceViews(buffer);
-    this.#uint16 = views.uint16;
-    this.#uint32 = views.uint32;
+    this.#bindViews(buffer);
     this.#capacity = afterCapacity;
     this.#highWater = offset;
     this.#segmentEpoch += 1;
@@ -246,12 +348,11 @@ export class GlyphInstanceStore {
   destroy(): void {
     if (this.#destroyed) return;
     this.#ranges.clear();
+    this.#blocks.clear();
     this.#free.clear();
     this.#dirty.clear();
     this.#buffer = new ArrayBuffer(0);
-    const views = bindInstanceViews(this.#buffer);
-    this.#uint16 = views.uint16;
-    this.#uint32 = views.uint32;
+    this.#bindViews(this.#buffer);
     this.#capacity = 0;
     this.#highWater = 0;
     this.#activeInstances = 0;
@@ -286,9 +387,8 @@ export class GlyphInstanceStore {
 
   #copyInstances(sourceOffset: number, destOffset: number, count: number): void {
     const bytes = count * GLYPH_INSTANCE_STRIDE;
-    new Uint8Array(this.#buffer, destOffset * GLYPH_INSTANCE_STRIDE, bytes).set(
-      new Uint8Array(this.#buffer, sourceOffset * GLYPH_INSTANCE_STRIDE, bytes),
-    );
+    const sourceByte = sourceOffset * GLYPH_INSTANCE_STRIDE;
+    this.#uint8.copyWithin(destOffset * GLYPH_INSTANCE_STRIDE, sourceByte, sourceByte + bytes);
   }
 
   #patchPalette(offset: number, count: number, paletteIndex: number): void {
@@ -334,10 +434,15 @@ export class GlyphInstanceStore {
 
   #allocateRange(capacity: number): MutableInstanceRange {
     const taken = this.#free.take(capacity);
-    if (taken !== undefined) {
-      return { offset: taken.offset, count: 0, capacity };
-    }
+    const range =
+      taken !== undefined
+        ? { offset: taken.offset, count: 0, capacity }
+        : this.#allocateHighWater(capacity);
+    this.#blocks.set(range.offset, { refs: 1 });
+    return range;
+  }
 
+  #allocateHighWater(capacity: number): MutableInstanceRange {
     const required = this.#highWater + capacity;
     this.#ensureCapacity(required);
     const range = { offset: this.#highWater, count: 0, capacity };
@@ -345,15 +450,85 @@ export class GlyphInstanceStore {
     return range;
   }
 
+  #shared(offset: number): boolean {
+    return (this.#blocks.get(offset)?.refs ?? 1) > 1;
+  }
+
+  #sameBlock(range: MutableInstanceRange | undefined, source: MutableInstanceRange): boolean {
+    return range !== undefined && range.offset === source.offset && range.count === source.count;
+  }
+
+  #cloneExclusive(sourceOffset: number, destId: number, glyphCount: number): void {
+    let current = this.#ranges.get(destId);
+    if (current !== undefined && this.#shared(current.offset)) {
+      this.#releaseLabelRange(destId, current);
+      current = undefined;
+    }
+    if (current !== undefined && current.capacity >= glyphCount) {
+      this.#copyInstances(sourceOffset, current.offset, glyphCount);
+      this.#patchPalette(current.offset, glyphCount, destId);
+      if (glyphCount < current.count) {
+        this.#clearMetadata(current.offset + glyphCount, current.count - glyphCount);
+      }
+      this.#activeInstances += glyphCount - current.count;
+      const dirtyCount = Math.max(current.count, glyphCount);
+      current.count = glyphCount;
+      this.#dirty.record(
+        current.offset * GLYPH_INSTANCE_STRIDE,
+        dirtyCount * GLYPH_INSTANCE_STRIDE,
+      );
+      return;
+    }
+    if (current !== undefined) this.#releaseLabelRange(destId, current);
+    const range = this.#allocateRange(nextPowerOfTwo(glyphCount));
+    this.#copyInstances(sourceOffset, range.offset, glyphCount);
+    this.#patchPalette(range.offset, glyphCount, destId);
+    range.count = glyphCount;
+    this.#ranges.set(destId, range);
+    this.#activeInstances += glyphCount;
+    this.#dirty.record(range.offset * GLYPH_INSTANCE_STRIDE, glyphCount * GLYPH_INSTANCE_STRIDE);
+  }
+
+  #shareDest(sourceId: number, destId: number): boolean {
+    const source = this.#ranges.get(sourceId);
+    if (source === undefined || source.count === 0) return false;
+    const block = this.#blocks.get(source.offset);
+    if (block === undefined) return false;
+    const current = this.#ranges.get(destId);
+    if (
+      current !== undefined &&
+      current.offset === source.offset &&
+      current.count === source.count
+    ) {
+      return true;
+    }
+    if (current !== undefined) this.#releaseLabelRange(destId, current);
+    this.#ranges.set(destId, {
+      offset: source.offset,
+      count: source.count,
+      capacity: source.capacity,
+    });
+    block.refs += 1;
+    this.#activeInstances += source.count;
+    return true;
+  }
+
   #releaseRange(range: GlyphInstanceRange): void {
     this.#free.insert(range.offset, range.capacity);
   }
 
   #releaseLabelRange(labelId: number, range: MutableInstanceRange): void {
+    this.#ranges.delete(labelId);
+    this.#activeInstances -= range.count;
+    const block = this.#blocks.get(range.offset);
+    if (block !== undefined && block.refs > 1) {
+      block.refs -= 1;
+      this.#segmentEpoch += 1;
+      return;
+    }
+    this.#blocks.delete(range.offset);
     this.#clearMetadata(range.offset, range.count);
     this.#dirty.record(range.offset * GLYPH_INSTANCE_STRIDE, range.count * GLYPH_INSTANCE_STRIDE);
-    this.#activeInstances -= range.count;
-    this.#ranges.delete(labelId);
     this.#releaseRange(range);
     this.#segmentEpoch += 1;
   }
@@ -367,16 +542,21 @@ export class GlyphInstanceStore {
     while (capacity < required) capacity *= 2;
     capacity = Math.min(capacity, this.#maxCapacity);
     const buffer = new ArrayBuffer(capacity * GLYPH_INSTANCE_STRIDE);
-    new Uint8Array(buffer).set(new Uint8Array(this.#buffer));
+    new Uint8Array(buffer).set(this.#uint8);
     this.#buffer = buffer;
-    const views = bindInstanceViews(buffer);
-    this.#uint16 = views.uint16;
-    this.#uint32 = views.uint32;
+    this.#bindViews(buffer);
     this.#capacity = capacity;
     this.#dirty.clear();
     if (this.#highWater > 0) {
       this.#dirty.record(0, this.#highWater * GLYPH_INSTANCE_STRIDE);
     }
+  }
+
+  #bindViews(buffer: ArrayBuffer): void {
+    const views = bindInstanceViews(buffer);
+    this.#uint8 = views.uint8;
+    this.#uint16 = views.uint16;
+    this.#uint32 = views.uint32;
   }
 
   #assertActive(): void {
@@ -552,10 +732,12 @@ function assertPositiveCapacity(name: string, value: number): void {
 }
 
 function bindInstanceViews(buffer: ArrayBuffer): {
+  readonly uint8: Uint8Array;
   readonly uint16: Uint16Array;
   readonly uint32: Uint32Array;
 } {
   return {
+    uint8: new Uint8Array(buffer),
     uint16: new Uint16Array(buffer),
     uint32: new Uint32Array(buffer),
   };

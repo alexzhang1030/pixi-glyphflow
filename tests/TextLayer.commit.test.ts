@@ -63,7 +63,7 @@ describe("TextLayer commit and maintenance", () => {
     ]);
     await layer.commit();
     transforms.consumeDirty();
-    expect(layouts).toBe(3);
+    expect(layouts).toBe(1);
 
     const first = ids[0];
     const third = ids[2];
@@ -71,7 +71,7 @@ describe("TextLayer commit and maintenance", () => {
     layer.updatePositions(new Float64Array([first, third]), new Float32Array([40, 50, 60, 70]));
     await layer.commit();
 
-    expect(layouts).toBe(3);
+    expect(layouts).toBe(1);
     expect(Array.from(transforms.data.subarray(0, 2))).toEqual([40, 50]);
     expect(Array.from(transforms.data.subarray(16, 18))).toEqual([60, 70]);
     // Slot 0 and slot 2 patches sit 48 bytes apart, inside the 256-byte merge gap.
@@ -84,9 +84,134 @@ describe("TextLayer commit and maintenance", () => {
       new Float32Array([80, 90, 100, 110]),
     );
     await layer.commit();
-    expect(layouts).toBe(3);
+    expect(layouts).toBe(1);
     expect(layer.getBoundsFor(first)).toMatchObject({ x: 80, y: 90, width: 8, height: 10 });
     expect(Array.from(transforms.data.subarray(0, 2))).toEqual([80, 90]);
+
+    transforms.consumeDirty();
+    layer.updateTextPositions(
+      new Float64Array([first, third]),
+      "B",
+      new Float32Array([81, 91, 101, 111]),
+    );
+    await layer.commit();
+    expect(layouts).toBe(2);
+    expect(layer.get(first)).toMatchObject({ text: "B", x: 81, y: 91 });
+    expect(layer.get(third)).toMatchObject({ text: "B", x: 101, y: 111 });
+    expect(Array.from(transforms.data.subarray(0, 2))).toEqual([81, 91]);
+    expect(layer.getBoundsFor(first)).toMatchObject({ x: 81, y: 91, width: 8, height: 10 });
+    expect(transforms.consumeDirty()).toEqual([{ offset: 0, length: 80 }]);
+
+    layer.updateTextPositions(
+      new Float64Array([first, third]),
+      ["C", "D"],
+      new Float32Array([82, 92, 102, 112]),
+    );
+    await layer.commit();
+    expect(layouts).toBe(4);
+    expect(layer.get(first)).toMatchObject({ text: "C", x: 82, y: 92 });
+    expect(layer.get(third)).toMatchObject({ text: "D", x: 102, y: 112 });
+
+    layer.destroy();
+  });
+
+  test("keeps non-zero anchors on the object path during a content storm", async () => {
+    let layouts = 0;
+    const transforms = new TransformPalette({ initialCapacity: 8, textureWidth: 8 });
+    const layer = new TextLayer({
+      renderer: {} as Renderer,
+      rendering: {
+        transforms,
+        layoutEngine: {
+          layout() {
+            layouts += 1;
+            return RUN;
+          },
+          destroy() {},
+        },
+        glyphProvider: {
+          async rasterize() {
+            return alphaRaster();
+          },
+          destroy() {},
+        },
+        atlasOptions: { pageWidth: 32, pageHeight: 32, maxBytes: 4_096 },
+      },
+    });
+    const ids = layer.createMany([
+      { text: "A", x: 1, y: 1, anchor: 0.5 },
+      { text: "A", x: 2, y: 2, anchor: 0.5 },
+    ]);
+    await layer.commit();
+    expect(layouts).toBe(1);
+    const first = ids[0];
+    const second = ids[1];
+    if (first === undefined || second === undefined) throw new Error("Fixture ids missing");
+
+    layer.updateTextPositions(
+      new Float64Array([first, second]),
+      "B",
+      new Float32Array([10, 20, 30, 40]),
+    );
+    await layer.commit();
+    expect(layouts).toBe(2);
+    expect(layer.get(first)).toMatchObject({
+      text: "B",
+      x: 10,
+      y: 20,
+      anchor: { x: 0.5, y: 0.5 },
+    });
+    expect(layer.get(second)).toMatchObject({
+      text: "B",
+      x: 30,
+      y: 40,
+      anchor: { x: 0.5, y: 0.5 },
+    });
+    expect(layer.getBoundsFor(first)).toMatchObject({ x: 6, y: 15, width: 8, height: 10 });
+
+    layer.destroy();
+  });
+
+  test("keeps scaled labels on the object path during a content storm", async () => {
+    let layouts = 0;
+    const layer = new TextLayer({
+      renderer: {} as Renderer,
+      rendering: {
+        layoutEngine: {
+          layout() {
+            layouts += 1;
+            return RUN;
+          },
+          destroy() {},
+        },
+        glyphProvider: {
+          async rasterize() {
+            return alphaRaster();
+          },
+          destroy() {},
+        },
+        atlasOptions: { pageWidth: 32, pageHeight: 32, maxBytes: 4_096 },
+      },
+    });
+    const ids = layer.createMany([
+      { text: "A", x: 1, y: 1, scale: 2 },
+      { text: "A", x: 2, y: 2, scale: 2 },
+    ]);
+    await layer.commit();
+    expect(layouts).toBe(1);
+    const first = ids[0];
+    const second = ids[1];
+    if (first === undefined || second === undefined) throw new Error("Fixture ids missing");
+
+    layer.updateTextPositions(
+      new Float64Array([first, second]),
+      "B",
+      new Float32Array([10, 20, 30, 40]),
+    );
+    await layer.commit();
+    expect(layouts).toBe(2);
+    expect(layer.get(first)).toMatchObject({ text: "B", x: 10, y: 20, scaleX: 2, scaleY: 2 });
+    expect(layer.getBoundsFor(first)).toMatchObject({ x: 10, y: 20, width: 16, height: 20 });
 
     layer.destroy();
   });
@@ -354,7 +479,7 @@ describe("TextLayer commit and maintenance", () => {
     });
     layer.createMany(Array.from({ length: 8 }, (_, index) => ({ text: "A", x: index * 12, y: 0 })));
     await layer.commit();
-    expect(layouts).toBe(8);
+    expect(layouts).toBe(1);
     const queries = layer.stats.cullingQueries;
 
     layer.createMany(
@@ -362,7 +487,7 @@ describe("TextLayer commit and maintenance", () => {
     );
     await layer.commit();
     expect(layer.stats.cullingQueries).toBe(queries);
-    expect(layouts).toBe(12);
+    expect(layouts).toBe(1);
     expect(layer.stats.glyphCount).toBe(12);
     expect(layer.stats.visibleLabelCount).toBe(12);
 
@@ -395,18 +520,84 @@ describe("TextLayer commit and maintenance", () => {
     );
 
     await layer.commit();
-    expect(layouts).toBe(10);
+    expect(layouts).toBe(1);
     expect(layer.stats.glyphCount).toBe(10);
 
     await layer.commit();
-    expect(layouts).toBe(10);
+    expect(layouts).toBe(1);
     expect(layer.stats.glyphCount).toBe(10);
 
     layer.hideAll();
     await layer.commit();
     expect(layer.stats.visibleLabelCount).toBe(0);
     expect(layer.stats.glyphCount).toBe(0);
-    expect(layouts).toBe(10);
+    expect(layouts).toBe(1);
+
+    layer.destroy();
+  });
+
+  test("admits mixed first-seen strings as separate columns", async () => {
+    let layouts = 0;
+    const layer = new TextLayer({
+      renderer: {} as Renderer,
+      rendering: {
+        layoutEngine: {
+          layout(_slot: number, _revision: number, input: { text: string }) {
+            layouts += 1;
+            return { ...RUN, text: input.text };
+          },
+          destroy() {},
+        },
+        glyphProvider: {
+          async rasterize() {
+            return alphaRaster();
+          },
+          destroy() {},
+        },
+        atlasOptions: { pageWidth: 32, pageHeight: 32, maxBytes: 4_096 },
+      },
+    });
+    layer.createMany([
+      ...Array.from({ length: 4 }, (_, index) => ({ text: "A", x: index * 12, y: 0 })),
+      ...Array.from({ length: 4 }, (_, index) => ({ text: "B", x: index * 12, y: 20 })),
+    ]);
+    await layer.commit();
+    expect(layouts).toBe(2);
+    expect(layer.stats.glyphCount).toBe(8);
+    expect(layer.stats.visibleLabelCount).toBe(8);
+
+    layer.destroy();
+  });
+
+  test("keeps scaled first-seen labels on the object path", async () => {
+    let layouts = 0;
+    const layer = new TextLayer({
+      renderer: {} as Renderer,
+      rendering: {
+        layoutEngine: {
+          layout() {
+            layouts += 1;
+            return RUN;
+          },
+          destroy() {},
+        },
+        glyphProvider: {
+          async rasterize() {
+            return alphaRaster();
+          },
+          destroy() {},
+        },
+        atlasOptions: { pageWidth: 32, pageHeight: 32, maxBytes: 4_096 },
+      },
+    });
+    layer.createMany([
+      { text: "A", x: 0, y: 0, scaleX: 2, scaleY: 2 },
+      { text: "A", x: 12, y: 0, scaleX: 2, scaleY: 2 },
+    ]);
+    await layer.commit();
+    expect(layouts).toBe(1);
+    expect(layer.stats.glyphCount).toBe(2);
+    expect(layer.stats.visibleLabelCount).toBe(2);
 
     layer.destroy();
   });

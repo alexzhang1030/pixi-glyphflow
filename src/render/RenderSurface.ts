@@ -54,6 +54,7 @@ interface SurfaceMesh {
 interface DrawSpan {
   readonly offset: number;
   count: number;
+  readonly paletteIndex: number;
 }
 
 interface SegmentWalk {
@@ -520,10 +521,14 @@ export class RenderSurface {
           segments.push(segment);
         }
         const span = segment.spans[segment.spans.length - 1];
-        if (span !== undefined && span.offset + span.count === sourceIndex) {
+        if (
+          span !== undefined &&
+          span.offset + span.count === sourceIndex &&
+          span.paletteIndex === state.slot
+        ) {
           span.count += 1;
         } else {
-          segment.spans.push({ offset: sourceIndex, count: 1 });
+          segment.spans.push({ offset: sourceIndex, count: 1, paletteIndex: state.slot });
         }
         segment.count += 1;
       }
@@ -624,11 +629,17 @@ export class RenderSurface {
           ? current.data
           : new ArrayBuffer(capacity * GLYPH_INSTANCE_STRIDE);
       const target = new Uint8Array(buffer);
+      const words = new Uint32Array(buffer);
       let targetOffset = 0;
       for (const span of segment.spans) {
         const sourceOffset = span.offset * GLYPH_INSTANCE_STRIDE;
         const byteLength = span.count * GLYPH_INSTANCE_STRIDE;
         target.set(bytes.subarray(sourceOffset, sourceOffset + byteLength), targetOffset);
+        const first = targetOffset / Uint32Array.BYTES_PER_ELEMENT;
+        const uintsPerInstance = GLYPH_INSTANCE_STRIDE / Uint32Array.BYTES_PER_ELEMENT;
+        for (let glyph = 0; glyph < span.count; glyph += 1) {
+          words[first + glyph * uintsPerInstance + 4] = span.paletteIndex;
+        }
         targetOffset += byteLength;
       }
       let surface = current;

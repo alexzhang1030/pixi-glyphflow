@@ -27,6 +27,7 @@ import type { BoundsData, MutableBoundsData, PointLike } from "./culling/types";
 import { FontRegistry } from "./FontRegistry";
 import {
   RenderCoordinator,
+  type AdmitLaneGroup,
   type RenderChange,
   type RenderCommitResult,
   type RenderDrawState,
@@ -151,6 +152,7 @@ export class TextLayer extends Container {
   readonly #cullRecordDirtyScratch: DirtyByteRange[] = [];
   #preparedRing: CullViewport | undefined;
   #laneSlots: Uint32Array;
+  #contentSlots: Uint32Array;
   readonly #boundsScratch: MutableBoundsData = { x: 0, y: 0, width: 0, height: 0 };
   // Broadcast mutations reuse one text/style reference across the batch; estimating once
   // per identity pair removes an O(text) scan per label from bulk intake.
@@ -192,6 +194,7 @@ export class TextLayer extends Container {
     this.#dirtySlots = new Uint32Array(this.#store.capacity);
     this.#bulkSlots = new Uint32Array(this.#store.capacity);
     this.#laneSlots = new Uint32Array(this.#store.capacity);
+    this.#contentSlots = new Uint32Array(this.#store.capacity);
     this.#visibleSlots = new Uint32Array(this.#store.capacity);
     this.#visibleMember = new Uint8Array(this.#store.capacity);
     this.#renderedEpochs = new Uint32Array(this.#store.capacity);
@@ -547,14 +550,14 @@ export class TextLayer extends Container {
           const id = ids[index];
           if (id !== undefined) this.#trustedRuns.delete(id as TextId);
         }
-        if (!this.#store.copyBoundsLabelAt(slot, this.#labelScratch)) {
-          throw new Error("Updated label disappeared from its store");
-        }
         const id = ids[index];
         if (id === undefined) throw new Error("Updated label identity is unavailable");
         // Same text and style: keep the last world AABB and slide it. Re-estimating
         // would replace post-layout run bounds with the intake heuristic.
         if (!contentChanged) {
+          if (!this.#store.copyBoundsLabelAt(slot, this.#labelScratch)) {
+            throw new Error("Updated label disappeared from its store");
+          }
           this.#spatial.translate(
             slot,
             this.#labelScratch.x - previousX,
@@ -562,7 +565,19 @@ export class TextLayer extends Container {
           );
           return;
         }
-        this.#reindexCurrentSlot(slot, id as TextId, this.#labelScratch);
+        // Rendered unit-transform labels get run bounds at commit (content lane or
+        // object path). Skip the estimate rehash so a content storm is one spatial walk.
+        if (
+          this.#renderCoordinator === undefined ||
+          this.#renderedEpochs[slot] === 0 ||
+          !this.#store.anchorsZeroAt(slot) ||
+          !this.#store.unitTransformAt(slot)
+        ) {
+          if (!this.#store.copyBoundsLabelAt(slot, this.#labelScratch)) {
+            throw new Error("Updated label disappeared from its store");
+          }
+          this.#reindexCurrentSlot(slot, id as TextId, this.#labelScratch);
+        }
       },
     );
     this.#recordMutation(result.mask, result.changed);
@@ -794,18 +809,27 @@ export class TextLayer extends Container {
     const spatialStart = performance.now();
     let changes: LayerRenderChange[] = [];
     let laneCount = 0;
+    let contentCount = 0;
+    let contentText: string | undefined;
+    let contentStyle: Readonly<TextStyleOptions> | undefined;
+    const admit = createAdmitCollector();
     if (refreshResidency) {
       this.#visibleCount = this.#queryVisible(cullPath, drawViewport);
       this.#visibilityDirty = false;
-      if (coordinator !== undefined) changes = this.#buildRenderChanges(cullPath, drawViewport);
+      if (coordinator !== undefined) {
+        changes = this.#buildRenderChanges(cullPath, drawViewport, admit);
+      }
     } else if (coordinator !== undefined) {
       if (lodScaleChanged) {
-        changes = this.#buildRenderChanges(cullPath, drawViewport);
+        changes = this.#buildRenderChanges(cullPath, drawViewport, admit);
       } else {
         if (hasLabelChanges) {
-          const dirty = this.#buildResidentDirtyChanges();
+          const dirty = this.#buildResidentDirtyChanges(admit);
           changes = dirty.changes;
           laneCount = dirty.laneCount;
+          contentCount = dirty.contentCount;
+          contentText = dirty.contentText;
+          contentStyle = dirty.contentStyle;
         }
         if (
           cameraMoved &&
@@ -814,10 +838,11 @@ export class TextLayer extends Container {
           (this.#preparedRing === undefined ||
             !workingSetContains(this.#preparedRing, drawViewport))
         ) {
-          changes.push(...this.#buildTightFirstSeen());
+          changes.push(...this.#buildTightFirstSeen(admit));
         }
       }
     }
+    const admitGroups = this.#publishAdmitGroups(admit.drafts);
     // Copy the lane at publish time so later intake cannot skew what this revision draws.
     let laneSlots: Uint32Array | undefined;
     let laneXy: Float32Array | undefined;
@@ -826,6 +851,16 @@ export class TextLayer extends Container {
       laneSlots.sort();
       laneXy = new Float32Array(laneCount * 2);
       this.#store.positionsInto(laneSlots, laneCount, laneXy);
+    }
+    let contentSlots: Uint32Array | undefined;
+    let contentXy: Float32Array | undefined;
+    if (contentCount > 0 && contentText !== undefined && contentStyle !== undefined) {
+      contentSlots = this.#contentSlots.slice(0, contentCount);
+      contentSlots.sort();
+      contentXy = new Float32Array(contentCount * 2);
+      this.#store.positionsInto(contentSlots, contentCount, contentXy);
+    } else {
+      contentCount = 0;
     }
     this.#lastSpatialUpdateMs = performance.now() - spatialStart;
     this.#lastLayoutMs = 0;
@@ -837,7 +872,11 @@ export class TextLayer extends Container {
     const needsComputeDispatch = cullPath === "compute-cull";
     if (
       coordinator === undefined ||
-      (changes.length === 0 && laneCount === 0 && !needsComputeDispatch)
+      (changes.length === 0 &&
+        laneCount === 0 &&
+        contentCount === 0 &&
+        admitGroups.length === 0 &&
+        !needsComputeDispatch)
     ) {
       if (this.#visibleCount === 0) this.#renderSurface?.dropIdleMeshes();
       this.#lastCommitDurationMs = performance.now() - start;
@@ -849,7 +888,7 @@ export class TextLayer extends Container {
     }
 
     let renderSequence = 0;
-    if (changes.length > 0) {
+    if (changes.length > 0 || contentCount > 0 || admitGroups.length > 0) {
       if (this.#renderSequence === Number.MAX_SAFE_INTEGER) {
         throw new RangeError("TextLayer render sequence capacity exhausted");
       }
@@ -864,17 +903,46 @@ export class TextLayer extends Container {
         this.#lastInstanceWriteMs = coordinator.stats.lastInstanceWriteMs;
         this.#lastPaletteWriteMs = coordinator.stats.lastPaletteWriteMs;
       }
+      let contentResult: RenderCommitResult | undefined;
+      if (
+        contentSlots !== undefined &&
+        contentXy !== undefined &&
+        contentText !== undefined &&
+        contentStyle !== undefined
+      ) {
+        contentResult = await coordinator.applyContentLane({
+          slots: contentSlots,
+          count: contentCount,
+          xy: contentXy,
+          text: contentText,
+          style: contentStyle,
+        });
+        this.#lastLayoutMs += coordinator.stats.lastLayoutMs;
+        this.#lastInstanceWriteMs += coordinator.stats.lastInstanceWriteMs;
+        this.#lastPaletteWriteMs += coordinator.stats.lastPaletteWriteMs;
+      }
+      let admitResult: RenderCommitResult | undefined;
+      if (admitGroups.length > 0) {
+        admitResult = await coordinator.applyAdmitLane(admitGroups);
+        this.#lastLayoutMs += coordinator.stats.lastLayoutMs;
+        this.#lastInstanceWriteMs += coordinator.stats.lastInstanceWriteMs;
+        this.#lastPaletteWriteMs += coordinator.stats.lastPaletteWriteMs;
+      }
       let laneResult: RenderCommitResult | undefined;
       if (laneSlots !== undefined && laneXy !== undefined) {
         const laneStart = performance.now();
         laneResult = coordinator.applyPositionLane(laneSlots, laneCount, laneXy);
         this.#lastPaletteWriteMs += performance.now() - laneStart;
       }
-      const result = commitResult ?? laneResult;
+      const result = mergeRenderResults(commitResult, contentResult, admitResult, laneResult);
       const spatialWriteStart = performance.now();
       if (commitResult !== undefined) {
         for (const change of changes) {
-          if (change.snapshot === undefined || change.positionOnly === true) continue;
+          if (change.snapshot === undefined) continue;
+          // Position-only movers already slid their AABB at intake. Content-plus-xy
+          // that stayed on the object path (anchors, mixed text, shaping) still
+          // replaced that box with an estimate and must take the laid-out run.
+          if (change.positionOnly === true && (change.mask & TextDirty.Content) === 0) continue;
           const run = coordinator.getRun(change.slot);
           const current = this.#store.snapshotAt(change.slot);
           if (
@@ -894,10 +962,30 @@ export class TextLayer extends Container {
           );
         }
       }
+      if (contentSlots !== undefined && contentXy !== undefined && contentCount > 0) {
+        const contentRun = coordinator.getRun(contentSlots[0] ?? 0);
+        if (contentRun !== undefined) {
+          this.#spatial.placeMany(contentSlots, contentCount, contentXy, contentRun.bounds);
+        }
+      }
+      for (const group of admitGroups) {
+        const admitRun = coordinator.getRun(group.slots[0] ?? 0);
+        if (admitRun !== undefined) {
+          this.#spatial.placeMany(group.slots, group.count, group.xy, admitRun.bounds);
+        }
+      }
       this.#lastSpatialUpdateMs += performance.now() - spatialWriteStart;
       const computeUpdate: RenderComputeCullUpdate | undefined =
         cullPath === "compute-cull"
-          ? this.#buildComputeCullUpdate(coordinator, changes, laneSlots, laneCount, drawViewport)
+          ? this.#buildComputeCullUpdate(
+              coordinator,
+              changes,
+              laneSlots,
+              laneCount,
+              contentSlots,
+              contentCount,
+              drawViewport,
+            )
           : undefined;
       if (result !== undefined) surface?.apply(result, computeUpdate);
       else if (computeUpdate !== undefined) surface?.refreshComputeCull(computeUpdate);
@@ -1170,6 +1258,7 @@ export class TextLayer extends Container {
     this.#renderedEpochs = growTypedArray(this.#renderedEpochs, required);
     this.#bulkSlots = growTypedArray(this.#bulkSlots, required);
     this.#laneSlots = growTypedArray(this.#laneSlots, required);
+    this.#contentSlots = growTypedArray(this.#contentSlots, required);
     if (this.#cullRecordIndex.length < required) {
       const next = new Int32Array(required).fill(-1);
       next.set(this.#cullRecordIndex);
@@ -1229,6 +1318,8 @@ export class TextLayer extends Container {
     changes: readonly LayerRenderChange[],
     laneSlots: Uint32Array | undefined,
     laneCount: number,
+    contentSlots: Uint32Array | undefined,
+    contentCount: number,
     draw: CullViewport | undefined,
   ): RenderComputeCullUpdate {
     const states = coordinator.getDrawStates();
@@ -1247,6 +1338,10 @@ export class TextLayer extends Container {
       if (laneSlots !== undefined && laneCount > 0) {
         const lanePatched = this.#patchLaneCullRecords(coordinator, laneSlots, laneCount);
         if (lanePatched !== undefined) ranges.push(lanePatched);
+      }
+      if (contentSlots !== undefined && contentCount > 0) {
+        const contentPatched = this.#patchLaneCullRecords(coordinator, contentSlots, contentCount);
+        if (contentPatched !== undefined) ranges.push(contentPatched);
       }
       if (states.length > this.#cullRecordCount) {
         ranges.push(this.#appendCullRecords(coordinator, states));
@@ -1310,6 +1405,7 @@ export class TextLayer extends Container {
         maxY: box.y + box.height,
         instanceOffset: range.offset,
         instanceCount: range.count,
+        paletteIndex: state.slot,
       });
       this.#cullRecordSlots[index] = state.slot;
       this.#cullRecordIndex[state.slot] = index;
@@ -1339,6 +1435,7 @@ export class TextLayer extends Container {
         maxY: box.y + box.height,
         instanceOffset: range.offset,
         instanceCount: range.count,
+        paletteIndex: change.slot,
       });
       if (first < 0 || index < first) first = index;
       if (index > last) last = index;
@@ -1373,6 +1470,7 @@ export class TextLayer extends Container {
         maxY: box.y + box.height,
         instanceOffset: range.offset,
         instanceCount: range.count,
+        paletteIndex: slot,
       });
       if (first < 0 || index < first) first = index;
       if (index > last) last = index;
@@ -1412,11 +1510,23 @@ export class TextLayer extends Container {
     return this.#renderSurface?.prepareCullPath() ?? "cpu-grid";
   }
 
-  #buildResidentDirtyChanges(): { changes: LayerRenderChange[]; laneCount: number } {
+  #buildResidentDirtyChanges(admit: AdmitCollector): {
+    changes: LayerRenderChange[];
+    laneCount: number;
+    contentCount: number;
+    contentText: string | undefined;
+    contentStyle: Readonly<TextStyleOptions> | undefined;
+  } {
     const changes: LayerRenderChange[] = [];
     let laneCount = 0;
+    let contentCount = 0;
+    let contentText: string | undefined;
+    let contentStyle: Readonly<TextStyleOptions> | undefined;
+    let contentMixed = false;
     const epoch = this.#renderEpoch;
-    if (epoch === 0) return { changes, laneCount };
+    if (epoch === 0) {
+      return { changes, laneCount, contentCount, contentText, contentStyle };
+    }
     const cullPath = this.#resolveCullPath();
     const draw = this.#drawViewport();
     const ring = draw === undefined ? undefined : expandPrepareRing(draw);
@@ -1443,6 +1553,10 @@ export class TextLayer extends Container {
         const admission = this.#unrenderedAdmission(slot, cullPath, ring, draw);
         if (admission.inResidency) this.#adoptVisibleSlot(slot);
         if (this.#positionOnly[slot] === 1 || !admission.shouldDraw) continue;
+        if (this.#collectAdmit(slot, admit)) {
+          this.#renderedEpochs[slot] = epoch;
+          continue;
+        }
         const change = this.#renderChangeForSlot(
           slot,
           false,
@@ -1460,13 +1574,113 @@ export class TextLayer extends Container {
         laneCount += 1;
         continue;
       }
+      if (!contentMixed && this.#isContentLaneCandidate(slot)) {
+        const text = this.#store.textAt(slot);
+        const style = this.#store.styleAt(slot);
+        if (text === undefined || style === undefined) {
+          contentMixed = true;
+        } else if (contentText === undefined) {
+          contentText = text;
+          contentStyle = style;
+          this.#contentSlots[contentCount] = slot;
+          contentCount += 1;
+          continue;
+        } else if (text === contentText && style === contentStyle) {
+          this.#contentSlots[contentCount] = slot;
+          contentCount += 1;
+          continue;
+        } else {
+          contentMixed = true;
+        }
+      }
       const change = this.#renderChangeForSlot(slot, true);
       if (change !== undefined) changes.push(change);
     }
-    return { changes, laneCount };
+    if (contentMixed && contentCount > 0) {
+      for (let index = 0; index < contentCount; index += 1) {
+        const slot = this.#contentSlots[index];
+        if (slot === undefined) continue;
+        const change = this.#renderChangeForSlot(slot, true);
+        if (change !== undefined) changes.push(change);
+      }
+      return {
+        changes,
+        laneCount,
+        contentCount: 0,
+        contentText: undefined,
+        contentStyle: undefined,
+      };
+    }
+    return { changes, laneCount, contentCount, contentText, contentStyle };
   }
 
-  #buildTightFirstSeen(): LayerRenderChange[] {
+  #isAdmitLaneCandidate(slot: number): boolean {
+    if (!this.#store.admitLaneAt(slot)) return false;
+    const id = this.#store.idAt(slot);
+    if (id === undefined) return false;
+    return !this.#layouts.has(id) && !this.#shaping.has(id) && !this.#trustedRuns.has(id);
+  }
+
+  #collectAdmit(slot: number, admit: AdmitCollector): boolean {
+    if (!this.#isAdmitLaneCandidate(slot)) return false;
+    const text = this.#store.textAt(slot);
+    const style = this.#store.styleAt(slot);
+    if (text === undefined || style === undefined) return false;
+    let byText = admit.byStyle.get(style);
+    if (byText === undefined) {
+      byText = new Map();
+      admit.byStyle.set(style, byText);
+    }
+    let draft = byText.get(text);
+    if (draft === undefined) {
+      draft = { text, style, slots: [] };
+      byText.set(text, draft);
+      admit.drafts.push(draft);
+    }
+    draft.slots.push(slot);
+    return true;
+  }
+
+  #publishAdmitGroups(drafts: readonly AdmitDraft[]): AdmitLaneGroup[] {
+    const groups: AdmitLaneGroup[] = [];
+    for (const draft of drafts) {
+      const count = draft.slots.length;
+      if (count <= 0) continue;
+      const slots = Uint32Array.from(draft.slots);
+      slots.sort();
+      const xy = new Float32Array(count * 2);
+      this.#store.positionsInto(slots, count, xy);
+      const orders = new Uint32Array(count);
+      for (let index = 0; index < count; index += 1) {
+        const slot = slots[index];
+        if (slot === undefined) throw new Error("Admit group slot list is incomplete");
+        const order = this.#spatial.orderOf(slot);
+        if (order === undefined) throw new Error("Admit group order is unavailable");
+        orders[index] = order;
+      }
+      groups.push({
+        slots,
+        count,
+        xy,
+        orders,
+        text: draft.text,
+        style: draft.style,
+      });
+    }
+    return groups;
+  }
+
+  #isContentLaneCandidate(slot: number): boolean {
+    const mask = this.#dirtyMasks[slot] ?? TextDirty.None;
+    if ((mask & TextDirty.Content) === 0 || (mask & TextDirty.Style) !== 0) return false;
+    if ((mask & TextDirty.Transform) !== 0 && this.#positionOnly[slot] !== 1) return false;
+    if (!this.#store.anchorsZeroAt(slot) || !this.#store.unitTransformAt(slot)) return false;
+    const id = this.#store.idAt(slot);
+    if (id === undefined) return false;
+    return !this.#layouts.has(id) && !this.#shaping.has(id) && !this.#trustedRuns.has(id);
+  }
+
+  #buildTightFirstSeen(admit: AdmitCollector): LayerRenderChange[] {
     const draw = this.#drawViewport();
     if (draw === undefined) return [];
     const ring = expandPrepareRing(draw);
@@ -1480,7 +1694,12 @@ export class TextLayer extends Container {
       const slot = this.#bulkSlots[index];
       if (slot === undefined) throw new Error("Tight first-seen slot list is incomplete");
       if (this.#shouldDropLod(slot)) continue;
+      if (epoch !== 0 && this.#renderedEpochs[slot] === epoch) continue;
       if (coordinator?.getRun(slot) !== undefined) continue;
+      if (this.#collectAdmit(slot, admit)) {
+        if (epoch !== 0) this.#renderedEpochs[slot] = epoch;
+        continue;
+      }
       const change = this.#renderChangeForSlot(slot, false, false);
       if (change === undefined) continue;
       if (epoch !== 0) this.#renderedEpochs[slot] = epoch;
@@ -1489,7 +1708,11 @@ export class TextLayer extends Container {
     return changes;
   }
 
-  #buildRenderChanges(cullPath: CullPath, draw: CullViewport | undefined): LayerRenderChange[] {
+  #buildRenderChanges(
+    cullPath: CullPath,
+    draw: CullViewport | undefined,
+    admit: AdmitCollector,
+  ): LayerRenderChange[] {
     let previousEpoch = this.#renderEpoch;
     if (previousEpoch === 0xffff_ffff) {
       this.#renderedEpochs.fill(0);
@@ -1510,6 +1733,7 @@ export class TextLayer extends Container {
       if (!hasRun && !this.#unshapedVisible(slot, cullPath, ring)) continue;
       this.#renderedEpochs[slot] = nextEpoch;
       if (wasRendered && dirtyMask === TextDirty.None) continue;
+      if (!wasRendered && this.#collectAdmit(slot, admit)) continue;
       const change = this.#renderChangeForSlot(slot, wasRendered, hasRun);
       if (change === undefined) throw new Error("Visible label snapshot is unavailable");
       changes.push(change);
@@ -1578,9 +1802,7 @@ export class TextLayer extends Container {
         this.#shaping.get(snapshot.id),
       ),
       ...(trustedRun === undefined ? {} : { trustedRun }),
-      ...(wasRendered && this.#positionOnly[slot] === 1 && mask === TextDirty.Transform
-        ? { positionOnly: true }
-        : {}),
+      ...(wasRendered && this.#positionOnly[slot] === 1 ? { positionOnly: true } : {}),
     };
   }
 
@@ -1740,13 +1962,55 @@ function normalizeLabel(
   return output;
 }
 
+interface AdmitDraft {
+  text: string;
+  style: Readonly<TextStyleOptions>;
+  slots: number[];
+}
+
+interface AdmitCollector {
+  drafts: AdmitDraft[];
+  byStyle: WeakMap<Readonly<TextStyleOptions>, Map<string, AdmitDraft>>;
+}
+
+function createAdmitCollector(): AdmitCollector {
+  return { drafts: [], byStyle: new WeakMap() };
+}
+
+function mergeRenderResults(
+  ...parts: Array<RenderCommitResult | undefined>
+): RenderCommitResult | undefined {
+  let merged: RenderCommitResult | undefined;
+  for (const part of parts) {
+    if (part === undefined) continue;
+    if (merged === undefined) {
+      merged = part;
+      continue;
+    }
+    merged = {
+      revision: part.revision || merged.revision,
+      stale: merged.stale || part.stale,
+      appliedLabels: merged.appliedLabels + part.appliedLabels,
+      glyphs: part.glyphs,
+      atlasUploads: merged.atlasUploads + part.atlasUploads,
+      atlasCommit: {
+        entries: [...merged.atlasCommit.entries, ...part.atlasCommit.entries],
+        uploads: [...merged.atlasCommit.uploads, ...part.atlasCommit.uploads],
+        evictedKeys: [...merged.atlasCommit.evictedKeys, ...part.atlasCommit.evictedKeys],
+      },
+      drawOrderChanged: merged.drawOrderChanged || part.drawOrderChanged,
+    };
+  }
+  return merged;
+}
+
 function toRenderSnapshot(
   snapshot: Readonly<TextStoreSnapshot>,
   order: number,
   layout: Readonly<TextLayoutOptions> | undefined,
   shaping: Readonly<TextShapingOptions> | undefined,
 ): Readonly<RenderLabelSnapshot> {
-  return Object.freeze({
+  return {
     sourceRevision: snapshot.sourceRevision,
     text: snapshot.text,
     x: snapshot.x,
@@ -1764,7 +2028,7 @@ function toRenderSnapshot(
     style: snapshot.style,
     ...(layout === undefined ? {} : { layout }),
     ...(shaping === undefined ? {} : { shaping }),
-  });
+  };
 }
 
 type NormalizedLayoutPatch = Readonly<TextLayoutOptions> | null | undefined;

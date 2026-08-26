@@ -4,6 +4,23 @@
 
 ### Performance
 
+- Duplicate strings intern one layout result per (family, size, weight, text). Later first-seen
+  copies and broadcast `updateTextPositions` skip `LayoutEngine.layout` until the font registry
+  revision changes.
+- `clone` rewrites an existing dest range in place when capacity already fits, and copies instance
+  bytes with `copyWithin`.
+- Broadcast text-plus-position updates keep the position-only transform kind. Labels with default
+  zero anchors patch 16 palette bytes; non-zero anchors still rewrite the fill record.
+- Rendered labels that share one interned text and style skip the per-label snapshot pipeline
+  (`applyContentLane`). One layout, `shareMany` onto one prototype range, then a packed x/y write.
+  Spatial AABBs come from `placeMany` (packed origins plus the shared run box). Object-path
+  content-plus-position commits (mixed text, shaping, non-zero anchors, non-unit scale) still
+  rewrite spatial AABBs from the laid-out run so hit bounds do not stay on the intake estimate.
+- Duplicate strings share one glyph instance block. Compact/draw writes each label's palette
+  index from the cull record. Store `highWater` stays at unique glyphs.
+- First-seen fill-only duplicates skip per-label snapshots (`applyAdmitLane`): one layout per
+  (text, style), a shared prototype range, and a columnar full palette write. Scaled, rotated,
+  anchored, z-indexed, and stroked first-seen labels stay on the object path.
 - Commits with culling off no longer scan every resident through `queryAll` unless membership or
   visibility changed. Clearing a previous viewport still rebuilds the full set.
 - `updateTextPositions` slides spatial AABBs when the text is unchanged, so a text-plus-position

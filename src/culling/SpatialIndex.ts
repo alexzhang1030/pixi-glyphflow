@@ -149,6 +149,43 @@ export class SpatialIndex {
     return changed;
   }
 
+  /**
+   * Place occupied slots at packed origins using one shared local box (zero anchors, unit
+   * scale/rotation). Keeps z-index and visibility. @internal
+   */
+  placeMany(slots: Uint32Array, count: number, xy: Float32Array, local: BoundsData): number {
+    this.#assertActive();
+    if (count <= 0) return 0;
+    if (slots.length < count) {
+      throw new TypeError("Spatial placeMany slot list is shorter than count");
+    }
+    if (xy.length < count * 2) {
+      throw new TypeError("Spatial placeMany xy must contain one packed pair per slot");
+    }
+    assertBounds(local);
+    const localX = local.x;
+    const localY = local.y;
+    const width = local.width;
+    const height = local.height;
+    let placed = 0;
+    for (let index = 0; index < count; index += 1) {
+      const slot = slots[index];
+      if (slot === undefined) {
+        throw new Error("Spatial placeMany slot list is incomplete");
+      }
+      if (slot >= this.#highWater || this.#occupied[slot] !== 1) continue;
+      const originX = xy[index * 2] ?? 0;
+      const originY = xy[index * 2 + 1] ?? 0;
+      this.#minimumX[slot] = originX + localX;
+      this.#minimumY[slot] = originY + localY;
+      this.#maximumX[slot] = originX + localX + width;
+      this.#maximumY[slot] = originY + localY + height;
+      this.#rehash(slot);
+      placed += 1;
+    }
+    return placed;
+  }
+
   translate(slot: number, deltaX: number, deltaY: number): boolean {
     this.#assertActive();
     assertSlot(slot);

@@ -97,6 +97,26 @@ LRU, 52-bit keys, the 48 MiB store (test-pinned, 44.9 MiB measured), the sparse 
    the first residency query no longer flip `visibilityDirty`; the resident dirty path admits
    unrendered slots that belong in the current set. Hide/show/remove/group still refresh. On-screen
    creates still finish in that commit.
+6. **Duplicate-string layout intern and in-place clone — LANDED.** First-seen copies of a known
+   (family, size, weight, text) skip `LayoutEngine.layout`. `clone` keeps a dest range that already
+   fits. Broadcast text-plus-position with zero anchors patches 16 palette bytes. Unique-glyph
+   raster in the seeing commit is unchanged.
+7. **Broadcast content lane — LANDED.** Rendered labels that share one interned (text, style) and
+   zero anchors skip per-label snapshots: `applyContentLane` layouts once, clones in place, and
+   writes packed x/y. Mixed text, shaping, trusted runs, and non-zero anchors stay on the object
+   path.
+8. **Batch clone and spatial place — LANDED.** `cloneMany` copies one prototype onto a dest
+   column and bumps `segmentEpoch` once. `placeMany` writes AABBs from packed x/y plus a shared
+   local box. Content-lane candidates now also require unit scale and zero rotation. Rendered
+   unit-transform storms skip the intake estimate rehash. Wave 1's ≤ 8 ms `dynamic-counters`
+   target still needs a reference M1 Pro artifact before anyone claims the number.
+9. **Shared prototype instance ranges — LANDED.** Duplicate strings point at one instance block.
+   Compute scatter and the CPU compact mesh stamp `paletteIndex` from the cull record / draw
+   span. Store `highWater` tracks unique glyphs; `activeInstances` stays the logical sum.
+10. **First-seen admit lane — LANDED.** Fill-only first-seen duplicates skip per-label snapshots:
+    one layout per (text, style), `shareMany`, `writeFills`, draw-state insert, `placeMany`.
+    Unique-glyph raster in the seeing commit is unchanged. Wave 1's ≤ 8 ms `dynamic-counters`
+    target still needs a reference M1 Pro artifact before anyone claims the number.
 
 **Regressions and traps the audits confirmed:**
 

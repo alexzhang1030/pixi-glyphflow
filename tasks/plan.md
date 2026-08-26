@@ -210,8 +210,9 @@ The 1.1.0 suite already meets the formal million-label frame budgets. The next p
 - Wave 3: stable WebGPU compute compaction and indirect draw are in source for the direct
   natural-order mesh. WebGL 2 and multi-segment meshes keep the CPU grid. Transform storage buffers
   and atlas texture arrays remain follow-up work.
-- Wave 4: TinySDF / prebake / four-channel rect uploads are in source. A per-frame
-  admission budget (not texel deferral) remains.
+- Wave 4: TinySDF / prebake / four-channel rect uploads, duplicate-string layout intern,
+  shared prototype instance ranges, the first-seen admit lane, the broadcast content lane, and
+  spatial `placeMany` are in source. A per-frame admission budget (not texel deferral) remains.
 - Wave 5: optional Slug outline mode, collision, SIMD, SharedArrayBuffer ring.
 
 ### Checkpoint

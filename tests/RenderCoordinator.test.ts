@@ -295,7 +295,7 @@ describe("RenderCoordinator", () => {
     registry.destroy();
   });
 
-  test("clones instance ranges for duplicate strings after the first raster", async () => {
+  test("shares instance ranges for duplicate strings after the first raster", async () => {
     const registry = new FontRegistry();
     await registry.register({ family: "Fixture" });
     let layoutCalls = 0;
@@ -335,10 +335,195 @@ describe("RenderCoordinator", () => {
 
     const first = await coordinator.commit(1, duplicates);
     expect(first).toMatchObject({ stale: false, appliedLabels: 8, glyphs: 16, atlasUploads: 2 });
-    expect(layoutCalls).toBe(8);
+    expect(layoutCalls).toBe(1);
     expect(rasterCalls).toBe(2);
     expect(coordinator.instances.getRange(0)).toEqual({ offset: 0, count: 2, capacity: 2 });
-    expect(coordinator.instances.getRange(7)).toEqual({ offset: 14, count: 2, capacity: 2 });
+    expect(coordinator.instances.getRange(7)).toEqual({ offset: 0, count: 2, capacity: 2 });
+    expect(coordinator.instances.stats.highWater).toBe(2);
+    expect(coordinator.instances.stats.activeInstances).toBe(16);
+
+    coordinator.destroy();
+    registry.destroy();
+  });
+
+  test("patches palette x/y for content plus position when anchors stay zero", async () => {
+    const registry = new FontRegistry();
+    await registry.register({ family: "Fixture" });
+    let layoutCalls = 0;
+    const coordinator = new RenderCoordinator({
+      registry,
+      layoutEngine: {
+        layout(_slot, _revision, input) {
+          layoutCalls += 1;
+          return run(input.text);
+        },
+        destroy() {},
+      },
+      glyphProvider: {
+        async rasterize(): Promise<GlyphRaster> {
+          return {
+            mode: "alpha",
+            width: 4,
+            height: 6,
+            pixels: new Uint8Array(24).fill(255),
+            metrics: { bearingX: 0, bearingY: 5, advance: 4 },
+          };
+        },
+        destroy() {},
+      },
+      atlasOptions: { pageWidth: 64, pageHeight: 64, maxBytes: 4_096 },
+      instanceOptions: { initialCapacity: 8 },
+      transformOptions: { initialCapacity: 4, textureWidth: 4 },
+    });
+
+    await coordinator.commit(1, [
+      { slot: 0, mask: CONTENT | TRANSFORM | STYLE, snapshot: label(1, 0, 0, "AB") },
+    ]);
+    coordinator.transforms.consumeDirty();
+    const dest = coordinator.instances.getRange(0);
+
+    const next = await coordinator.commit(2, [
+      {
+        slot: 0,
+        mask: CONTENT | TRANSFORM,
+        snapshot: label(2, 12, 24, "CD"),
+        positionOnly: true,
+      },
+    ]);
+    expect(next).toMatchObject({ stale: false, appliedLabels: 1, glyphs: 2 });
+    expect(layoutCalls).toBe(2);
+    expect(coordinator.instances.getRange(0)).toEqual(dest);
+    expect(coordinator.transforms.consumeDirty()).toEqual([{ offset: 0, length: 16 }]);
+    expect(Array.from(coordinator.transforms.data.subarray(0, 2))).toEqual([12, 24]);
+
+    coordinator.destroy();
+    registry.destroy();
+  });
+
+  test("applies a broadcast content lane with one layout and a shared prototype", async () => {
+    const registry = new FontRegistry();
+    await registry.register({ family: "Fixture" });
+    let layoutCalls = 0;
+    const coordinator = new RenderCoordinator({
+      registry,
+      layoutEngine: {
+        layout(_slot, _revision, input) {
+          layoutCalls += 1;
+          return run(input.text);
+        },
+        destroy() {},
+      },
+      glyphProvider: {
+        async rasterize(): Promise<GlyphRaster> {
+          return {
+            mode: "alpha",
+            width: 4,
+            height: 6,
+            pixels: new Uint8Array(24).fill(255),
+            metrics: { bearingX: 0, bearingY: 5, advance: 4 },
+          };
+        },
+        destroy() {},
+      },
+      atlasOptions: { pageWidth: 64, pageHeight: 64, maxBytes: 4_096 },
+      instanceOptions: { initialCapacity: 32 },
+      transformOptions: { initialCapacity: 16, textureWidth: 16 },
+    });
+    const firstSeen = Array.from({ length: 8 }, (_, slot) => ({
+      slot,
+      mask: CONTENT | TRANSFORM | STYLE,
+      snapshot: label(1, slot * 10, 0, "AB"),
+    }));
+    await coordinator.commit(1, firstSeen);
+    coordinator.transforms.consumeDirty();
+    const slots = new Uint32Array([0, 1, 2, 3, 4, 5, 6, 7]);
+    const xy = new Float32Array(16);
+    for (let index = 0; index < 8; index += 1) {
+      xy[index * 2] = index;
+      xy[index * 2 + 1] = 1;
+    }
+
+    const next = await coordinator.applyContentLane({
+      slots,
+      count: 8,
+      xy,
+      text: "CD",
+      style: { fontFamily: "Fixture", fontSize: 16, fill: 0xffffff },
+    });
+    expect(next).toMatchObject({ stale: false, appliedLabels: 8, glyphs: 16 });
+    expect(layoutCalls).toBe(2);
+    expect(coordinator.instances.getRange(3)).toEqual(coordinator.instances.getRange(0));
+    expect(coordinator.instances.stats.activeInstances).toBe(16);
+    expect(coordinator.instances.stats.highWater).toBeGreaterThanOrEqual(2);
+    expect(coordinator.transforms.consumeDirty()).toEqual([{ offset: 0, length: 240 }]);
+    expect(Array.from(coordinator.transforms.data.subarray(0, 2))).toEqual([0, 1]);
+
+    coordinator.destroy();
+    registry.destroy();
+  });
+
+  test("admits first-seen duplicates with one layout and shared prototype bytes", async () => {
+    const registry = new FontRegistry();
+    await registry.register({ family: "Fixture" });
+    let layoutCalls = 0;
+    const coordinator = new RenderCoordinator({
+      registry,
+      layoutEngine: {
+        layout(_slot, _revision, input) {
+          layoutCalls += 1;
+          return run(input.text);
+        },
+        destroy() {},
+      },
+      glyphProvider: {
+        async rasterize(): Promise<GlyphRaster> {
+          return {
+            mode: "alpha",
+            width: 4,
+            height: 6,
+            pixels: new Uint8Array(24).fill(255),
+            metrics: { bearingX: 0, bearingY: 5, advance: 4 },
+          };
+        },
+        destroy() {},
+      },
+      atlasOptions: { pageWidth: 64, pageHeight: 64, maxBytes: 4_096 },
+      instanceOptions: { initialCapacity: 32 },
+      transformOptions: { initialCapacity: 16, textureWidth: 16 },
+    });
+    const slots = new Uint32Array([0, 1, 2, 3, 4, 5, 6, 7]);
+    const xy = new Float32Array(16);
+    const orders = new Uint32Array(8);
+    for (let index = 0; index < 8; index += 1) {
+      xy[index * 2] = index * 10;
+      xy[index * 2 + 1] = 0;
+      orders[index] = index;
+    }
+
+    const first = await coordinator.applyAdmitLane([
+      {
+        slots,
+        count: 8,
+        xy,
+        orders,
+        text: "AB",
+        style: { fontFamily: "Fixture", fontSize: 16, fill: 0x336699 },
+      },
+    ]);
+    expect(first).toMatchObject({
+      stale: false,
+      appliedLabels: 8,
+      glyphs: 16,
+      drawOrderChanged: true,
+    });
+    expect(layoutCalls).toBe(1);
+    expect(coordinator.instances.getRange(7)).toEqual({ offset: 0, count: 2, capacity: 2 });
+    expect(coordinator.instances.stats.highWater).toBe(2);
+    expect(coordinator.transforms.stats.activeLabels).toBe(8);
+    expect(Array.from(coordinator.transforms.data.subarray(24, 26))).toEqual([30, 0]);
+    expect(coordinator.transforms.data[30]).toBe(0x336699);
+    expect(coordinator.getDrawStates()).toHaveLength(8);
+    expect(coordinator.getDrawStates()[3]).toMatchObject({ slot: 3, zIndex: 0, order: 3 });
 
     coordinator.destroy();
     registry.destroy();

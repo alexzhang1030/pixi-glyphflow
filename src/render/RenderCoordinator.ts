@@ -90,6 +90,25 @@ export interface RenderCommitResult {
   readonly drawOrderChanged: boolean;
 }
 
+/** Shared-string content storm: one layout, then share + palette x/y for a slot column. */
+export interface ContentLaneInput {
+  readonly slots: Uint32Array;
+  readonly count: number;
+  readonly xy: Float32Array;
+  readonly text: string;
+  readonly style: Readonly<TextStyleOptions>;
+}
+
+/** First-seen fill-only column: one layout, share, full palette write, draw-state insert. */
+export interface AdmitLaneGroup {
+  readonly slots: Uint32Array;
+  readonly count: number;
+  readonly xy: Float32Array;
+  readonly orders: Uint32Array;
+  readonly text: string;
+  readonly style: Readonly<TextStyleOptions>;
+}
+
 export interface RenderDrawState {
   readonly slot: number;
   readonly zIndex: number;
@@ -162,6 +181,12 @@ export class RenderCoordinator {
   #drawListEpoch = 0;
   readonly #ensuredRuns = new Map<Readonly<PositionedRun>, Map<string, Promise<void> | "done">>();
   #ensuredTicket = 0;
+  readonly #registry: FontRegistry;
+  #runsByStyle = new WeakMap<object, Map<string, LayoutResult>>();
+  readonly #runsByFace = new Map<string, Map<number, Map<string, LayoutResult>>>();
+  readonly #runsByExtra = new Map<string, LayoutResult>();
+  readonly #prototypeByRun = new WeakMap<object, number>();
+  #internRevision = -1;
   #lastLayoutMs = 0;
   #lastInstanceWriteMs = 0;
   #lastPaletteWriteMs = 0;
@@ -181,6 +206,7 @@ export class RenderCoordinator {
     this.#ownsAtlas = options.atlas === undefined;
     this.#ownsInstances = options.instances === undefined;
     this.#ownsTransforms = options.transforms === undefined;
+    this.#registry = options.registry;
     this.#tinySdf = options.rasterizerOptions?.tinySdf === true;
   }
 
@@ -209,6 +235,8 @@ export class RenderCoordinator {
     const atlasCommit = this.atlas.commitFrame();
     let appliedLabels = 0;
     let drawOrderChanged = false;
+    let wroteInstances = false;
+    const writeStart = performance.now();
     for (const item of prepared) {
       const { change, run } = item;
       if (change.snapshot === undefined) {
@@ -224,8 +252,8 @@ export class RenderCoordinator {
           appliedLabels += 1;
           continue;
         }
-        this.#runs.delete(change.slot);
         this.#forgetPrototype(change.slot);
+        this.#runs.delete(change.slot);
         this.#releaseSlotKeys(change.slot);
         const instanceStart = performance.now();
         this.instances.remove(change.slot);
@@ -284,43 +312,48 @@ export class RenderCoordinator {
         this.#drawStatesDirty = true;
       }
       const sourceChanged = this.#sourceChanged(change);
-      let paletteStart: number;
       if (sourceChanged) {
         this.#runs.set(change.slot, run);
-        const instanceStart = performance.now();
         this.#writeInstances(change.slot, run, change.snapshot);
-        paletteStart = performance.now();
-        this.#lastInstanceWriteMs += paletteStart - instanceStart;
+        wroteInstances = true;
         this.#shapedLabels += 1;
       } else {
         this.#transformOnlyLabels += 1;
-        paletteStart = performance.now();
       }
-      if (change.positionOnly === true && !sourceChanged) {
-        this.transforms.setPosition(change.slot, change.snapshot.x, change.snapshot.y);
-      } else {
-        this.transforms.set(
-          change.slot,
-          {
-            x: change.snapshot.x,
-            y: change.snapshot.y,
-            scaleX: change.snapshot.scaleX,
-            scaleY: change.snapshot.scaleY,
-            rotation: change.snapshot.rotation,
-            alpha: change.snapshot.alpha,
-            visible: change.snapshot.visible,
-            anchorX: change.snapshot.anchorX,
-            anchorY: change.snapshot.anchorY,
-            fill: change.snapshot.style.fill,
-            stroke: change.snapshot.style.stroke,
-            dropShadow: change.snapshot.style.dropShadow,
-          },
-          run.bounds,
-        );
+      const keepFill =
+        change.positionOnly === true &&
+        change.snapshot.anchorX === 0 &&
+        change.snapshot.anchorY === 0;
+      if (
+        keepFill &&
+        this.transforms.setPosition(change.slot, change.snapshot.x, change.snapshot.y)
+      ) {
+        appliedLabels += 1;
+        continue;
       }
-      this.#lastPaletteWriteMs += performance.now() - paletteStart;
+      this.transforms.set(
+        change.slot,
+        {
+          x: change.snapshot.x,
+          y: change.snapshot.y,
+          scaleX: change.snapshot.scaleX,
+          scaleY: change.snapshot.scaleY,
+          rotation: change.snapshot.rotation,
+          alpha: change.snapshot.alpha,
+          visible: change.snapshot.visible,
+          anchorX: change.snapshot.anchorX,
+          anchorY: change.snapshot.anchorY,
+          fill: change.snapshot.style.fill,
+          stroke: change.snapshot.style.stroke,
+          dropShadow: change.snapshot.style.dropShadow,
+        },
+        run.bounds,
+      );
       appliedLabels += 1;
     }
+    const writeMs = performance.now() - writeStart;
+    if (wroteInstances) this.#lastInstanceWriteMs = writeMs;
+    else this.#lastPaletteWriteMs = writeMs;
     this.#revisions += 1;
     this.#appliedLabels += appliedLabels;
 
@@ -344,6 +377,109 @@ export class RenderCoordinator {
     this.#appliedLabels += count;
 
     return this.#result(0, false, written, EMPTY_ATLAS_COMMIT, false);
+  }
+
+  /**
+   * Broadcast text-plus-position: layout once, share the prototype range, patch palette x/y. Draw
+   * states stay; callers must already have a palette row per slot (rendered labels).
+   */
+  async applyContentLane(input: ContentLaneInput): Promise<Readonly<RenderCommitResult>> {
+    this.#assertActive();
+    if (input.count <= 0) {
+      return this.#result(0, false, 0, EMPTY_ATLAS_COMMIT, false);
+    }
+    if (input.xy.length < input.count * 2) {
+      throw new TypeError("Content lane xy must contain one packed pair per slot");
+    }
+    const ticket = ++this.#ticket;
+    const prepareStart = performance.now();
+    const prepared = await this.#prepareSharedColumn(
+      input.text,
+      input.style,
+      input.slots[0] ?? 0,
+      ticket,
+    );
+    this.#lastLayoutMs = performance.now() - prepareStart;
+    if (prepared === undefined) {
+      this.#staleRevisions += 1;
+      return this.#result(0, true, 0, EMPTY_ATLAS_COMMIT, false);
+    }
+
+    const atlasCommit = this.atlas.commitFrame();
+    const writeStart = performance.now();
+    this.#writeInstanceColumn(input.slots, input.count, prepared.run, prepared.snapshot);
+    this.transforms.writePositions(input.slots, input.count, input.xy);
+    this.#lastInstanceWriteMs = performance.now() - writeStart;
+    this.#shapedLabels += input.count;
+    this.#appliedLabels += input.count;
+    this.#revisions += 1;
+
+    return this.#result(0, false, input.count, atlasCommit, false);
+  }
+
+  /**
+   * First-seen fill-only groups: layout once per (text, style), share the prototype, write full
+   * palette rows, insert zero-z draw states. Callers must place spatial AABBs after this returns.
+   */
+  async applyAdmitLane(groups: readonly AdmitLaneGroup[]): Promise<Readonly<RenderCommitResult>> {
+    this.#assertActive();
+    if (groups.length === 0) {
+      return this.#result(0, false, 0, EMPTY_ATLAS_COMMIT, false);
+    }
+    const ticket = ++this.#ticket;
+    const prepareStart = performance.now();
+    const prepared: Array<{
+      readonly group: AdmitLaneGroup;
+      readonly run: Readonly<PositionedRun>;
+      readonly snapshot: Readonly<RenderLabelSnapshot>;
+    }> = [];
+    for (const group of groups) {
+      if (group.count <= 0) continue;
+      if (group.xy.length < group.count * 2) {
+        throw new TypeError("Admit lane xy must contain one packed pair per slot");
+      }
+      if (group.orders.length < group.count) {
+        throw new TypeError("Admit lane order list is shorter than count");
+      }
+      if (group.slots.length < group.count) {
+        throw new TypeError("Admit lane slot list is shorter than count");
+      }
+      const column = await this.#prepareSharedColumn(
+        group.text,
+        group.style,
+        group.slots[0] ?? 0,
+        ticket,
+      );
+      if (column === undefined) {
+        this.#lastLayoutMs = performance.now() - prepareStart;
+        this.#staleRevisions += 1;
+        return this.#result(0, true, 0, EMPTY_ATLAS_COMMIT, false);
+      }
+      prepared.push({ group, run: column.run, snapshot: column.snapshot });
+    }
+    this.#lastLayoutMs = performance.now() - prepareStart;
+
+    const atlasCommit = this.atlas.commitFrame();
+    const writeStart = performance.now();
+    let applied = 0;
+    let drawOrderChanged = false;
+    for (const item of prepared) {
+      this.#writeInstanceColumn(item.group.slots, item.group.count, item.run, item.snapshot);
+      this.transforms.writeFills(
+        item.group.slots,
+        item.group.count,
+        item.group.xy,
+        item.group.style.fill,
+      );
+      if (this.#admitDrawStates(item.group)) drawOrderChanged = true;
+      applied += item.group.count;
+    }
+    this.#lastInstanceWriteMs = performance.now() - writeStart;
+    this.#shapedLabels += applied;
+    this.#appliedLabels += applied;
+    this.#revisions += 1;
+
+    return this.#result(0, false, applied, atlasCommit, drawOrderChanged);
   }
 
   getRun(slot: number): Readonly<PositionedRun> | undefined {
@@ -398,6 +534,7 @@ export class RenderCoordinator {
     this.#pendingGlyphs.clear();
     this.#prototypeSlots.clear();
     this.#slotPrototypeKeys.clear();
+    this.#clearIntern();
     this.#slotAtlasKeys.clear();
     this.#atlasKeyRefs.clear();
     this.#ensuredRuns.clear();
@@ -457,14 +594,25 @@ export class RenderCoordinator {
     if (change.trustedRun !== undefined) {
       return this.#finishPrepare(change, snapshot, ticket, change.trustedRun);
     }
+    const interned = this.#lookupIntern(snapshot);
+    if (interned !== undefined) {
+      if (isPromise(interned)) {
+        return interned.then((run) => this.#finishPrepare(change, snapshot, ticket, run));
+      }
+      return this.#finishPrepare(change, snapshot, ticket, interned);
+    }
     const laidOut = this.#layout.layout(change.slot, snapshot.sourceRevision, {
       text: snapshot.text,
       style: snapshot.style,
       ...snapshot.layout,
       ...snapshot.shaping,
     });
+    this.#storeIntern(snapshot, laidOut);
     if (isPromise(laidOut)) {
-      return laidOut.then((run) => this.#finishPrepare(change, snapshot, ticket, run));
+      return laidOut.then((run) => {
+        this.#storeIntern(snapshot, run);
+        return this.#finishPrepare(change, snapshot, ticket, run);
+      });
     }
     return this.#finishPrepare(change, snapshot, ticket, laidOut);
   }
@@ -566,21 +714,196 @@ export class RenderCoordinator {
     return promise;
   }
 
+  async #prepareSharedColumn(
+    text: string,
+    style: Readonly<TextStyleOptions>,
+    slotHint: number,
+    ticket: number,
+  ): Promise<
+    | {
+        readonly run: Readonly<PositionedRun>;
+        readonly snapshot: Readonly<RenderLabelSnapshot>;
+      }
+    | undefined
+  > {
+    const snapshot = contentLaneSnapshot(text, style);
+    const interned = this.#lookupIntern(snapshot);
+    let run: Readonly<PositionedRun>;
+    if (interned !== undefined) {
+      run = isPromise(interned) ? await interned : interned;
+    } else {
+      const laidOut = this.#layout.layout(slotHint, 1, { text, style });
+      this.#storeIntern(snapshot, laidOut);
+      run = isPromise(laidOut) ? await laidOut : laidOut;
+      if (isPromise(laidOut)) this.#storeIntern(snapshot, run);
+    }
+    if (ticket !== this.#ticket) return undefined;
+    const missing = this.#ensureMissingGlyphs(run, snapshot);
+    if (missing !== undefined) await missing;
+    if (ticket !== this.#ticket) return undefined;
+    return { run, snapshot };
+  }
+
+  #admitDrawStates(group: AdmitLaneGroup): boolean {
+    let changed = false;
+    for (let index = 0; index < group.count; index += 1) {
+      const slot = group.slots[index];
+      const order = group.orders[index];
+      if (slot === undefined || order === undefined) {
+        throw new Error("Admit lane slot list is incomplete");
+      }
+      const previous = this.#drawStates.get(slot);
+      if (
+        previous !== undefined &&
+        previous.zIndex === 0 &&
+        previous.order === order &&
+        previous.blendMode === "normal"
+      ) {
+        continue;
+      }
+      if (previous === undefined) {
+        if (order < this.#lastAddedOrder || this.#nonZeroZStates > 0) {
+          this.#needsDrawSort = true;
+        }
+        this.#lastAddedOrder = Math.max(this.#lastAddedOrder, order);
+      } else if (previous.zIndex !== 0 || previous.order !== order) {
+        this.#needsDrawSort = true;
+      }
+      this.#drawStates.set(
+        slot,
+        Object.freeze({
+          slot,
+          zIndex: 0,
+          order,
+          blendMode: "normal",
+        }),
+      );
+      changed = true;
+      this.#drawStatesDirty = true;
+    }
+    return changed;
+  }
+
+  /**
+   * Shared-string column: build or reuse one prototype, shareMany the rest, retain atlas keys once
+   * per unique previous set.
+   */
+  #writeInstanceColumn(
+    slots: Uint32Array,
+    count: number,
+    run: Readonly<PositionedRun>,
+    snapshot: Readonly<RenderLabelSnapshot>,
+  ): void {
+    if (count <= 0) return;
+    const key = prototypeKey(run, snapshot);
+    const prototype = this.#prototypeByRun.get(run) ?? this.#prototypeSlots.get(key);
+    const source =
+      prototype !== undefined && this.instances.getRange(prototype) !== undefined
+        ? prototype
+        : undefined;
+    if (source === undefined) {
+      const first = slots[0];
+      if (first === undefined) throw new Error("Content lane slot list is incomplete");
+      this.#runs.set(first, run);
+      this.#writeInstances(first, run, snapshot);
+      if (count === 1) return;
+      if (this.instances.shareMany(first, slots, count) !== count) {
+        for (let index = 1; index < count; index += 1) {
+          const slot = slots[index];
+          if (slot === undefined) throw new Error("Content lane slot list is incomplete");
+          this.#runs.set(slot, run);
+          this.#writeInstances(slot, run, snapshot);
+        }
+        return;
+      }
+      this.#bindInstanceColumn(slots, 1, count, run, key, first);
+      return;
+    }
+    if (this.instances.shareMany(source, slots, count) !== count) {
+      for (let index = 0; index < count; index += 1) {
+        const slot = slots[index];
+        if (slot === undefined) throw new Error("Content lane slot list is incomplete");
+        this.#runs.set(slot, run);
+        this.#writeInstances(slot, run, snapshot);
+      }
+      return;
+    }
+    this.#bindInstanceColumn(slots, 0, count, run, key, source);
+  }
+
+  #bindInstanceColumn(
+    slots: Uint32Array,
+    start: number,
+    count: number,
+    run: Readonly<PositionedRun>,
+    key: string,
+    keySource: number,
+  ): void {
+    const keys = this.#slotAtlasKeys.get(keySource);
+    for (let index = start; index < count; index += 1) {
+      const slot = slots[index];
+      if (slot === undefined) throw new Error("Content lane slot list is incomplete");
+      this.#runs.set(slot, run);
+      this.#rememberPrototype(slot, key, run);
+    }
+    if (keys !== undefined) this.#retainSlotKeysColumn(slots, start, count, keys);
+    else {
+      for (let index = start; index < count; index += 1) {
+        const slot = slots[index];
+        if (slot !== undefined && slot !== keySource) this.#releaseSlotKeys(slot);
+      }
+    }
+  }
+
+  #retainSlotKeysColumn(
+    slots: Uint32Array,
+    start: number,
+    count: number,
+    keys: readonly GlyphCacheKey[],
+  ): void {
+    let extra = 0;
+    const previousSets: Array<readonly GlyphCacheKey[]> = [];
+    for (let index = start; index < count; index += 1) {
+      const slot = slots[index];
+      if (slot === undefined) continue;
+      const previous = this.#slotAtlasKeys.get(slot);
+      if (previous === keys) continue;
+      this.#slotAtlasKeys.set(slot, keys);
+      extra += 1;
+      if (previous !== undefined) previousSets.push(previous);
+    }
+    if (extra > 0) {
+      for (const key of keys) {
+        const held = this.#atlasKeyRefs.get(key) ?? 0;
+        this.#atlasKeyRefs.set(key, held + extra);
+        if (held === 0) this.atlas.pin(key);
+      }
+    }
+    for (const previous of previousSets) this.#releaseKeys(previous);
+  }
+
   #writeInstances(
     slot: number,
     run: Readonly<PositionedRun>,
     snapshot: Readonly<RenderLabelSnapshot>,
   ): void {
     const key = prototypeKey(run, snapshot);
-    const prototype = this.#prototypeSlots.get(key);
-    if (prototype !== undefined && prototype !== slot && this.instances.clone(prototype, slot)) {
+    const runPrototype = this.#prototypeByRun.get(run);
+    const prototype =
+      runPrototype !== undefined && runPrototype !== slot
+        ? runPrototype
+        : this.#prototypeSlots.get(key);
+    if (prototype !== undefined && prototype !== slot && this.instances.share(prototype, slot)) {
       const prototypeKeys = this.#slotAtlasKeys.get(prototype);
-      if (prototypeKeys !== undefined) this.#retainSlotKeys(slot, prototypeKeys);
-      else this.#releaseSlotKeys(slot);
+      if (prototypeKeys !== undefined) {
+        if (this.#slotAtlasKeys.get(slot) !== prototypeKeys) {
+          this.#retainSlotKeys(slot, prototypeKeys);
+        }
+      } else this.#releaseSlotKeys(slot);
     } else {
       this.instances.set(slot, this.#buildInstances(slot, run, snapshot), { skipEquality: true });
     }
-    this.#rememberPrototype(slot, key);
+    this.#rememberPrototype(slot, key, run);
   }
 
   /** Pin the label's atlas entries so eviction cannot reuse rectangles live instances sample. */
@@ -614,21 +937,77 @@ export class RenderCoordinator {
     }
   }
 
-  #rememberPrototype(slot: number, key: string): void {
+  #rememberPrototype(slot: number, key: string, run: Readonly<PositionedRun>): void {
     const previous = this.#slotPrototypeKeys.get(slot);
     if (previous !== undefined && previous !== key && this.#prototypeSlots.get(previous) === slot) {
       this.#prototypeSlots.delete(previous);
     }
     this.#slotPrototypeKeys.set(slot, key);
     if (this.#prototypeSlots.get(key) === undefined) this.#prototypeSlots.set(key, slot);
+    if (this.#prototypeByRun.get(run) === undefined) this.#prototypeByRun.set(run, slot);
   }
 
   #forgetPrototype(slot: number): void {
+    const run = this.#runs.get(slot);
+    if (run !== undefined && this.#prototypeByRun.get(run) === slot) {
+      this.#prototypeByRun.delete(run);
+    }
     const key = this.#slotPrototypeKeys.get(slot);
     this.#slotPrototypeKeys.delete(slot);
     if (key !== undefined && this.#prototypeSlots.get(key) === slot) {
       this.#prototypeSlots.delete(key);
     }
+  }
+
+  #lookupIntern(snapshot: Readonly<RenderLabelSnapshot>): LayoutResult | undefined {
+    this.#syncInternRevision();
+    if (!internUsesFaceMap(snapshot)) return this.#runsByExtra.get(extraInternKey(snapshot));
+    const byStyle = this.#runsByStyle.get(snapshot.style)?.get(snapshot.text);
+    if (byStyle !== undefined) return byStyle;
+    const family = internFamily(snapshot.style.fontFamily);
+    const quant = internFaceQuant(snapshot.style);
+    return this.#runsByFace.get(family)?.get(quant)?.get(snapshot.text);
+  }
+
+  #storeIntern(snapshot: Readonly<RenderLabelSnapshot>, result: LayoutResult): void {
+    this.#syncInternRevision();
+    if (!internUsesFaceMap(snapshot)) {
+      this.#runsByExtra.set(extraInternKey(snapshot), result);
+      return;
+    }
+    let byText = this.#runsByStyle.get(snapshot.style);
+    if (byText === undefined) {
+      byText = new Map();
+      this.#runsByStyle.set(snapshot.style, byText);
+    }
+    byText.set(snapshot.text, result);
+    const family = internFamily(snapshot.style.fontFamily);
+    let byQuant = this.#runsByFace.get(family);
+    if (byQuant === undefined) {
+      byQuant = new Map();
+      this.#runsByFace.set(family, byQuant);
+    }
+    const quant = internFaceQuant(snapshot.style);
+    let byFaceText = byQuant.get(quant);
+    if (byFaceText === undefined) {
+      byFaceText = new Map();
+      byQuant.set(quant, byFaceText);
+    }
+    byFaceText.set(snapshot.text, result);
+  }
+
+  #syncInternRevision(): void {
+    const revision = this.#registry.stats.revision;
+    if (revision === this.#internRevision) return;
+    this.#clearIntern();
+    this.#internRevision = revision;
+  }
+
+  #clearIntern(): void {
+    this.#runsByStyle = new WeakMap();
+    this.#runsByFace.clear();
+    this.#runsByExtra.clear();
+    this.#internRevision = -1;
   }
 
   #buildInstances(
@@ -776,6 +1155,81 @@ class LazyRasterGlyphProvider implements GlyphProviderLike {
 
 function isPromise<T>(value: T | Promise<T>): value is Promise<T> {
   return value instanceof Promise;
+}
+
+function contentLaneSnapshot(
+  text: string,
+  style: Readonly<TextStyleOptions>,
+): Readonly<RenderLabelSnapshot> {
+  return {
+    sourceRevision: 1,
+    text,
+    x: 0,
+    y: 0,
+    scaleX: 1,
+    scaleY: 1,
+    rotation: 0,
+    zIndex: 0,
+    order: 0,
+    blendMode: "normal",
+    alpha: 1,
+    visible: true,
+    anchorX: 0,
+    anchorY: 0,
+    style,
+  };
+}
+
+function internUsesFaceMap(snapshot: Readonly<RenderLabelSnapshot>): boolean {
+  const writingMode = snapshot.layout?.writingMode;
+  if (writingMode !== undefined && writingMode !== "horizontal-tb") return false;
+  if (snapshot.shaping !== undefined) return false;
+  const italic = snapshot.style.fontStyle;
+  if (italic !== undefined && italic !== "normal") return false;
+  const family = snapshot.style.fontFamily;
+  return typeof family === "string" || family === undefined;
+}
+
+function internFamily(family: unknown): string {
+  return typeof family === "string" && family.length > 0 ? family : "Arial";
+}
+
+function internFaceQuant(style: Readonly<TextStyleOptions>): number {
+  return resolveFontSize(style.fontSize) * 1024 + internWeightClass(style.fontWeight);
+}
+
+function internWeightClass(weight: unknown): number {
+  if (typeof weight === "number" && Number.isFinite(weight)) {
+    return Math.max(1, Math.min(1000, Math.round(weight)));
+  }
+  if (weight === "bold") return 700;
+  if (weight === "lighter") return 300;
+  if (weight === "bolder") return 800;
+  return 400;
+}
+
+function extraInternKey(snapshot: Readonly<RenderLabelSnapshot>): string {
+  const shaping = snapshot.shaping;
+  const variations =
+    shaping?.variations === undefined
+      ? ""
+      : Object.entries(shaping.variations)
+          .sort(([left], [right]) => left.localeCompare(right))
+          .map(([axis, value]) => `${axis}=${String(value)}`)
+          .join(",");
+  return [
+    snapshot.text,
+    String(snapshot.style.fontFamily ?? ""),
+    String(resolveFontSize(snapshot.style.fontSize)),
+    String(snapshot.style.fontWeight ?? ""),
+    String(snapshot.style.fontStyle ?? ""),
+    snapshot.layout?.writingMode ?? "",
+    shaping?.direction ?? "",
+    shaping?.language ?? "",
+    shaping?.script ?? "",
+    shaping?.features?.join(",") ?? "",
+    variations,
+  ].join("\0");
 }
 
 function prototypeKey(

@@ -133,6 +133,25 @@ describe("TransformPalette", () => {
     palette.destroy();
   });
 
+  test("occupies a fill-only column from packed x/y without per-slot objects", () => {
+    const palette = new TransformPalette({ initialCapacity: 2, textureWidth: 4 });
+    const slots = new Uint32Array([0, 1, 2, 3, 4, 5, 6, 7]);
+    const xy = new Float32Array(16);
+    for (let index = 0; index < 8; index += 1) {
+      xy[index * 2] = index;
+      xy[index * 2 + 1] = 2;
+    }
+
+    expect(palette.writeFills(slots, 8, xy, 0x336699)).toBe(8);
+    expect(palette.stats.activeLabels).toBe(8);
+    expect(Array.from(palette.data.subarray(24, 28))).toEqual([3, 2, 1, 1]);
+    expect(palette.data[30]).toBe(0x336699);
+    expect(palette.data[31]).toBe(255 + 255 * 256);
+    expect(palette.writeFills(slots, 8, xy, 0x336699)).toBe(0);
+
+    palette.destroy();
+  });
+
   test("grows geometrically and hides removed labels through palette alpha", () => {
     const palette = new TransformPalette({ initialCapacity: 1, textureWidth: 4 });
     const before = palette.data.buffer;

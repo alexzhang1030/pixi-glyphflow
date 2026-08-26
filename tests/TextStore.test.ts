@@ -177,6 +177,34 @@ describe("TextStore", () => {
     store.update(second, { x: 31, rotation: 0.25 });
     expect(store.consumePositionOnly(store.slotOf(second) ?? -1)).toBe(false);
 
+    store.publishDirty();
+    expect(
+      store.updateTextPositions([first, second], "next", new Float32Array([12, 22, 32, 42]))
+        .changed,
+    ).toBe(2);
+    expect(store.consumePositionOnly(store.slotOf(first) ?? -1)).toBe(true);
+    expect(store.consumePositionOnly(store.slotOf(second) ?? -1)).toBe(true);
+
+    store.dispose();
+  });
+
+  test("reads slot identity, text, style, and zero anchors without a snapshot", () => {
+    const store = new TextStore();
+    const id = store.create(label({ x: 4, y: 5 }));
+    const slot = store.slotOf(id);
+    expect(slot).toBeDefined();
+    expect(store.idAt(slot ?? -1)).toBe(id);
+    expect(store.textAt(slot ?? -1)).toBe("label");
+    expect(store.styleAt(slot ?? -1)).toBe(store.get(id)?.style);
+    expect(store.anchorsZeroAt(slot ?? -1)).toBe(true);
+    expect(store.unitTransformAt(slot ?? -1)).toBe(true);
+    expect(store.admitLaneAt(slot ?? -1)).toBe(true);
+    store.update(id, { anchorX: 0.5 });
+    expect(store.anchorsZeroAt(slot ?? -1)).toBe(false);
+    expect(store.admitLaneAt(slot ?? -1)).toBe(false);
+    store.update(id, { scaleX: 2 });
+    expect(store.unitTransformAt(slot ?? -1)).toBe(false);
+    expect(store.admitLaneAt(slot ?? -1)).toBe(false);
     store.dispose();
   });
 

@@ -159,6 +159,53 @@ Do not restore `visibilityDirty` on `create` / `createMany` when a coordinator e
 forces a full resident scan on every admission. Layers without a coordinator still flip the
 flag so `visibleLabelCount` stays honest on the `rendering: false` path.
 
+## Duplicate-string layout intern keys on face plus text
+
+`RenderCoordinator` reuses a layout result for later labels that share family, size, weight, and
+text (or the same interned style object). A font register or unregister bumps
+`FontRegistry.stats.revision` and drops that intern so a new face cannot keep a stale run.
+
+Shaping overrides, vertical writing, and italic faces skip the face map and use a slower extra
+key. Do not intern trusted runs; those stay per-label.
+
+Content-plus-position commits with default zero anchors patch palette x/y only. Non-zero anchors
+still rewrite the fill record because packed anchors are `anchor * run bounds`.
+
+Rendered labels that share one interned (text, style) pair take `applyContentLane` instead of
+per-label snapshots. A mixed-text dirty wave, a shaping/layout/trusted side table, a non-zero
+anchor, or a non-unit scale/rotation forces the object path for the whole content group. Do not
+put first-seen unrendered slots on that lane: they still need a full palette write, which is
+`applyAdmitLane` / `writeFills`, not `writePositions`.
+
+`cloneMany` writes dest ranges from one source and bumps `segmentEpoch` once. Atlas key retain
+adds the column's extra refs in one pass; dests that already share the prototype key array are
+skipped. `placeMany` derives world AABBs from packed x/y plus the shared run box and keeps z and
+visibility. Do not call `spatial.set` per content-lane slot.
+
+Duplicate strings share one instance block. Do not bake dest palette indices into those bytes —
+scatter and the CPU compact mesh write `paletteIndex` from the cull record or draw span (`slot`).
+`set` on a shared dest must copy-on-write. `clone` still copies exclusively; the live path uses
+`share` / `shareMany`. `clone` / `cloneMany` of a dest that already shares must copy-on-write.
+In-place write would patch the prototype palette. A second `share` onto dests that already point
+at the source does not bump `segmentEpoch`. Compact unique offsets once; do not size the packed
+buffer from the logical instance sum.
+
+Rendered unit-transform labels skip the intake estimate rehash on `updateTextPositions` when a
+coordinator will rewrite the box from the run at commit. Unrendered slots, non-zero anchors, and
+scaled or rotated labels still reindex at intake so hit bounds do not wait on a path that may
+not run.
+
+`updateTextPositions` keeps the position-only transform kind even when text changes. After
+layout, rewrite that box from the run: `placeMany` for the shared-string group; the object path
+must still do it when `mask` includes Content. Skipping every `positionOnly` change leaves hit
+bounds stale.
+
+First-seen fill-only labels (visible, z 0, normal blend, alpha 1, unit transform, zero anchors,
+no stroke or trusted run) group by interned (text, style) and take `applyAdmitLane`. Tight
+first-seen must skip a slot already stamped for this commit, or a create-plus-camera frame
+would admit the same slot twice. Scale, rotation, anchors, z-index, and effects stay on the
+object path so `writeFills` does not lie about the fill record.
+
 ## Palette row uploads must stay 256-byte aligned when taller than one row
 
 `uploadFloatTextureRanges` stacks contiguous full palette rows into one `texSubImage2D` /

@@ -145,6 +145,127 @@ describe("GlyphInstanceStore", () => {
     store.destroy();
   });
 
+  test("rewrites an existing dest range in place when capacity is enough", () => {
+    const store = new GlyphInstanceStore({ initialCapacity: 16 });
+    store.set(1, batch(2, 1));
+    store.set(2, batch(2, 2));
+    const dest = store.getRange(2);
+    expect(dest).toEqual({ offset: 2, count: 2, capacity: 2 });
+    const highWater = store.stats.highWater;
+
+    expect(store.clone(1, 2)).toBe(true);
+    expect(store.getRange(2)).toEqual(dest);
+    expect(store.stats.highWater).toBe(highWater);
+    expect(store.stats.activeInstances).toBe(4);
+    expect(readInstance(store.buffer, 2)).toMatchObject({
+      x: 1,
+      y: 2,
+      paletteIndex: 2,
+      page: 0,
+      active: true,
+    });
+
+    store.destroy();
+  });
+
+  test("shares one source range across a dest column without copying", () => {
+    const store = new GlyphInstanceStore({ initialCapacity: 32 });
+    store.set(0, batch(2, 0));
+    const epoch = store.segmentEpoch;
+
+    expect(store.shareMany(0, new Uint32Array([0, 1, 2, 3, 4, 5, 6, 7]), 8)).toBe(8);
+    expect(store.getRange(3)).toEqual({ offset: 0, count: 2, capacity: 2 });
+    expect(store.getRange(7)).toEqual({ offset: 0, count: 2, capacity: 2 });
+    expect(store.stats.highWater).toBe(2);
+    expect(store.stats.activeInstances).toBe(16);
+    expect(store.segmentEpoch).toBeGreaterThan(epoch);
+    expect(readInstance(store.buffer, 0)).toMatchObject({
+      paletteIndex: 0,
+      page: 0,
+      active: true,
+    });
+    expect(store.remove(3)).toBe(true);
+    expect(store.getRange(0)).toEqual({ offset: 0, count: 2, capacity: 2 });
+    expect(store.stats.activeInstances).toBe(14);
+    const heldEpoch = store.segmentEpoch;
+    expect(store.share(0, 1)).toBe(true);
+    expect(store.shareMany(0, new Uint32Array([0, 1, 2, 4, 5, 6, 7]), 7)).toBe(7);
+    expect(store.segmentEpoch).toBe(heldEpoch);
+    expect(store.share(0, 0)).toBe(false);
+    expect(store.shareMany(99, new Uint32Array([1]), 1)).toBe(0);
+
+    store.destroy();
+  });
+
+  test("copy-on-writes a shared dest instead of patching the prototype", () => {
+    const store = new GlyphInstanceStore({ initialCapacity: 16 });
+    store.set(0, batch(2, 0));
+    expect(store.share(0, 1)).toBe(true);
+    expect(store.share(0, 2)).toBe(true);
+
+    expect(store.clone(0, 1)).toBe(true);
+    expect(store.getRange(1)?.offset).not.toBe(store.getRange(0)?.offset);
+    expect(store.getRange(2)).toEqual(store.getRange(0));
+    expect(readInstance(store.buffer, 0)).toMatchObject({ paletteIndex: 0, x: 0 });
+    expect(readInstance(store.buffer, store.getRange(1)?.offset ?? -1)).toMatchObject({
+      paletteIndex: 1,
+      x: 0,
+    });
+
+    expect(store.set(2, batch(2, 2))).toBe(true);
+    expect(store.getRange(2)?.offset).not.toBe(store.getRange(0)?.offset);
+    expect(readInstance(store.buffer, 0)).toMatchObject({ paletteIndex: 0, x: 0 });
+    expect(readInstance(store.buffer, store.getRange(2)?.offset ?? -1)).toMatchObject({
+      paletteIndex: 2,
+      x: 2,
+    });
+
+    store.destroy();
+  });
+
+  test("compacts unique shared offsets once", () => {
+    const store = new GlyphInstanceStore({ initialCapacity: 2 });
+    store.set(0, batch(2, 0));
+    store.set(8, batch(2, 8));
+    expect(store.shareMany(0, new Uint32Array([1, 2, 3, 4, 5, 6, 7]), 7)).toBe(7);
+    expect(store.remove(8)).toBe(true);
+
+    const result = store.compact();
+    expect(result.afterCapacity).toBe(2);
+    expect(store.getRange(0)).toEqual({ offset: 0, count: 2, capacity: 2 });
+    expect(store.getRange(7)).toEqual({ offset: 0, count: 2, capacity: 2 });
+    expect(store.stats.highWater).toBe(2);
+    expect(store.stats.activeInstances).toBe(16);
+
+    store.destroy();
+  });
+
+  test("clones one source onto a dest column in place", () => {
+    const store = new GlyphInstanceStore({ initialCapacity: 32 });
+    store.set(0, batch(2, 0));
+    for (let slot = 1; slot < 8; slot += 1) store.set(slot, batch(2, slot));
+    const dest = store.getRange(3);
+    const highWater = store.stats.highWater;
+    const epoch = store.segmentEpoch;
+
+    expect(store.cloneMany(0, new Uint32Array([0, 1, 2, 3, 4, 5, 6, 7]), 8)).toBe(8);
+    expect(store.getRange(3)).toEqual(dest);
+    expect(store.stats.highWater).toBe(highWater);
+    expect(store.stats.activeInstances).toBe(16);
+    expect(store.segmentEpoch).toBeGreaterThan(epoch);
+    expect(readInstance(store.buffer, dest?.offset ?? 0)).toMatchObject({
+      x: 0,
+      y: 1,
+      paletteIndex: 3,
+      page: 0,
+      active: true,
+    });
+    expect(store.cloneMany(0, new Uint32Array([0]), 1)).toBe(1);
+    expect(store.cloneMany(99, new Uint32Array([1]), 1)).toBe(0);
+
+    store.destroy();
+  });
+
   test("reuses a leftover hole from a larger power-of-two range", () => {
     const store = new GlyphInstanceStore({ initialCapacity: 16 });
     store.set(1, batch(8, 1));

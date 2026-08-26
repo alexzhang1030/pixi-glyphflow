@@ -33,6 +33,9 @@ const FLAG_VISIBLE = 2;
 const FLAG_KIND_SHIFT = 2;
 const FLAG_KIND_MASK = 3;
 const EMPTY_STYLE: Readonly<TextStoreLabel["style"]> = Object.freeze({});
+const F16_ONE = packF16(1);
+const F16_ZERO = packF16(0);
+const BLEND_NORMAL = encodeBlendMode("normal");
 let nextNamespace = 1;
 
 export interface TextStoreOptions {
@@ -172,12 +175,75 @@ export class TextStore {
       return undefined;
     }
 
-    return this.#snapshot(slot, id);
+    return this.#snapshot(slot, id, true);
   }
 
   /** Return the current slot for a layer-local identity. @internal */
   slotOf(id: TextId): number | undefined {
     return this.#resolveSlot(id);
+  }
+
+  /** Layer-local identity for an occupied dense slot. @internal */
+  idAt(slot: number): TextId | undefined {
+    if (slot >= this.#highWater || !this.#occupied(slot)) return undefined;
+    const generation = this.#generations[slot] ?? 1;
+    return (this.#idBase + generation * SLOT_RADIX + slot) as TextId;
+  }
+
+  /** Occupied slot text without a snapshot. @internal */
+  textAt(slot: number): string | undefined {
+    if (slot >= this.#highWater || !this.#occupied(slot)) return undefined;
+    return this.#texts[slot];
+  }
+
+  /** Occupied slot interned style without a snapshot. @internal */
+  styleAt(slot: number): Readonly<TextStoreLabel["style"]> | undefined {
+    if (slot >= this.#highWater || !this.#occupied(slot)) return undefined;
+    return this.#styles[slot];
+  }
+
+  /** True when both anchors decode to zero. @internal */
+  anchorsZeroAt(slot: number): boolean {
+    return (
+      slot < this.#highWater &&
+      this.#occupied(slot) &&
+      this.#anchorX[slot] === F16_ZERO &&
+      this.#anchorY[slot] === F16_ZERO
+    );
+  }
+
+  /** True when scale is 1 and rotation is 0. @internal */
+  unitTransformAt(slot: number): boolean {
+    return (
+      slot < this.#highWater &&
+      this.#occupied(slot) &&
+      this.#scaleX[slot] === F16_ONE &&
+      this.#scaleY[slot] === F16_ONE &&
+      this.#rotation[slot] === F16_ZERO
+    );
+  }
+
+  /**
+   * First-seen / fill-only admit: visible, z 0, normal blend, alpha 1, unit transform, zero
+   * anchors, no stroke or drop shadow.
+   *
+   * @internal
+   */
+  admitLaneAt(slot: number): boolean {
+    if (slot >= this.#highWater || !this.#occupied(slot)) return false;
+    if (!this.#visible(slot) || (this.#zIndex[slot] ?? 0) !== 0) return false;
+    if ((this.#blendModes[slot] ?? 0) !== BLEND_NORMAL) return false;
+    if (this.#alpha[slot] !== F16_ONE) return false;
+    if (this.#anchorX[slot] !== F16_ZERO || this.#anchorY[slot] !== F16_ZERO) return false;
+    if (
+      this.#scaleX[slot] !== F16_ONE ||
+      this.#scaleY[slot] !== F16_ONE ||
+      this.#rotation[slot] !== F16_ZERO
+    ) {
+      return false;
+    }
+    const style = this.#styles[slot];
+    return style !== undefined && style.stroke === undefined && style.dropShadow === undefined;
   }
 
   /** Read the current label occupying a dense slot. @internal */
@@ -191,17 +257,17 @@ export class TextStore {
     const generation = this.#generations[slot] ?? 1;
     const id = (this.#idBase + generation * SLOT_RADIX + slot) as TextId;
 
-    return this.#snapshot(slot, id);
+    return this.#snapshot(slot, id, false);
   }
 
-  #snapshot(slot: number, id: TextId): Readonly<TextStoreSnapshot> {
+  #snapshot(slot: number, id: TextId, freeze: boolean): Readonly<TextStoreSnapshot> {
     const text = this.#texts[slot];
     const style = this.#styles[slot];
     if (text === undefined || style === undefined) {
       throw new Error("TextStore invariant violation: occupied slot is incomplete");
     }
 
-    return Object.freeze({
+    const snapshot = {
       id,
       sourceRevision: this.#sourceRevisions[slot] ?? 1,
       text,
@@ -217,7 +283,8 @@ export class TextStore {
       anchorX: readF16(this.#anchorX, slot),
       anchorY: readF16(this.#anchorY, slot),
       style,
-    });
+    };
+    return freeze ? Object.freeze(snapshot) : snapshot;
   }
 
   has(id: TextId): boolean {
@@ -488,7 +555,7 @@ export class TextStore {
         this.#x[slot] = x;
         this.#y[slot] = y;
         dirty |= TextDirty.Transform;
-        this.#markTransformKind(slot, contentChanged ? FULL_TRANSFORM : POSITION_ONLY);
+        this.#markTransformKind(slot, POSITION_ONLY);
       }
       this.#journal.record(slot, dirty);
       visitor?.(slot, index, contentChanged, previousX, previousY);

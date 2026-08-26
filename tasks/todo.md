@@ -292,6 +292,43 @@
   - Verify: bun test tests/pack.test.ts tests/TextLayer.commit.test.ts tests/culling.test.ts tests/computeCull.test.ts
   - Files: src/render/pack.ts, src/render/RenderSurface.ts, src/TextLayer.ts, src/culling/computeCull.ts
 
+- [x] Task 12.14: First-seen admit lane for fill-only duplicate strings.
+  - Acceptance: Unrendered fill-only labels that share interned (text, style) commit through
+    `applyAdmitLane` with one layout per group, `writeFills`, shared instance ranges, and no
+    per-label snapshots. Scale, rotation, anchors, z-index, stroke, and trusted runs stay on
+    the object path. On-screen labels still appear in that commit. Published budgets stay.
+  - Verify: bun test tests/TransformPalette.test.ts tests/TextStore.test.ts tests/RenderCoordinator.test.ts tests/TextLayer.commit.test.ts
+  - Files: src/render/TransformPalette.ts, src/store/TextStore.ts, src/render/RenderCoordinator.ts, src/TextLayer.ts
+
+- [x] Task 12.13: Share prototype instance ranges for duplicate strings.
+  - Acceptance: `share` / `shareMany` retarget dests at one block; scatter and CPU compact
+    write `paletteIndex` from the record/span; `set` copy-on-writes a shared dest;
+    `highWater` tracks unique glyphs. Published budgets stay.
+  - Verify: bun test tests/GlyphInstanceStore.test.ts tests/computeCull.test.ts tests/RenderCoordinator.test.ts tests/TextLayer.commit.test.ts
+  - Files: src/render/GlyphInstanceStore.ts, src/culling/computeCull.ts, src/culling/computeCull.wgsl.ts, src/render/RenderSurface.ts, src/render/RenderCoordinator.ts, src/TextLayer.ts
+
+- [x] Task 12.12: Batch clone and spatial place for content storms.
+  - Acceptance: `cloneMany` copies one prototype onto a dest column; `placeMany` writes
+    AABBs from packed x/y plus a shared local box; content-lane candidates require unit
+    scale and zero rotation; rendered unit-transform storms skip the intake estimate
+    rehash. Published budgets stay.
+  - Verify: bun test tests/GlyphInstanceStore.test.ts tests/SpatialIndex.test.ts tests/RenderCoordinator.test.ts tests/TextLayer.commit.test.ts tests/TextStore.test.ts
+  - Files: src/render/GlyphInstanceStore.ts, src/culling/SpatialIndex.ts, src/render/RenderCoordinator.ts, src/TextLayer.ts, src/store/TextStore.ts
+
+- [x] Task 12.11: Columnar broadcast content lane for shared-string storms.
+  - Acceptance: Rendered labels that share one interned (text, style) and zero anchors commit
+    through `applyContentLane` with one layout and no per-label snapshots. Mixed text, shaping,
+    trusted runs, and non-zero anchors stay on the object path. Published budgets stay.
+  - Verify: bun test tests/RenderCoordinator.test.ts tests/TextLayer.commit.test.ts tests/TextStore.test.ts
+  - Files: src/render/RenderCoordinator.ts, src/TextLayer.ts, src/store/TextStore.ts
+
+- [x] Task 12.10: Intern duplicate-string layout and clone dest ranges in place.
+  - Acceptance: Shared (family, size, weight, text) labels layout once; `clone` reuses dest
+    capacity; broadcast `updateTextPositions` with zero anchors patches 16 palette bytes.
+    On-screen first-seen labels still finish in that commit. Published budgets stay.
+  - Verify: bun test tests/RenderCoordinator.test.ts tests/GlyphInstanceStore.test.ts tests/TextLayer.commit.test.ts tests/TextStore.test.ts tests/culling.test.ts
+  - Files: src/render/RenderCoordinator.ts, src/render/GlyphInstanceStore.ts, src/store/TextStore.ts, src/TextLayer.ts
+
 - [ ] Task 12.7: Add hybrid glyph generation and upload budgets (Wave 4).
   - Acceptance: Local TinySDF or prebaked pages serve the common set; dynamic MSDF remains the long tail; a per-frame budget gates off-screen label admission, not texel uploads for already-instanced glyphs, without growing the core gzip entry.
   - Verify: bun test tests/glyph-providers.test.ts tests/GlyphAtlas.test.ts && bun run benchmark -- --workload atlas-pressure,multilingual-stream

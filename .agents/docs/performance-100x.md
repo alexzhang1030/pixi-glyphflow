@@ -68,16 +68,42 @@ writes, and remirroring the store.
 - Later creates skip `queryAll`. They enter through the resident dirty path and still appear in
   the same commit.
 - Palette storms upload stacked full texture rows instead of one write per row.
+- Duplicate strings intern one layout result per (family, size, weight, text) and skip
+  `LayoutEngine.layout` for the rest of that commit and later first-seen copies. Font-registry
+  revision drops the intern.
+- `GlyphInstanceStore.clone` rewrites a dest range in place when its capacity already fits, and
+  copies with `copyWithin` instead of allocating two `Uint8Array` views.
+- Broadcast `updateTextPositions` keeps the position-only transform kind when only x/y move, so a
+  content storm with default anchors patches 16 palette bytes instead of rewriting the fill
+  record. Non-zero anchors still take the full palette write because packed anchors include
+  run bounds.
+- Rendered labels that share one interned (text, style) and zero anchors take
+  `applyContentLane`: one layout, in-place clones, columnar x/y. They do not build per-label
+  `RenderChange` snapshots. Shaping, vertical writing, trusted runs, and non-zero anchors stay
+  on the object path.
+- Content-lane instance writes use `shareMany` from one prototype and retain atlas keys in one
+  pass. Spatial AABBs come from `placeMany`: packed x/y plus the shared run box. Rendered
+  unit-transform labels skip the intake estimate rehash. Scale or rotation keeps the object path.
+- Duplicate strings **share** one instance range. `share` / `shareMany` retarget dests at the
+  prototype bytes. Compact and CPU draws write the label's palette index from the cull record or
+  draw span. Eight copies of `"AB"` keep `highWater` at 2. Removing a sharer does not free the
+  block until the last user leaves. A `set` on a shared dest copy-on-writes.
+- First-seen fill-only duplicates take `applyAdmitLane`. One layout per (text, style), `shareMany`,
+  `writeFills` for the full palette row, then draw-state insert. They do not build per-label
+  `RenderChange` snapshots. Scale, rotation, non-zero anchors, z-index, stroke, and trusted runs
+  stay on the object path. Already-rendered storms stay on the content lane (`writePositions`).
 
 ## Remaining slices, in order
 
-1. **Default baked pages.** Known UI alphabets still miss on the first session if no page is
-   supplied and TinySDF has not run. Shipping those pages in the core gzip is rejected.
+1. **Admission-side first-seen budget.** A large pan onto fresh **unique** text can still hitch
+   on layout and raster in one commit. Any budget must finish on-screen labels in that commit
+   and only cap off-screen working-set prep. Do not defer texel uploads for glyphs already
+   instanced. Duplicate-string intern and the admit lane remove the per-label layout and
+   snapshot tax; unique glyphs still raster in the seeing commit.
 2. **Palette storage buffer and atlas texture array.** Wave 3 leftovers. Binding cost, not the
    zoom hitch.
-3. **Admission-side first-seen budget.** A large pan onto fresh text can still hitch on layout
-   and raster in one commit. Any budget must finish on-screen labels in that commit and only
-   cap off-screen working-set prep. Do not defer texel uploads for glyphs already instanced.
+3. **Default baked pages.** Known UI alphabets still miss on the first session if no page is
+   supplied and TinySDF has not run. Shipping those pages in the core gzip is rejected.
 
 Reject: drip-feed admission, `queryAll()` for compute-cull, BVH rebuilds on the 100k storm, and
 replacing PixiJS with a compute 2D engine.
