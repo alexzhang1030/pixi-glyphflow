@@ -24,6 +24,7 @@ import { GlyphMesh } from "./GlyphMesh";
 import {
   allocatePrototypePixels,
   FLOAT_TEXEL_BYTES,
+  packedFloatTexelView,
   paletteUploadRects,
   premultiplyRgba8,
   prototypeByteRange,
@@ -991,7 +992,7 @@ function uploadFloatTextureRanges(
             rect.height,
             resource.format,
             resource.type,
-            data.subarray(rect.texel * 4, (rect.texel + texels) * 4),
+            packedFloatTexelView(data, rect.texel, texels),
           );
           bytes += texels * FLOAT_TEXEL_BYTES;
           writes += 1;
@@ -1007,7 +1008,7 @@ function uploadFloatTextureRanges(
         const texels = rect.width * rect.height;
         renderer.gpu.device.queue.writeTexture(
           { texture, origin: { x: rect.x, y: rect.y, z: 0 } },
-          data.subarray(rect.texel * 4, (rect.texel + texels) * 4),
+          packedFloatTexelView(data, rect.texel, texels),
           { bytesPerRow: rect.width * FLOAT_TEXEL_BYTES, rowsPerImage: rect.height },
           { width: rect.width, height: rect.height, depthOrArrayLayers: 1 },
         );

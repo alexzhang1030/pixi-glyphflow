@@ -19,6 +19,12 @@ A third float is dropped, width becomes 0, and every fetch hits texel 0. Read
 each mesh render. `setPaletteTexture` alone is too early; Pixi overwrites that slot when it
 initializes the new palette texture.
 
+WebGL `texSubImage2D` of an `rgba32float` range must pass a `Float32Array` whose `byteOffset` is
+0. ANGLE / SwiftShader ignore the view offset and read from the start of the underlying buffer.
+A dirty proto upload for store glyph 1 then writes glyph 0 (often cleared, `isActive` false) onto
+the live texel. `packedFloatTexelView` copies the range first. Do not pass `data.subarray(...)`
+straight to `texSubImage2D`.
+
 Do not revert to 32-byte `float32x4` rects to make CI green. Do not bind the 24-byte store as the
 instance buffer: after `share`, `highWater` is unique glyphs and their baked palette is the
 prototype's.

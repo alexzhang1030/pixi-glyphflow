@@ -4,6 +4,7 @@ import {
   allocatePrototypePixels,
   packF16,
   packHalf2x16,
+  packedFloatTexelView,
   paletteUploadRects,
   premultiplyRgba8,
   prototypeByteRange,
@@ -106,6 +107,16 @@ describe("prototype texture pack", () => {
     expect(Number.isFinite(pixels[6])).toBe(true);
     expect(pixels[6]).toBe(0xfffc);
     expect(prototypeByteRange(0, GLYPH_INSTANCE_STRIDE)).toEqual({ offset: 0, length: 32 });
+  });
+
+  test("copies a non-zero-offset float texel view before a WebGL upload", () => {
+    const data = new Float32Array(16);
+    data[8] = 7;
+    data[9] = 8;
+    const view = packedFloatTexelView(data, 2, 2);
+    expect(view.byteOffset).toBe(0);
+    expect([...view.subarray(0, 2)]).toEqual([7, 8]);
+    expect(packedFloatTexelView(data, 0, 2).byteOffset).toBe(0);
   });
 
   test("writes an 8-byte draw record", () => {

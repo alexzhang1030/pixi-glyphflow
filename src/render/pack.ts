@@ -167,6 +167,20 @@ export function allocatePrototypePixels(width: number, height: number): Float32A
 }
 
 /**
+ * WebGL `texSubImage2D` ignores `byteOffset` on a FLOAT `Float32Array` view (ANGLE / SwiftShader
+ * read from the start of the underlying buffer). Copy any non-zero-offset range before upload.
+ */
+export function packedFloatTexelView(
+  data: Float32Array,
+  texel: number,
+  texels: number,
+): Float32Array {
+  const start = texel * 4;
+  const view = data.subarray(start, start + texels * 4);
+  return view.byteOffset === 0 ? view : view.slice();
+}
+
+/**
  * Copy store glyphs into RGBA32F proto texels. Rect stays f16 bit pairs. UV is rewritten as f16
  * pairs so (1, 1) is not 0xFFFFFFFF (NaN). Metadata is two 16-bit integer floats so ACTIVE and
  * raster bits cannot become a GPU-canonicalized NaN.
