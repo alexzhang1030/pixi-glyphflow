@@ -549,14 +549,14 @@ export class TextLayer extends Container {
           const id = ids[index];
           if (id !== undefined) this.#trustedRuns.delete(id as TextId);
         }
-        if (!this.#store.copyBoundsLabelAt(slot, this.#labelScratch)) {
-          throw new Error("Updated label disappeared from its store");
-        }
         const id = ids[index];
         if (id === undefined) throw new Error("Updated label identity is unavailable");
         // Same text and style: keep the last world AABB and slide it. Re-estimating
         // would replace post-layout run bounds with the intake heuristic.
         if (!contentChanged) {
+          if (!this.#store.copyBoundsLabelAt(slot, this.#labelScratch)) {
+            throw new Error("Updated label disappeared from its store");
+          }
           this.#spatial.translate(
             slot,
             this.#labelScratch.x - previousX,
@@ -564,7 +564,19 @@ export class TextLayer extends Container {
           );
           return;
         }
-        this.#reindexCurrentSlot(slot, id as TextId, this.#labelScratch);
+        // Rendered unit-transform labels get run bounds at commit (content lane or
+        // object path). Skip the estimate rehash so a content storm is one spatial walk.
+        if (
+          this.#renderCoordinator === undefined ||
+          this.#renderedEpochs[slot] === 0 ||
+          !this.#store.anchorsZeroAt(slot) ||
+          !this.#store.unitTransformAt(slot)
+        ) {
+          if (!this.#store.copyBoundsLabelAt(slot, this.#labelScratch)) {
+            throw new Error("Updated label disappeared from its store");
+          }
+          this.#reindexCurrentSlot(slot, id as TextId, this.#labelScratch);
+        }
       },
     );
     this.#recordMutation(result.mask, result.changed);
@@ -934,22 +946,10 @@ export class TextLayer extends Container {
           );
         }
       }
-      if (contentSlots !== undefined && contentCount > 0) {
+      if (contentSlots !== undefined && contentXy !== undefined && contentCount > 0) {
         const contentRun = coordinator.getRun(contentSlots[0] ?? 0);
         if (contentRun !== undefined) {
-          for (let index = 0; index < contentCount; index += 1) {
-            const slot = contentSlots[index];
-            if (slot === undefined) continue;
-            if (!this.#store.copyBoundsLabelAt(slot, this.#labelScratch)) continue;
-            const id = this.#store.idAt(slot);
-            if (id === undefined) continue;
-            this.#spatial.set(
-              slot,
-              transformedLabelBounds(this.#labelScratch, contentRun.bounds, this.#boundsScratch),
-              this.#labelScratch.zIndex,
-              this.#isEffectivelyVisible(id, this.#labelScratch.visible),
-            );
-          }
+          this.#spatial.placeMany(contentSlots, contentCount, contentXy, contentRun.bounds);
         }
       }
       this.#lastSpatialUpdateMs += performance.now() - spatialWriteStart;
@@ -1589,7 +1589,7 @@ export class TextLayer extends Container {
     const mask = this.#dirtyMasks[slot] ?? TextDirty.None;
     if ((mask & TextDirty.Content) === 0 || (mask & TextDirty.Style) !== 0) return false;
     if ((mask & TextDirty.Transform) !== 0 && this.#positionOnly[slot] !== 1) return false;
-    if (!this.#store.anchorsZeroAt(slot)) return false;
+    if (!this.#store.anchorsZeroAt(slot) || !this.#store.unitTransformAt(slot)) return false;
     const id = this.#store.idAt(slot);
     if (id === undefined) return false;
     return !this.#layouts.has(id) && !this.#shaping.has(id) && !this.#trustedRuns.has(id);

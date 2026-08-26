@@ -172,14 +172,24 @@ Content-plus-position commits with default zero anchors patch palette x/y only. 
 still rewrite the fill record because packed anchors are `anchor * run bounds`.
 
 Rendered labels that share one interned (text, style) pair take `applyContentLane` instead of
-per-label snapshots. A mixed-text dirty wave, a shaping/layout/trusted side table, or a non-zero
-anchor forces the object path for the whole content group. Do not put first-seen unrendered
-slots on that lane: they still need a full palette `set`.
+per-label snapshots. A mixed-text dirty wave, a shaping/layout/trusted side table, a non-zero
+anchor, or a non-unit scale/rotation forces the object path for the whole content group. Do not
+put first-seen unrendered slots on that lane: they still need a full palette `set`.
 
-`updateTextPositions` keeps the position-only transform kind even when text changes. Intake then
-writes an estimate AABB. After layout, rewrite that box from the run: the content lane does it
-for the shared-string group; the object path must still do it when `mask` includes Content.
-Skipping every `positionOnly` change leaves hit bounds on the estimate forever.
+`cloneMany` writes dest ranges from one source and bumps `segmentEpoch` once. Atlas key retain
+adds the column's extra refs in one pass; dests that already share the prototype key array are
+skipped. `placeMany` derives world AABBs from packed x/y plus the shared run box and keeps z and
+visibility. Do not call `spatial.set` per content-lane slot.
+
+Rendered unit-transform labels skip the intake estimate rehash on `updateTextPositions` when a
+coordinator will rewrite the box from the run at commit. Unrendered slots, non-zero anchors, and
+scaled or rotated labels still reindex at intake so hit bounds do not wait on a path that may
+not run.
+
+`updateTextPositions` keeps the position-only transform kind even when text changes. After
+layout, rewrite that box from the run: `placeMany` for the shared-string group; the object path
+must still do it when `mask` includes Content. Skipping every `positionOnly` change leaves hit
+bounds stale.
 
 ## Palette row uploads must stay 256-byte aligned when taller than one row
 

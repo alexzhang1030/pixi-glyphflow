@@ -105,6 +105,11 @@ LRU, 52-bit keys, the 48 MiB store (test-pinned, 44.9 MiB measured), the sparse 
    zero anchors skip per-label snapshots: `applyContentLane` layouts once, clones in place, and
    writes packed x/y. Mixed text, shaping, trusted runs, and non-zero anchors stay on the object
    path.
+8. **Batch clone and spatial place — LANDED.** `cloneMany` copies one prototype onto a dest
+   column and bumps `segmentEpoch` once. `placeMany` writes AABBs from packed x/y plus a shared
+   local box. Content-lane candidates now also require unit scale and zero rotation. Rendered
+   unit-transform storms skip the intake estimate rehash. Wave 1's ≤ 8 ms `dynamic-counters`
+   target still needs a reference M1 Pro artifact before anyone claims the number.
 
 **Regressions and traps the audits confirmed:**
 

@@ -99,6 +99,7 @@ describe("TextLayer commit and maintenance", () => {
     expect(layer.get(first)).toMatchObject({ text: "B", x: 81, y: 91 });
     expect(layer.get(third)).toMatchObject({ text: "B", x: 101, y: 111 });
     expect(Array.from(transforms.data.subarray(0, 2))).toEqual([81, 91]);
+    expect(layer.getBoundsFor(first)).toMatchObject({ x: 81, y: 91, width: 8, height: 10 });
     expect(transforms.consumeDirty()).toEqual([{ offset: 0, length: 80 }]);
 
     layer.updateTextPositions(
@@ -167,6 +168,50 @@ describe("TextLayer commit and maintenance", () => {
       anchor: { x: 0.5, y: 0.5 },
     });
     expect(layer.getBoundsFor(first)).toMatchObject({ x: 6, y: 15, width: 8, height: 10 });
+
+    layer.destroy();
+  });
+
+  test("keeps scaled labels on the object path during a content storm", async () => {
+    let layouts = 0;
+    const layer = new TextLayer({
+      renderer: {} as Renderer,
+      rendering: {
+        layoutEngine: {
+          layout() {
+            layouts += 1;
+            return RUN;
+          },
+          destroy() {},
+        },
+        glyphProvider: {
+          async rasterize() {
+            return alphaRaster();
+          },
+          destroy() {},
+        },
+        atlasOptions: { pageWidth: 32, pageHeight: 32, maxBytes: 4_096 },
+      },
+    });
+    const ids = layer.createMany([
+      { text: "A", x: 1, y: 1, scale: 2 },
+      { text: "A", x: 2, y: 2, scale: 2 },
+    ]);
+    await layer.commit();
+    expect(layouts).toBe(1);
+    const first = ids[0];
+    const second = ids[1];
+    if (first === undefined || second === undefined) throw new Error("Fixture ids missing");
+
+    layer.updateTextPositions(
+      new Float64Array([first, second]),
+      "B",
+      new Float32Array([10, 20, 30, 40]),
+    );
+    await layer.commit();
+    expect(layouts).toBe(2);
+    expect(layer.get(first)).toMatchObject({ text: "B", x: 10, y: 20, scaleX: 2, scaleY: 2 });
+    expect(layer.getBoundsFor(first)).toMatchObject({ x: 10, y: 20, width: 16, height: 20 });
 
     layer.destroy();
   });

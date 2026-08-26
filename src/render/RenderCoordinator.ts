@@ -411,12 +411,7 @@ export class RenderCoordinator {
 
     const atlasCommit = this.atlas.commitFrame();
     const writeStart = performance.now();
-    for (let index = 0; index < input.count; index += 1) {
-      const slot = input.slots[index];
-      if (slot === undefined) throw new Error("Content lane slot list is incomplete");
-      this.#runs.set(slot, run);
-      this.#writeInstances(slot, run, snapshot);
-    }
+    this.#writeInstanceColumn(input.slots, input.count, run, snapshot);
     this.transforms.writePositions(input.slots, input.count, input.xy);
     this.#lastInstanceWriteMs = performance.now() - writeStart;
     this.#shapedLabels += input.count;
@@ -656,6 +651,104 @@ export class RenderCoordinator {
       });
     this.#pendingGlyphs.set(key, promise);
     return promise;
+  }
+
+  /**
+   * Shared-string column: build or reuse one prototype, cloneMany the rest, retain atlas keys
+   * once per unique previous set.
+   */
+  #writeInstanceColumn(
+    slots: Uint32Array,
+    count: number,
+    run: Readonly<PositionedRun>,
+    snapshot: Readonly<RenderLabelSnapshot>,
+  ): void {
+    if (count <= 0) return;
+    const key = prototypeKey(run, snapshot);
+    const prototype = this.#prototypeByRun.get(run) ?? this.#prototypeSlots.get(key);
+    const source =
+      prototype !== undefined && this.instances.getRange(prototype) !== undefined
+        ? prototype
+        : undefined;
+    if (source === undefined) {
+      const first = slots[0];
+      if (first === undefined) throw new Error("Content lane slot list is incomplete");
+      this.#runs.set(first, run);
+      this.#writeInstances(first, run, snapshot);
+      if (count === 1) return;
+      if (this.instances.cloneMany(first, slots, count) !== count) {
+        for (let index = 1; index < count; index += 1) {
+          const slot = slots[index];
+          if (slot === undefined) throw new Error("Content lane slot list is incomplete");
+          this.#runs.set(slot, run);
+          this.#writeInstances(slot, run, snapshot);
+        }
+        return;
+      }
+      this.#bindInstanceColumn(slots, 1, count, run, key, first);
+      return;
+    }
+    if (this.instances.cloneMany(source, slots, count) !== count) {
+      for (let index = 0; index < count; index += 1) {
+        const slot = slots[index];
+        if (slot === undefined) throw new Error("Content lane slot list is incomplete");
+        this.#runs.set(slot, run);
+        this.#writeInstances(slot, run, snapshot);
+      }
+      return;
+    }
+    this.#bindInstanceColumn(slots, 0, count, run, key, source);
+  }
+
+  #bindInstanceColumn(
+    slots: Uint32Array,
+    start: number,
+    count: number,
+    run: Readonly<PositionedRun>,
+    key: string,
+    keySource: number,
+  ): void {
+    const keys = this.#slotAtlasKeys.get(keySource);
+    for (let index = start; index < count; index += 1) {
+      const slot = slots[index];
+      if (slot === undefined) throw new Error("Content lane slot list is incomplete");
+      this.#runs.set(slot, run);
+      this.#rememberPrototype(slot, key, run);
+    }
+    if (keys !== undefined) this.#retainSlotKeysColumn(slots, start, count, keys);
+    else {
+      for (let index = start; index < count; index += 1) {
+        const slot = slots[index];
+        if (slot !== undefined && slot !== keySource) this.#releaseSlotKeys(slot);
+      }
+    }
+  }
+
+  #retainSlotKeysColumn(
+    slots: Uint32Array,
+    start: number,
+    count: number,
+    keys: readonly GlyphCacheKey[],
+  ): void {
+    let extra = 0;
+    const previousSets: Array<readonly GlyphCacheKey[]> = [];
+    for (let index = start; index < count; index += 1) {
+      const slot = slots[index];
+      if (slot === undefined) continue;
+      const previous = this.#slotAtlasKeys.get(slot);
+      if (previous === keys) continue;
+      this.#slotAtlasKeys.set(slot, keys);
+      extra += 1;
+      if (previous !== undefined) previousSets.push(previous);
+    }
+    if (extra > 0) {
+      for (const key of keys) {
+        const held = this.#atlasKeyRefs.get(key) ?? 0;
+        this.#atlasKeyRefs.set(key, held + extra);
+        if (held === 0) this.atlas.pin(key);
+      }
+    }
+    for (const previous of previousSets) this.#releaseKeys(previous);
   }
 
   #writeInstances(

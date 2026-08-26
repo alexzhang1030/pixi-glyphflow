@@ -115,8 +115,9 @@ storage budgets stay until a human accepts new numbers.
   instance storage larger than the 128 MiB WebGPU default.
 - Reuse styles and fonts to maximize shaping and layout cache hits. Duplicate strings intern one
   layout result per (family, size, weight, text). Broadcast `updateTextPositions` with default
-  anchors uses a columnar content lane: one layout, in-place clones, packed x/y. Non-zero
-  anchors, shaping overrides, and trusted runs stay on the object path.
+  anchors uses a columnar content lane: one layout, `cloneMany`, packed x/y, and `placeMany`
+  AABBs from the shared run box. Non-zero anchors, non-unit scale, shaping overrides, and
+  trusted runs stay on the object path.
 - Set an atlas ceiling that matches the product glyph working set.
 - Compute-cull layouts first-seen labels in the tight draw view plus a 0.25-viewport ring. The
   expanded working set is residency slack, not a prepare batch. Known strings hit the shape cache

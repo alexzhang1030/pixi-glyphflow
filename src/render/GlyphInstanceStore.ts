@@ -188,6 +188,66 @@ export class GlyphInstanceStore {
     return true;
   }
 
+  /**
+   * Clone one source range onto a dest column. Dest === source is a success and copies nothing.
+   * Bumps `segmentEpoch` once if any dest was written.
+   */
+  cloneMany(sourceId: number, dests: Uint32Array, count: number): number {
+    this.#assertActive();
+    assertLabelId(sourceId);
+    if (count <= 0) return 0;
+    if (dests.length < count) {
+      throw new TypeError("cloneMany dest list is shorter than count");
+    }
+    const source = this.#ranges.get(sourceId);
+    if (source === undefined || source.count === 0) return 0;
+    const glyphCount = source.count;
+    const sourceOffset = source.offset;
+    let cloned = 0;
+    let wrote = false;
+    for (let index = 0; index < count; index += 1) {
+      const destId = dests[index];
+      if (destId === undefined) {
+        throw new Error("cloneMany dest list is incomplete");
+      }
+      assertLabelId(destId);
+      if (destId === sourceId) {
+        cloned += 1;
+        continue;
+      }
+      const current = this.#ranges.get(destId);
+      if (current !== undefined && current.capacity >= glyphCount) {
+        this.#copyInstances(sourceOffset, current.offset, glyphCount);
+        this.#patchPalette(current.offset, glyphCount, destId);
+        if (glyphCount < current.count) {
+          this.#clearMetadata(current.offset + glyphCount, current.count - glyphCount);
+        }
+        this.#activeInstances += glyphCount - current.count;
+        const dirtyCount = Math.max(current.count, glyphCount);
+        current.count = glyphCount;
+        this.#dirty.record(
+          current.offset * GLYPH_INSTANCE_STRIDE,
+          dirtyCount * GLYPH_INSTANCE_STRIDE,
+        );
+        cloned += 1;
+        wrote = true;
+        continue;
+      }
+      if (current !== undefined) this.#releaseLabelRange(destId, current);
+      const range = this.#allocateRange(nextPowerOfTwo(glyphCount));
+      this.#copyInstances(sourceOffset, range.offset, glyphCount);
+      this.#patchPalette(range.offset, glyphCount, destId);
+      range.count = glyphCount;
+      this.#ranges.set(destId, range);
+      this.#activeInstances += glyphCount;
+      this.#dirty.record(range.offset * GLYPH_INSTANCE_STRIDE, glyphCount * GLYPH_INSTANCE_STRIDE);
+      cloned += 1;
+      wrote = true;
+    }
+    if (wrote) this.#segmentEpoch += 1;
+    return cloned;
+  }
+
   consumeDirty(): readonly Readonly<DirtyByteRange>[] {
     this.#assertActive();
     return this.#dirty.publish({

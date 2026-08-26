@@ -168,6 +168,32 @@ describe("GlyphInstanceStore", () => {
     store.destroy();
   });
 
+  test("clones one source onto a dest column in place", () => {
+    const store = new GlyphInstanceStore({ initialCapacity: 32 });
+    store.set(0, batch(2, 0));
+    for (let slot = 1; slot < 8; slot += 1) store.set(slot, batch(2, slot));
+    const dest = store.getRange(3);
+    const highWater = store.stats.highWater;
+    const epoch = store.segmentEpoch;
+
+    expect(store.cloneMany(0, new Uint32Array([0, 1, 2, 3, 4, 5, 6, 7]), 8)).toBe(8);
+    expect(store.getRange(3)).toEqual(dest);
+    expect(store.stats.highWater).toBe(highWater);
+    expect(store.stats.activeInstances).toBe(16);
+    expect(store.segmentEpoch).toBeGreaterThan(epoch);
+    expect(readInstance(store.buffer, dest?.offset ?? 0)).toMatchObject({
+      x: 0,
+      y: 1,
+      paletteIndex: 3,
+      page: 0,
+      active: true,
+    });
+    expect(store.cloneMany(0, new Uint32Array([0]), 1)).toBe(1);
+    expect(store.cloneMany(99, new Uint32Array([1]), 1)).toBe(0);
+
+    store.destroy();
+  });
+
   test("reuses a leftover hole from a larger power-of-two range", () => {
     const store = new GlyphInstanceStore({ initialCapacity: 16 });
     store.set(1, batch(8, 1));

@@ -101,6 +101,26 @@ describe("SpatialIndex", () => {
     index.destroy();
   });
 
+  test("places occupied slots from packed origins and a shared local box", () => {
+    const index = new SpatialIndex({ initialCapacity: 8 });
+    index.set(0, { x: 0, y: 0, width: 8, height: 10 }, 1, true);
+    index.set(2, { x: 40, y: 40, width: 8, height: 10 }, 2, true);
+    index.set(3, { x: 80, y: 80, width: 8, height: 10 }, 3, false);
+    const slots = new Uint32Array([0, 2, 3]);
+    const xy = new Float32Array([10, 20, 30, 40, 50, 60]);
+
+    expect(
+      index.placeMany(slots, 3, xy, { x: 0, y: 0, width: 12, height: 14 }),
+    ).toBe(3);
+    expect(index.get(0)).toEqual({ x: 10, y: 20, width: 12, height: 14 });
+    expect(index.get(2)).toEqual({ x: 30, y: 40, width: 12, height: 14 });
+    expect(index.get(3)).toEqual({ x: 50, y: 60, width: 12, height: 14 });
+    expect(index.hitTest({ x: 11, y: 21 })).toBe(0);
+    expect(index.hitTest({ x: 51, y: 61 })).toBeUndefined();
+
+    index.destroy();
+  });
+
   test("validates output capacity and finite geometry transactionally", () => {
     const index = new SpatialIndex();
     index.set(0, { x: 0, y: 0, width: 1, height: 1 });

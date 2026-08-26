@@ -33,6 +33,8 @@ const FLAG_VISIBLE = 2;
 const FLAG_KIND_SHIFT = 2;
 const FLAG_KIND_MASK = 3;
 const EMPTY_STYLE: Readonly<TextStoreLabel["style"]> = Object.freeze({});
+const F16_ONE = packF16(1);
+const F16_ZERO = packF16(0);
 let nextNamespace = 1;
 
 export interface TextStoreOptions {
@@ -204,8 +206,19 @@ export class TextStore {
     return (
       slot < this.#highWater &&
       this.#occupied(slot) &&
-      readF16(this.#anchorX, slot) === 0 &&
-      readF16(this.#anchorY, slot) === 0
+      this.#anchorX[slot] === F16_ZERO &&
+      this.#anchorY[slot] === F16_ZERO
+    );
+  }
+
+  /** True when scale is 1 and rotation is 0. @internal */
+  unitTransformAt(slot: number): boolean {
+    return (
+      slot < this.#highWater &&
+      this.#occupied(slot) &&
+      this.#scaleX[slot] === F16_ONE &&
+      this.#scaleY[slot] === F16_ONE &&
+      this.#rotation[slot] === F16_ZERO
     );
   }
 

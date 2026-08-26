@@ -81,22 +81,20 @@ writes, and remirroring the store.
   `applyContentLane`: one layout, in-place clones, columnar x/y. They do not build per-label
   `RenderChange` snapshots. Shaping, vertical writing, trusted runs, and non-zero anchors stay
   on the object path.
+- Content-lane instance writes use `cloneMany` from one prototype and retain atlas keys in one
+  pass. Spatial AABBs come from `placeMany`: packed x/y plus the shared run box. Rendered
+  unit-transform labels skip the intake estimate rehash. Scale or rotation keeps the object path.
 
 ## Remaining slices, in order
 
-1. **Content-storm clone and spatial walk.** `applyContentLane` still clones each dest range and
-   rewrites each spatial AABB from run bounds. The 100k-counter commit no longer builds
-   snapshots, but it still walks N instance copies and N hash-grid writes. Wave 1's ≤ 8 ms
-   `dynamic-counters` target needs a batch clone and the Wave 2 leftover: derive query bounds
-   from store x/y plus cached local width/height instead of a second AABB write.
-2. **Admission-side first-seen budget.** A large pan onto fresh text can still hitch on layout
+1. **Admission-side first-seen budget.** A large pan onto fresh text can still hitch on layout
    and raster in one commit. Any budget must finish on-screen labels in that commit and only
    cap off-screen working-set prep. Do not defer texel uploads for glyphs already instanced.
    Duplicate-string intern removes the per-label layout tax; unique glyphs still raster in the
    seeing commit.
-3. **Palette storage buffer and atlas texture array.** Wave 3 leftovers. Binding cost, not the
+2. **Palette storage buffer and atlas texture array.** Wave 3 leftovers. Binding cost, not the
    zoom hitch.
-4. **Default baked pages.** Known UI alphabets still miss on the first session if no page is
+3. **Default baked pages.** Known UI alphabets still miss on the first session if no page is
    supplied and TinySDF has not run. Shipping those pages in the core gzip is rejected.
 
 Reject: drip-feed admission, `queryAll()` for compute-cull, BVH rebuilds on the 100k storm, and
