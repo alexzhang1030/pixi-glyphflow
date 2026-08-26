@@ -8,6 +8,7 @@ export type CullRecordDirty = "all" | "none" | readonly Readonly<DirtyByteRange>
 export const CULL_RECORD_STRIDE = 32;
 export const CULL_WORKGROUP = 256;
 const FLOATS_PER_RECORD = CULL_RECORD_STRIDE / Float32Array.BYTES_PER_ELEMENT;
+const UINTS_PER_INSTANCE = GLYPH_INSTANCE_STRIDE / Uint32Array.BYTES_PER_ELEMENT;
 
 export interface CullViewport {
   readonly x: number;
@@ -24,6 +25,8 @@ export interface CullRecordInput {
   readonly maxY: number;
   readonly instanceOffset: number;
   readonly instanceCount: number;
+  /** Slot / palette row. Scatter writes this into each compacted instance. */
+  readonly paletteIndex?: number;
 }
 
 export interface CompactInstancesResult {
@@ -176,6 +179,7 @@ export function writeCullRecordAt(
   floats[base + 3] = record.maxY;
   uints[base + 4] = record.instanceOffset;
   uints[base + 5] = record.instanceCount;
+  uints[base + 6] = record.paletteIndex ?? 0;
 }
 
 export function aabbVisible(
@@ -235,6 +239,7 @@ export function compactVisibleInstances(
     const count = counts[index] ?? 0;
     if (count === 0) continue;
     const instanceOffset = uints[index * FLOATS_PER_RECORD + 4] ?? 0;
+    const paletteIndex = uints[index * FLOATS_PER_RECORD + 6] ?? 0;
     const byteLength = count * GLYPH_INSTANCE_STRIDE;
     compact.set(
       source.subarray(
@@ -243,6 +248,10 @@ export function compactVisibleInstances(
       ),
       write * GLYPH_INSTANCE_STRIDE,
     );
+    const words = new Uint32Array(compact.buffer, compact.byteOffset, compact.byteLength / 4);
+    for (let glyph = 0; glyph < count; glyph += 1) {
+      words[(write + glyph) * UINTS_PER_INSTANCE + 4] = paletteIndex;
+    }
     write += count;
   }
   return {

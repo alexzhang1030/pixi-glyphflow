@@ -1383,6 +1383,7 @@ export class TextLayer extends Container {
         maxY: box.y + box.height,
         instanceOffset: range.offset,
         instanceCount: range.count,
+        paletteIndex: state.slot,
       });
       this.#cullRecordSlots[index] = state.slot;
       this.#cullRecordIndex[state.slot] = index;
@@ -1412,6 +1413,7 @@ export class TextLayer extends Container {
         maxY: box.y + box.height,
         instanceOffset: range.offset,
         instanceCount: range.count,
+        paletteIndex: change.slot,
       });
       if (first < 0 || index < first) first = index;
       if (index > last) last = index;
@@ -1446,6 +1448,7 @@ export class TextLayer extends Container {
         maxY: box.y + box.height,
         instanceOffset: range.offset,
         instanceCount: range.count,
+        paletteIndex: slot,
       });
       if (first < 0 || index < first) first = index;
       if (index > last) last = index;

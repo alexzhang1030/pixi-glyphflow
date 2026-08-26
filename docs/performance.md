@@ -115,13 +115,14 @@ storage budgets stay until a human accepts new numbers.
   instance storage larger than the 128 MiB WebGPU default.
 - Reuse styles and fonts to maximize shaping and layout cache hits. Duplicate strings intern one
   layout result per (family, size, weight, text). Broadcast `updateTextPositions` with default
-  anchors uses a columnar content lane: one layout, `cloneMany`, packed x/y, and `placeMany`
-  AABBs from the shared run box. Non-zero anchors, non-unit scale, shaping overrides, and
-  trusted runs stay on the object path.
+  anchors uses a columnar content lane: one layout, a shared prototype range, packed x/y, and
+  `placeMany` AABBs from the shared run box. Non-zero anchors, non-unit scale, shaping
+  overrides, and trusted runs stay on the object path. Duplicate strings do not copy instance
+  bytes; compact/draw stamps the palette index.
 - Set an atlas ceiling that matches the product glyph working set.
 - Compute-cull layouts first-seen labels in the tight draw view plus a 0.25-viewport ring. The
   expanded working set is residency slack, not a prepare batch. Known strings hit the shape cache
-  on the same turn and clone instance ranges.
+  on the same turn and share instance ranges.
 - Put stable UI alphabets on `rasterizerOptions.prebuilt` pages. Do not ship those pages in the
   core bundle.
 - `culling.lod` drops labels whose projected font height is below one pixel. Leave it off unless

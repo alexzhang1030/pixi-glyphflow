@@ -370,8 +370,8 @@ export class RenderCoordinator {
   }
 
   /**
-   * Broadcast text-plus-position: layout once, clone instances, patch palette x/y. Draw states
-   * stay; callers must already have a palette row per slot (rendered labels).
+   * Broadcast text-plus-position: layout once, share the prototype range, patch palette x/y. Draw
+   * states stay; callers must already have a palette row per slot (rendered labels).
    */
   async applyContentLane(input: ContentLaneInput): Promise<Readonly<RenderCommitResult>> {
     this.#assertActive();
@@ -654,7 +654,7 @@ export class RenderCoordinator {
   }
 
   /**
-   * Shared-string column: build or reuse one prototype, cloneMany the rest, retain atlas keys once
+   * Shared-string column: build or reuse one prototype, shareMany the rest, retain atlas keys once
    * per unique previous set.
    */
   #writeInstanceColumn(
@@ -676,7 +676,7 @@ export class RenderCoordinator {
       this.#runs.set(first, run);
       this.#writeInstances(first, run, snapshot);
       if (count === 1) return;
-      if (this.instances.cloneMany(first, slots, count) !== count) {
+      if (this.instances.shareMany(first, slots, count) !== count) {
         for (let index = 1; index < count; index += 1) {
           const slot = slots[index];
           if (slot === undefined) throw new Error("Content lane slot list is incomplete");
@@ -688,7 +688,7 @@ export class RenderCoordinator {
       this.#bindInstanceColumn(slots, 1, count, run, key, first);
       return;
     }
-    if (this.instances.cloneMany(source, slots, count) !== count) {
+    if (this.instances.shareMany(source, slots, count) !== count) {
       for (let index = 0; index < count; index += 1) {
         const slot = slots[index];
         if (slot === undefined) throw new Error("Content lane slot list is incomplete");
@@ -762,10 +762,13 @@ export class RenderCoordinator {
       runPrototype !== undefined && runPrototype !== slot
         ? runPrototype
         : this.#prototypeSlots.get(key);
-    if (prototype !== undefined && prototype !== slot && this.instances.clone(prototype, slot)) {
+    if (prototype !== undefined && prototype !== slot && this.instances.share(prototype, slot)) {
       const prototypeKeys = this.#slotAtlasKeys.get(prototype);
-      if (prototypeKeys !== undefined) this.#retainSlotKeys(slot, prototypeKeys);
-      else this.#releaseSlotKeys(slot);
+      if (prototypeKeys !== undefined) {
+        if (this.#slotAtlasKeys.get(slot) !== prototypeKeys) {
+          this.#retainSlotKeys(slot, prototypeKeys);
+        }
+      } else this.#releaseSlotKeys(slot);
     } else {
       this.instances.set(slot, this.#buildInstances(slot, run, snapshot), { skipEquality: true });
     }

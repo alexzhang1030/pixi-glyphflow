@@ -110,6 +110,9 @@ LRU, 52-bit keys, the 48 MiB store (test-pinned, 44.9 MiB measured), the sparse 
    local box. Content-lane candidates now also require unit scale and zero rotation. Rendered
    unit-transform storms skip the intake estimate rehash. Wave 1's ≤ 8 ms `dynamic-counters`
    target still needs a reference M1 Pro artifact before anyone claims the number.
+9. **Shared prototype instance ranges — LANDED.** Duplicate strings point at one instance block.
+   Compute scatter and the CPU compact mesh stamp `paletteIndex` from the cull record / draw
+   span. Store `highWater` tracks unique glyphs; `activeInstances` stays the logical sum.
 
 **Regressions and traps the audits confirmed:**
 

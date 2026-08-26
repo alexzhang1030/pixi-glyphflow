@@ -105,8 +105,24 @@ describe("compute cull host reference", () => {
   test("compacts visible instances in record order without atomics", () => {
     const records = packCullRecords([
       { minX: 1000, minY: 0, maxX: 1010, maxY: 10, instanceOffset: 0, instanceCount: 2 },
-      { minX: 0, minY: 0, maxX: 10, maxY: 10, instanceOffset: 2, instanceCount: 1 },
-      { minX: 5, minY: 5, maxX: 15, maxY: 15, instanceOffset: 3, instanceCount: 1 },
+      {
+        minX: 0,
+        minY: 0,
+        maxX: 10,
+        maxY: 10,
+        instanceOffset: 2,
+        instanceCount: 1,
+        paletteIndex: 21,
+      },
+      {
+        minX: 5,
+        minY: 5,
+        maxX: 15,
+        maxY: 15,
+        instanceOffset: 3,
+        instanceCount: 1,
+        paletteIndex: 31,
+      },
     ]);
     const instances = new ArrayBuffer(4 * GLYPH_INSTANCE_STRIDE);
     const words = new Uint32Array(instances);
@@ -131,6 +147,50 @@ describe("compute cull host reference", () => {
     );
     expect(compact[4]).toBe(21);
     expect(compact[10]).toBe(31);
+  });
+
+  test("scatters shared prototype instances with per-record palette indices", () => {
+    const records = packCullRecords([
+      {
+        minX: 0,
+        minY: 0,
+        maxX: 10,
+        maxY: 10,
+        instanceOffset: 0,
+        instanceCount: 2,
+        paletteIndex: 7,
+      },
+      {
+        minX: 0,
+        minY: 0,
+        maxX: 10,
+        maxY: 10,
+        instanceOffset: 0,
+        instanceCount: 2,
+        paletteIndex: 9,
+      },
+    ]);
+    const instances = new ArrayBuffer(2 * GLYPH_INSTANCE_STRIDE);
+    const words = new Uint32Array(instances);
+    words[4] = 1;
+    words[10] = 1;
+    const result = compactVisibleInstances(records, 2, instances, {
+      x: 0,
+      y: 0,
+      width: 50,
+      height: 50,
+      padding: 0,
+    });
+    expect(result.instanceCount).toBe(4);
+    const compact = new Uint32Array(
+      result.compact.buffer,
+      result.compact.byteOffset,
+      result.compact.byteLength / 4,
+    );
+    expect(compact[4]).toBe(7);
+    expect(compact[10]).toBe(7);
+    expect(compact[16]).toBe(9);
+    expect(compact[22]).toBe(9);
   });
 
   test("packs AABB and instance ranges into 32-byte records", () => {

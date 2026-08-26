@@ -8,7 +8,7 @@ struct CullRecord {
   max_y: f32,
   instance_offset: u32,
   instance_count: u32,
-  _pad0: u32,
+  palette_index: u32,
   _pad1: u32,
 }
 
@@ -115,15 +115,17 @@ fn scatter(@builtin(global_invocation_id) id: vec3<u32>) {
   }
   let group = index / WORKGROUP;
   let dest = prefix[index] + group_sums[group];
-  let source = records[index].instance_offset;
+  let record = records[index];
+  let srcBase = record.instance_offset;
+  let palette = record.palette_index;
   for (var glyph = 0u; glyph < count; glyph++) {
-    let src = (source + glyph) * UINTS_PER_INSTANCE;
+    let src = (srcBase + glyph) * UINTS_PER_INSTANCE;
     let dst = (dest + glyph) * UINTS_PER_INSTANCE;
     instances_out[dst] = instances_in[src];
     instances_out[dst + 1u] = instances_in[src + 1u];
     instances_out[dst + 2u] = instances_in[src + 2u];
     instances_out[dst + 3u] = instances_in[src + 3u];
-    instances_out[dst + 4u] = instances_in[src + 4u];
+    instances_out[dst + 4u] = palette;
     instances_out[dst + 5u] = instances_in[src + 5u];
   }
 }

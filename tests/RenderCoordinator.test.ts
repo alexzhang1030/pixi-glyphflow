@@ -295,7 +295,7 @@ describe("RenderCoordinator", () => {
     registry.destroy();
   });
 
-  test("clones instance ranges for duplicate strings after the first raster", async () => {
+  test("shares instance ranges for duplicate strings after the first raster", async () => {
     const registry = new FontRegistry();
     await registry.register({ family: "Fixture" });
     let layoutCalls = 0;
@@ -338,7 +338,9 @@ describe("RenderCoordinator", () => {
     expect(layoutCalls).toBe(1);
     expect(rasterCalls).toBe(2);
     expect(coordinator.instances.getRange(0)).toEqual({ offset: 0, count: 2, capacity: 2 });
-    expect(coordinator.instances.getRange(7)).toEqual({ offset: 14, count: 2, capacity: 2 });
+    expect(coordinator.instances.getRange(7)).toEqual({ offset: 0, count: 2, capacity: 2 });
+    expect(coordinator.instances.stats.highWater).toBe(2);
+    expect(coordinator.instances.stats.activeInstances).toBe(16);
 
     coordinator.destroy();
     registry.destroy();
@@ -398,7 +400,7 @@ describe("RenderCoordinator", () => {
     registry.destroy();
   });
 
-  test("applies a broadcast content lane with one layout and in-place clones", async () => {
+  test("applies a broadcast content lane with one layout and a shared prototype", async () => {
     const registry = new FontRegistry();
     await registry.register({ family: "Fixture" });
     let layoutCalls = 0;
@@ -434,7 +436,6 @@ describe("RenderCoordinator", () => {
     }));
     await coordinator.commit(1, firstSeen);
     coordinator.transforms.consumeDirty();
-    const dest = coordinator.instances.getRange(3);
     const slots = new Uint32Array([0, 1, 2, 3, 4, 5, 6, 7]);
     const xy = new Float32Array(16);
     for (let index = 0; index < 8; index += 1) {
@@ -451,7 +452,9 @@ describe("RenderCoordinator", () => {
     });
     expect(next).toMatchObject({ stale: false, appliedLabels: 8, glyphs: 16 });
     expect(layoutCalls).toBe(2);
-    expect(coordinator.instances.getRange(3)).toEqual(dest);
+    expect(coordinator.instances.getRange(3)).toEqual(coordinator.instances.getRange(0));
+    expect(coordinator.instances.stats.activeInstances).toBe(16);
+    expect(coordinator.instances.stats.highWater).toBeGreaterThanOrEqual(2);
     expect(coordinator.transforms.consumeDirty()).toEqual([{ offset: 0, length: 240 }]);
     expect(Array.from(coordinator.transforms.data.subarray(0, 2))).toEqual([0, 1]);
 

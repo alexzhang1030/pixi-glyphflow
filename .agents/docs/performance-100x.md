@@ -81,9 +81,13 @@ writes, and remirroring the store.
   `applyContentLane`: one layout, in-place clones, columnar x/y. They do not build per-label
   `RenderChange` snapshots. Shaping, vertical writing, trusted runs, and non-zero anchors stay
   on the object path.
-- Content-lane instance writes use `cloneMany` from one prototype and retain atlas keys in one
+- Content-lane instance writes use `shareMany` from one prototype and retain atlas keys in one
   pass. Spatial AABBs come from `placeMany`: packed x/y plus the shared run box. Rendered
   unit-transform labels skip the intake estimate rehash. Scale or rotation keeps the object path.
+- Duplicate strings **share** one instance range. `share` / `shareMany` retarget dests at the
+  prototype bytes. Compact and CPU draws write the label's palette index from the cull record or
+  draw span. Eight copies of `"AB"` keep `highWater` at 2. Removing a sharer does not free the
+  block until the last user leaves. A `set` on a shared dest copy-on-writes.
 
 ## Remaining slices, in order
 

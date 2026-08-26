@@ -181,6 +181,14 @@ adds the column's extra refs in one pass; dests that already share the prototype
 skipped. `placeMany` derives world AABBs from packed x/y plus the shared run box and keeps z and
 visibility. Do not call `spatial.set` per content-lane slot.
 
+Duplicate strings share one instance block. Do not bake dest palette indices into those bytes —
+scatter and the CPU compact mesh write `paletteIndex` from the cull record or draw span (`slot`).
+`set` on a shared dest must copy-on-write. `clone` still copies exclusively; the live path uses
+`share` / `shareMany`. `clone` / `cloneMany` of a dest that already shares must copy-on-write.
+In-place write would patch the prototype palette. A second `share` onto dests that already point
+at the source does not bump `segmentEpoch`. Compact unique offsets once; do not size the packed
+buffer from the logical instance sum.
+
 Rendered unit-transform labels skip the intake estimate rehash on `updateTextPositions` when a
 coordinator will rewrite the box from the run at commit. Unrendered slots, non-zero anchors, and
 scaled or rotated labels still reindex at intake so hit bounds do not wait on a path that may
