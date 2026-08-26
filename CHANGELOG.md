@@ -18,6 +18,9 @@
   rewrite spatial AABBs from the laid-out run so hit bounds do not stay on the intake estimate.
 - Duplicate strings share one glyph instance block. Compact/draw writes each label's palette
   index from the cull record. Store `highWater` stays at unique glyphs.
+- First-seen fill-only duplicates skip per-label snapshots (`applyAdmitLane`): one layout per
+  (text, style), a shared prototype range, and a columnar full palette write. Scaled, rotated,
+  anchored, z-indexed, and stroked first-seen labels stay on the object path.
 - Commits with culling off no longer scan every resident through `queryAll` unless membership or
   visibility changed. Clearing a previous viewport still rebuilds the full set.
 - `updateTextPositions` slides spatial AABBs when the text is unchanged, so a text-plus-position

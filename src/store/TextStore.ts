@@ -35,6 +35,7 @@ const FLAG_KIND_MASK = 3;
 const EMPTY_STYLE: Readonly<TextStoreLabel["style"]> = Object.freeze({});
 const F16_ONE = packF16(1);
 const F16_ZERO = packF16(0);
+const BLEND_NORMAL = encodeBlendMode("normal");
 let nextNamespace = 1;
 
 export interface TextStoreOptions {
@@ -220,6 +221,29 @@ export class TextStore {
       this.#scaleY[slot] === F16_ONE &&
       this.#rotation[slot] === F16_ZERO
     );
+  }
+
+  /**
+   * First-seen / fill-only admit: visible, z 0, normal blend, alpha 1, unit transform, zero
+   * anchors, no stroke or drop shadow.
+   *
+   * @internal
+   */
+  admitLaneAt(slot: number): boolean {
+    if (slot >= this.#highWater || !this.#occupied(slot)) return false;
+    if (!this.#visible(slot) || (this.#zIndex[slot] ?? 0) !== 0) return false;
+    if ((this.#blendModes[slot] ?? 0) !== BLEND_NORMAL) return false;
+    if (this.#alpha[slot] !== F16_ONE) return false;
+    if (this.#anchorX[slot] !== F16_ZERO || this.#anchorY[slot] !== F16_ZERO) return false;
+    if (
+      this.#scaleX[slot] !== F16_ONE ||
+      this.#scaleY[slot] !== F16_ONE ||
+      this.#rotation[slot] !== F16_ZERO
+    ) {
+      return false;
+    }
+    const style = this.#styles[slot];
+    return style !== undefined && style.stroke === undefined && style.dropShadow === undefined;
   }
 
   /** Read the current label occupying a dense slot. @internal */

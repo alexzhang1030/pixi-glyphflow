@@ -88,14 +88,18 @@ writes, and remirroring the store.
   prototype bytes. Compact and CPU draws write the label's palette index from the cull record or
   draw span. Eight copies of `"AB"` keep `highWater` at 2. Removing a sharer does not free the
   block until the last user leaves. A `set` on a shared dest copy-on-writes.
+- First-seen fill-only duplicates take `applyAdmitLane`. One layout per (text, style), `shareMany`,
+  `writeFills` for the full palette row, then draw-state insert. They do not build per-label
+  `RenderChange` snapshots. Scale, rotation, non-zero anchors, z-index, stroke, and trusted runs
+  stay on the object path. Already-rendered storms stay on the content lane (`writePositions`).
 
 ## Remaining slices, in order
 
-1. **Admission-side first-seen budget.** A large pan onto fresh text can still hitch on layout
-   and raster in one commit. Any budget must finish on-screen labels in that commit and only
-   cap off-screen working-set prep. Do not defer texel uploads for glyphs already instanced.
-   Duplicate-string intern removes the per-label layout tax; unique glyphs still raster in the
-   seeing commit.
+1. **Admission-side first-seen budget.** A large pan onto fresh **unique** text can still hitch
+   on layout and raster in one commit. Any budget must finish on-screen labels in that commit
+   and only cap off-screen working-set prep. Do not defer texel uploads for glyphs already
+   instanced. Duplicate-string intern and the admit lane remove the per-label layout and
+   snapshot tax; unique glyphs still raster in the seeing commit.
 2. **Palette storage buffer and atlas texture array.** Wave 3 leftovers. Binding cost, not the
    zoom hitch.
 3. **Default baked pages.** Known UI alphabets still miss on the first session if no page is

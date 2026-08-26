@@ -198,10 +198,13 @@ describe("TextStore", () => {
     expect(store.styleAt(slot ?? -1)).toBe(store.get(id)?.style);
     expect(store.anchorsZeroAt(slot ?? -1)).toBe(true);
     expect(store.unitTransformAt(slot ?? -1)).toBe(true);
+    expect(store.admitLaneAt(slot ?? -1)).toBe(true);
     store.update(id, { anchorX: 0.5 });
     expect(store.anchorsZeroAt(slot ?? -1)).toBe(false);
+    expect(store.admitLaneAt(slot ?? -1)).toBe(false);
     store.update(id, { scaleX: 2 });
     expect(store.unitTransformAt(slot ?? -1)).toBe(false);
+    expect(store.admitLaneAt(slot ?? -1)).toBe(false);
     store.dispose();
   });
 

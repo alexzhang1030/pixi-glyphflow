@@ -122,7 +122,8 @@ storage budgets stay until a human accepts new numbers.
 - Set an atlas ceiling that matches the product glyph working set.
 - Compute-cull layouts first-seen labels in the tight draw view plus a 0.25-viewport ring. The
   expanded working set is residency slack, not a prepare batch. Known strings hit the shape cache
-  on the same turn and share instance ranges.
+  on the same turn and share instance ranges. First-seen fill-only copies of those strings skip
+  per-label snapshots and write the palette in a column.
 - Put stable UI alphabets on `rasterizerOptions.prebuilt` pages. Do not ship those pages in the
   core bundle.
 - `culling.lod` drops labels whose projected font height is below one pixel. Leave it off unless

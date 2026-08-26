@@ -536,6 +536,72 @@ describe("TextLayer commit and maintenance", () => {
     layer.destroy();
   });
 
+  test("admits mixed first-seen strings as separate columns", async () => {
+    let layouts = 0;
+    const layer = new TextLayer({
+      renderer: {} as Renderer,
+      rendering: {
+        layoutEngine: {
+          layout(_slot: number, _revision: number, input: { text: string }) {
+            layouts += 1;
+            return { ...RUN, text: input.text };
+          },
+          destroy() {},
+        },
+        glyphProvider: {
+          async rasterize() {
+            return alphaRaster();
+          },
+          destroy() {},
+        },
+        atlasOptions: { pageWidth: 32, pageHeight: 32, maxBytes: 4_096 },
+      },
+    });
+    layer.createMany([
+      ...Array.from({ length: 4 }, (_, index) => ({ text: "A", x: index * 12, y: 0 })),
+      ...Array.from({ length: 4 }, (_, index) => ({ text: "B", x: index * 12, y: 20 })),
+    ]);
+    await layer.commit();
+    expect(layouts).toBe(2);
+    expect(layer.stats.glyphCount).toBe(8);
+    expect(layer.stats.visibleLabelCount).toBe(8);
+
+    layer.destroy();
+  });
+
+  test("keeps scaled first-seen labels on the object path", async () => {
+    let layouts = 0;
+    const layer = new TextLayer({
+      renderer: {} as Renderer,
+      rendering: {
+        layoutEngine: {
+          layout() {
+            layouts += 1;
+            return RUN;
+          },
+          destroy() {},
+        },
+        glyphProvider: {
+          async rasterize() {
+            return alphaRaster();
+          },
+          destroy() {},
+        },
+        atlasOptions: { pageWidth: 32, pageHeight: 32, maxBytes: 4_096 },
+      },
+    });
+    layer.createMany([
+      { text: "A", x: 0, y: 0, scaleX: 2, scaleY: 2 },
+      { text: "A", x: 12, y: 0, scaleX: 2, scaleY: 2 },
+    ]);
+    await layer.commit();
+    expect(layouts).toBe(1);
+    expect(layer.stats.glyphCount).toBe(2);
+    expect(layer.stats.visibleLabelCount).toBe(2);
+
+    layer.destroy();
+  });
+
   test("keeps unchanged siblings on the draw set when one label changes z-index", async () => {
     const layer = new TextLayer({
       renderer: {} as Renderer,

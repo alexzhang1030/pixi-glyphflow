@@ -292,6 +292,14 @@
   - Verify: bun test tests/pack.test.ts tests/TextLayer.commit.test.ts tests/culling.test.ts tests/computeCull.test.ts
   - Files: src/render/pack.ts, src/render/RenderSurface.ts, src/TextLayer.ts, src/culling/computeCull.ts
 
+- [x] Task 12.14: First-seen admit lane for fill-only duplicate strings.
+  - Acceptance: Unrendered fill-only labels that share interned (text, style) commit through
+    `applyAdmitLane` with one layout per group, `writeFills`, shared instance ranges, and no
+    per-label snapshots. Scale, rotation, anchors, z-index, stroke, and trusted runs stay on
+    the object path. On-screen labels still appear in that commit. Published budgets stay.
+  - Verify: bun test tests/TransformPalette.test.ts tests/TextStore.test.ts tests/RenderCoordinator.test.ts tests/TextLayer.commit.test.ts
+  - Files: src/render/TransformPalette.ts, src/store/TextStore.ts, src/render/RenderCoordinator.ts, src/TextLayer.ts
+
 - [x] Task 12.13: Share prototype instance ranges for duplicate strings.
   - Acceptance: `share` / `shareMany` retarget dests at one block; scatter and CPU compact
     write `paletteIndex` from the record/span; `set` copy-on-writes a shared dest;

@@ -462,6 +462,73 @@ describe("RenderCoordinator", () => {
     registry.destroy();
   });
 
+  test("admits first-seen duplicates with one layout and shared prototype bytes", async () => {
+    const registry = new FontRegistry();
+    await registry.register({ family: "Fixture" });
+    let layoutCalls = 0;
+    const coordinator = new RenderCoordinator({
+      registry,
+      layoutEngine: {
+        layout(_slot, _revision, input) {
+          layoutCalls += 1;
+          return run(input.text);
+        },
+        destroy() {},
+      },
+      glyphProvider: {
+        async rasterize(): Promise<GlyphRaster> {
+          return {
+            mode: "alpha",
+            width: 4,
+            height: 6,
+            pixels: new Uint8Array(24).fill(255),
+            metrics: { bearingX: 0, bearingY: 5, advance: 4 },
+          };
+        },
+        destroy() {},
+      },
+      atlasOptions: { pageWidth: 64, pageHeight: 64, maxBytes: 4_096 },
+      instanceOptions: { initialCapacity: 32 },
+      transformOptions: { initialCapacity: 16, textureWidth: 16 },
+    });
+    const slots = new Uint32Array([0, 1, 2, 3, 4, 5, 6, 7]);
+    const xy = new Float32Array(16);
+    const orders = new Uint32Array(8);
+    for (let index = 0; index < 8; index += 1) {
+      xy[index * 2] = index * 10;
+      xy[index * 2 + 1] = 0;
+      orders[index] = index;
+    }
+
+    const first = await coordinator.applyAdmitLane([
+      {
+        slots,
+        count: 8,
+        xy,
+        orders,
+        text: "AB",
+        style: { fontFamily: "Fixture", fontSize: 16, fill: 0x336699 },
+      },
+    ]);
+    expect(first).toMatchObject({
+      stale: false,
+      appliedLabels: 8,
+      glyphs: 16,
+      drawOrderChanged: true,
+    });
+    expect(layoutCalls).toBe(1);
+    expect(coordinator.instances.getRange(7)).toEqual({ offset: 0, count: 2, capacity: 2 });
+    expect(coordinator.instances.stats.highWater).toBe(2);
+    expect(coordinator.transforms.stats.activeLabels).toBe(8);
+    expect(Array.from(coordinator.transforms.data.subarray(24, 26))).toEqual([30, 0]);
+    expect(coordinator.transforms.data[30]).toBe(0x336699);
+    expect(coordinator.getDrawStates()).toHaveLength(8);
+    expect(coordinator.getDrawStates()[3]).toMatchObject({ slot: 3, zIndex: 0, order: 3 });
+
+    coordinator.destroy();
+    registry.destroy();
+  });
+
   test("keeps the draw-list epoch while draw states only append", async () => {
     const registry = new FontRegistry();
     await registry.register({ family: "Fixture" });

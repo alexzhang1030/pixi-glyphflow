@@ -145,6 +145,70 @@ export class TransformPalette {
     return written;
   }
 
+  /**
+   * Occupy a slot column with fill-only identity transforms (scale 1, rotation 0, anchors 0,
+   * visible alpha 1) and packed x/y. Resolves `fill` once. Used for first-seen admit.
+   */
+  writeFills(slots: Uint32Array, count: number, xy: Float32Array, fill: unknown): number {
+    this.#assertActive();
+    if (count <= 0) return 0;
+    if (xy.length < count * 2) {
+      throw new TypeError("Palette writeFills xy must contain one packed pair per slot");
+    }
+    let maxSlot = 0;
+    for (let index = 0; index < count; index += 1) {
+      const slot = slots[index];
+      if (slot === undefined) {
+        throw new Error("Palette writeFills slot list is incomplete");
+      }
+      assertSlot(slot);
+      if (slot > maxSlot) maxSlot = slot;
+    }
+    this.#ensureCapacity(maxSlot + 1);
+    const paint = resolvePaint(fill, 0xffffff);
+    const packedAlpha = packFillAlpha(paint.alpha, 1);
+    const rotationBits = packHalf2x16(0, 1);
+    const anchorBits = packHalf2x16(0, 0);
+    const data = this.#data;
+    const bits = new Uint32Array(data.buffer, data.byteOffset, data.length);
+    const occupied = this.#occupied;
+    let written = 0;
+    for (let index = 0; index < count; index += 1) {
+      const slot = slots[index] ?? 0;
+      const offset = slot * FLOATS_PER_LABEL;
+      const nextX = Math.fround(xy[index * 2] ?? 0);
+      const nextY = Math.fround(xy[index * 2 + 1] ?? 0);
+      if (
+        occupied[slot] === 1 &&
+        data[offset] === nextX &&
+        data[offset + 1] === nextY &&
+        data[offset + 2] === 1 &&
+        data[offset + 3] === 1 &&
+        bits[offset + 4] === rotationBits &&
+        bits[offset + 5] === anchorBits &&
+        data[offset + 6] === paint.color &&
+        data[offset + 7] === packedAlpha
+      ) {
+        continue;
+      }
+      data[offset] = nextX;
+      data[offset + 1] = nextY;
+      data[offset + 2] = 1;
+      data[offset + 3] = 1;
+      bits[offset + 4] = rotationBits;
+      bits[offset + 5] = anchorBits;
+      data[offset + 6] = paint.color;
+      data[offset + 7] = packedAlpha;
+      if (occupied[slot] !== 1) {
+        occupied[slot] = 1;
+        this.#activeLabels += 1;
+      }
+      this.#dirty.record(slot * TRANSFORM_PALETTE_STRIDE, TRANSFORM_PALETTE_STRIDE);
+      written += 1;
+    }
+    return written;
+  }
+
   /** Patch only the x/y texels of an occupied slot. */
   setPosition(slot: number, x: number, y: number): boolean {
     this.#assertActive();

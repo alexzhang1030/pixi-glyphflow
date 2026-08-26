@@ -174,7 +174,8 @@ still rewrite the fill record because packed anchors are `anchor * run bounds`.
 Rendered labels that share one interned (text, style) pair take `applyContentLane` instead of
 per-label snapshots. A mixed-text dirty wave, a shaping/layout/trusted side table, a non-zero
 anchor, or a non-unit scale/rotation forces the object path for the whole content group. Do not
-put first-seen unrendered slots on that lane: they still need a full palette `set`.
+put first-seen unrendered slots on that lane: they still need a full palette write, which is
+`applyAdmitLane` / `writeFills`, not `writePositions`.
 
 `cloneMany` writes dest ranges from one source and bumps `segmentEpoch` once. Atlas key retain
 adds the column's extra refs in one pass; dests that already share the prototype key array are
@@ -198,6 +199,12 @@ not run.
 layout, rewrite that box from the run: `placeMany` for the shared-string group; the object path
 must still do it when `mask` includes Content. Skipping every `positionOnly` change leaves hit
 bounds stale.
+
+First-seen fill-only labels (visible, z 0, normal blend, alpha 1, unit transform, zero anchors,
+no stroke or trusted run) group by interned (text, style) and take `applyAdmitLane`. Tight
+first-seen must skip a slot already stamped for this commit, or a create-plus-camera frame
+would admit the same slot twice. Scale, rotation, anchors, z-index, and effects stay on the
+object path so `writeFills` does not lie about the fill record.
 
 ## Palette row uploads must stay 256-byte aligned when taller than one row
 

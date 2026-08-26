@@ -90,11 +90,21 @@ export interface RenderCommitResult {
   readonly drawOrderChanged: boolean;
 }
 
-/** Shared-string content storm: one layout, then clone + palette x/y for a slot column. */
+/** Shared-string content storm: one layout, then share + palette x/y for a slot column. */
 export interface ContentLaneInput {
   readonly slots: Uint32Array;
   readonly count: number;
   readonly xy: Float32Array;
+  readonly text: string;
+  readonly style: Readonly<TextStyleOptions>;
+}
+
+/** First-seen fill-only column: one layout, share, full palette write, draw-state insert. */
+export interface AdmitLaneGroup {
+  readonly slots: Uint32Array;
+  readonly count: number;
+  readonly xy: Float32Array;
+  readonly orders: Uint32Array;
   readonly text: string;
   readonly style: Readonly<TextStyleOptions>;
 }
@@ -382,36 +392,22 @@ export class RenderCoordinator {
       throw new TypeError("Content lane xy must contain one packed pair per slot");
     }
     const ticket = ++this.#ticket;
-    const snapshot = contentLaneSnapshot(input.text, input.style);
     const prepareStart = performance.now();
-    const interned = this.#lookupIntern(snapshot);
-    let run: Readonly<PositionedRun>;
-    if (interned !== undefined) {
-      run = isPromise(interned) ? await interned : interned;
-    } else {
-      const laidOut = this.#layout.layout(input.slots[0] ?? 0, 1, {
-        text: input.text,
-        style: input.style,
-      });
-      this.#storeIntern(snapshot, laidOut);
-      run = isPromise(laidOut) ? await laidOut : laidOut;
-      if (isPromise(laidOut)) this.#storeIntern(snapshot, run);
-    }
-    if (ticket !== this.#ticket) {
-      this.#staleRevisions += 1;
-      return this.#result(0, true, 0, EMPTY_ATLAS_COMMIT, false);
-    }
-    const missing = this.#ensureMissingGlyphs(run, snapshot);
-    if (missing !== undefined) await missing;
+    const prepared = await this.#prepareSharedColumn(
+      input.text,
+      input.style,
+      input.slots[0] ?? 0,
+      ticket,
+    );
     this.#lastLayoutMs = performance.now() - prepareStart;
-    if (ticket !== this.#ticket) {
+    if (prepared === undefined) {
       this.#staleRevisions += 1;
       return this.#result(0, true, 0, EMPTY_ATLAS_COMMIT, false);
     }
 
     const atlasCommit = this.atlas.commitFrame();
     const writeStart = performance.now();
-    this.#writeInstanceColumn(input.slots, input.count, run, snapshot);
+    this.#writeInstanceColumn(input.slots, input.count, prepared.run, prepared.snapshot);
     this.transforms.writePositions(input.slots, input.count, input.xy);
     this.#lastInstanceWriteMs = performance.now() - writeStart;
     this.#shapedLabels += input.count;
@@ -419,6 +415,71 @@ export class RenderCoordinator {
     this.#revisions += 1;
 
     return this.#result(0, false, input.count, atlasCommit, false);
+  }
+
+  /**
+   * First-seen fill-only groups: layout once per (text, style), share the prototype, write full
+   * palette rows, insert zero-z draw states. Callers must place spatial AABBs after this returns.
+   */
+  async applyAdmitLane(groups: readonly AdmitLaneGroup[]): Promise<Readonly<RenderCommitResult>> {
+    this.#assertActive();
+    if (groups.length === 0) {
+      return this.#result(0, false, 0, EMPTY_ATLAS_COMMIT, false);
+    }
+    const ticket = ++this.#ticket;
+    const prepareStart = performance.now();
+    const prepared: Array<{
+      readonly group: AdmitLaneGroup;
+      readonly run: Readonly<PositionedRun>;
+      readonly snapshot: Readonly<RenderLabelSnapshot>;
+    }> = [];
+    for (const group of groups) {
+      if (group.count <= 0) continue;
+      if (group.xy.length < group.count * 2) {
+        throw new TypeError("Admit lane xy must contain one packed pair per slot");
+      }
+      if (group.orders.length < group.count) {
+        throw new TypeError("Admit lane order list is shorter than count");
+      }
+      if (group.slots.length < group.count) {
+        throw new TypeError("Admit lane slot list is shorter than count");
+      }
+      const column = await this.#prepareSharedColumn(
+        group.text,
+        group.style,
+        group.slots[0] ?? 0,
+        ticket,
+      );
+      if (column === undefined) {
+        this.#lastLayoutMs = performance.now() - prepareStart;
+        this.#staleRevisions += 1;
+        return this.#result(0, true, 0, EMPTY_ATLAS_COMMIT, false);
+      }
+      prepared.push({ group, run: column.run, snapshot: column.snapshot });
+    }
+    this.#lastLayoutMs = performance.now() - prepareStart;
+
+    const atlasCommit = this.atlas.commitFrame();
+    const writeStart = performance.now();
+    let applied = 0;
+    let drawOrderChanged = false;
+    for (const item of prepared) {
+      this.#writeInstanceColumn(item.group.slots, item.group.count, item.run, item.snapshot);
+      this.transforms.writeFills(
+        item.group.slots,
+        item.group.count,
+        item.group.xy,
+        item.group.style.fill,
+      );
+      if (this.#admitDrawStates(item.group)) drawOrderChanged = true;
+      applied += item.group.count;
+    }
+    this.#lastInstanceWriteMs = performance.now() - writeStart;
+    this.#shapedLabels += applied;
+    this.#appliedLabels += applied;
+    this.#revisions += 1;
+
+    return this.#result(0, false, applied, atlasCommit, drawOrderChanged);
   }
 
   getRun(slot: number): Readonly<PositionedRun> | undefined {
@@ -651,6 +712,76 @@ export class RenderCoordinator {
       });
     this.#pendingGlyphs.set(key, promise);
     return promise;
+  }
+
+  async #prepareSharedColumn(
+    text: string,
+    style: Readonly<TextStyleOptions>,
+    slotHint: number,
+    ticket: number,
+  ): Promise<
+    | {
+        readonly run: Readonly<PositionedRun>;
+        readonly snapshot: Readonly<RenderLabelSnapshot>;
+      }
+    | undefined
+  > {
+    const snapshot = contentLaneSnapshot(text, style);
+    const interned = this.#lookupIntern(snapshot);
+    let run: Readonly<PositionedRun>;
+    if (interned !== undefined) {
+      run = isPromise(interned) ? await interned : interned;
+    } else {
+      const laidOut = this.#layout.layout(slotHint, 1, { text, style });
+      this.#storeIntern(snapshot, laidOut);
+      run = isPromise(laidOut) ? await laidOut : laidOut;
+      if (isPromise(laidOut)) this.#storeIntern(snapshot, run);
+    }
+    if (ticket !== this.#ticket) return undefined;
+    const missing = this.#ensureMissingGlyphs(run, snapshot);
+    if (missing !== undefined) await missing;
+    if (ticket !== this.#ticket) return undefined;
+    return { run, snapshot };
+  }
+
+  #admitDrawStates(group: AdmitLaneGroup): boolean {
+    let changed = false;
+    for (let index = 0; index < group.count; index += 1) {
+      const slot = group.slots[index];
+      const order = group.orders[index];
+      if (slot === undefined || order === undefined) {
+        throw new Error("Admit lane slot list is incomplete");
+      }
+      const previous = this.#drawStates.get(slot);
+      if (
+        previous !== undefined &&
+        previous.zIndex === 0 &&
+        previous.order === order &&
+        previous.blendMode === "normal"
+      ) {
+        continue;
+      }
+      if (previous === undefined) {
+        if (order < this.#lastAddedOrder || this.#nonZeroZStates > 0) {
+          this.#needsDrawSort = true;
+        }
+        this.#lastAddedOrder = Math.max(this.#lastAddedOrder, order);
+      } else if (previous.zIndex !== 0 || previous.order !== order) {
+        this.#needsDrawSort = true;
+      }
+      this.#drawStates.set(
+        slot,
+        Object.freeze({
+          slot,
+          zIndex: 0,
+          order,
+          blendMode: "normal",
+        }),
+      );
+      changed = true;
+      this.#drawStatesDirty = true;
+    }
+    return changed;
   }
 
   /**

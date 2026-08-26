@@ -113,6 +113,10 @@ LRU, 52-bit keys, the 48 MiB store (test-pinned, 44.9 MiB measured), the sparse 
 9. **Shared prototype instance ranges — LANDED.** Duplicate strings point at one instance block.
    Compute scatter and the CPU compact mesh stamp `paletteIndex` from the cull record / draw
    span. Store `highWater` tracks unique glyphs; `activeInstances` stays the logical sum.
+10. **First-seen admit lane — LANDED.** Fill-only first-seen duplicates skip per-label snapshots:
+    one layout per (text, style), `shareMany`, `writeFills`, draw-state insert, `placeMany`.
+    Unique-glyph raster in the seeing commit is unchanged. Wave 1's ≤ 8 ms `dynamic-counters`
+    target still needs a reference M1 Pro artifact before anyone claims the number.
 
 **Regressions and traps the audits confirmed:**
 
