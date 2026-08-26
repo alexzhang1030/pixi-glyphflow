@@ -5,7 +5,10 @@
 ### Performance
 
 - Draw instances are 8 bytes (`prototypeGlyph`, `paletteIndex`). Shaders fetch unique rect, UV, and
-  metadata from an RGBA32F prototype texture. WebGPU scatter and CPU compact write two uints per
+  metadata from an RGBA32F prototype texture. UV is rewritten as f16 pairs and metadata as two
+  16-bit integer floats so RGBA32F cannot canonicalize NaN. Prototype width comes from
+  `textureSize` / `textureDimensions`, not a third glyph uniform. The first stroke rebinds
+  `uPrototype` after the palette grows. WebGPU scatter and CPU compact write two uints per
   visible glyph instead of copying the 24-byte store. One mesh and insertion order stay.
 - Duplicate strings intern one layout result per (family, size, weight, text). Later first-seen
   copies and broadcast `updateTextPositions` skip `LayoutEngine.layout` until the font registry

@@ -59,7 +59,7 @@ describe("GlyphMesh", () => {
           uPrototype: Texture.WHITE.source,
           glyphUniforms: {
             uPaletteWidth: { value: 1, type: "f32" },
-            uPrototypeWidth: { value: 1, type: "f32" },
+            uEffectBase: { value: 0, type: "f32" },
           },
         },
       }),
@@ -89,16 +89,49 @@ describe("GlyphMesh", () => {
     mesh.destroy();
   });
 
+  test("keeps the prototype sampler after a palette rebind", () => {
+    const prototypeTexture = Texture.WHITE;
+    const mesh = new GlyphMesh({
+      ...meshOptions({ prototypeTexture }),
+      shader: new Shader({
+        gpuProgram: GpuProgram.from({
+          vertex: { source: GLYPH_SHADER_WGSL, entryPoint: "mainVertex" },
+          fragment: { source: GLYPH_SHADER_WGSL, entryPoint: "mainFragment" },
+        }),
+        resources: {
+          uTexture0: Texture.WHITE.source,
+          uTexture1: Texture.WHITE.source,
+          uTexture2: Texture.WHITE.source,
+          uTexture3: Texture.WHITE.source,
+          uTexture4: Texture.WHITE.source,
+          uTexture5: Texture.WHITE.source,
+          uTexture6: Texture.WHITE.source,
+          uTexture7: Texture.WHITE.source,
+          uSampler: Texture.WHITE.source.style,
+          uTransformTexture: Texture.WHITE.source,
+          uPrototype: prototypeTexture.source,
+          glyphUniforms: {
+            uPaletteWidth: { value: 1, type: "f32" },
+            uEffectBase: { value: 0, type: "f32" },
+          },
+        },
+      }),
+    });
+    mesh.setPaletteTexture(Texture.WHITE, 2, 4);
+    expect(mesh.shader?.resources.uPrototype).toBe(prototypeTexture.source);
+    mesh.destroy();
+  });
+
   test("keeps equivalent distance-field and color branches in paired shader sources", () => {
     expect(GLYPH_VERTEX_GLSL).toContain("uint aProtoIndex");
     expect(GLYPH_VERTEX_GLSL).toContain("protoFetch(aProtoIndex");
-    expect(GLYPH_VERTEX_GLSL).toContain("unpackUnorm2x16");
+    expect(GLYPH_VERTEX_GLSL).toContain("uint(round(proto1.y))");
     expect(GLYPH_SHADER_WGSL).toContain("aProtoIndex: u32");
     expect(GLYPH_SHADER_WGSL).toContain("fn protoFetch");
-    expect(GLYPH_SHADER_WGSL).toContain("unpack2x16unorm");
+    expect(GLYPH_SHADER_WGSL).toContain("u32(round(proto1.y))");
     expect(GLYPH_VERTEX_GLSL).toContain("uTransformTexture");
     expect(GLYPH_VERTEX_GLSL).toContain("uPrototype");
-    expect(GLYPH_VERTEX_GLSL).toContain("uPrototypeWidth");
+    expect(GLYPH_VERTEX_GLSL).toContain("textureSize(uPrototype");
     expect(GLYPH_VERTEX_GLSL).toContain("uEffectBase");
     expect(GLYPH_VERTEX_GLSL).toContain("unpackHalf2x16");
     expect(GLYPH_VERTEX_GLSL).toContain("vRasterScale");

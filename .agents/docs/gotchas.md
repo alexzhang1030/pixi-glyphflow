@@ -9,7 +9,15 @@ the prototype texture and unpack with `unpackHalf2x16` / `unpack2x16float`. Draw
 `bun run test:browser` on CI Chrome drew 0 pixels when `GlyphMesh` used `float16x4` while the shaders
 declared `vec4`. ANGLE either skipped `HALF_FLOAT` instance attributes or rejected that type pairing.
 Integer attributes and RGBA32F + `floatBitsToUint` are the proven path. Do not bind the prototype
-as `RGBA32UI` / `usampler2D` to "skip" the bit cast.
+as `RGBA32UI` / `usampler2D` to "skip" the bit cast. Do not upload raw unorm16 UV words or the
+metadata uint through RGBA32F: `0xFFFFFFFF` and `ACTIVE | high raster` are NaN bit patterns, and
+the GPU canonicalizes them. Pack UV as f16 pairs and split metadata into two 16-bit integer floats.
+Do not size proto fetches with a `uPrototypeWidth` uniform: the first stroke grows the palette and
+Pixi rebuilds `glyphUniforms` as the two floats it already knows (`uPaletteWidth`, `uEffectBase`).
+A third float is dropped, width becomes 0, and every fetch hits texel 0. Read
+`textureSize` / `textureDimensions` instead. Re-bind `uPrototype` after palette init and again on
+each mesh render. `setPaletteTexture` alone is too early; Pixi overwrites that slot when it
+initializes the new palette texture.
 
 Do not revert to 32-byte `float32x4` rects to make CI green. Do not bind the 24-byte store as the
 instance buffer: after `share`, `highWater` is unique glyphs and their baked palette is the

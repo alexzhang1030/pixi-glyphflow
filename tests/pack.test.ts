@@ -83,16 +83,28 @@ describe("prototype texture pack", () => {
   test("copies store words into two padded texels per glyph", () => {
     const store = new ArrayBuffer(GLYPH_INSTANCE_STRIDE);
     const src = new Uint32Array(store);
-    src[0] = 1;
-    src[1] = 2;
-    src[2] = 3;
-    src[3] = 4;
+    src[0] = packHalf2x16(1, 2);
+    src[1] = packHalf2x16(3, 4);
+    src[2] = 65_535 | (65_535 << 16);
+    src[3] = 65_535 | (65_535 << 16);
     src[4] = 5;
     src[5] = 0x8000_0001;
     const pixels = allocatePrototypePixels(GLYPH_PROTO_TEXTURE_WIDTH, 1);
     writePrototypeGlyphs(pixels, store, 0, 1);
     const dest = new Uint32Array(pixels.buffer);
-    expect([...dest.subarray(0, 8)]).toEqual([1, 2, 3, 4, 5, 0x8000_0001, 0, 0]);
+    expect(dest[0]).toBe(src[0]);
+    expect(dest[1]).toBe(src[1]);
+    expect(Number.isFinite(pixels[2])).toBe(true);
+    expect(Number.isFinite(pixels[3])).toBe(true);
+    expect(unpackHalf2x16(dest[2] ?? 0)).toEqual([1, 1]);
+    expect(unpackHalf2x16(dest[3] ?? 0)).toEqual([1, 1]);
+    expect(pixels[5]).toBe(1);
+    expect(pixels[6]).toBe(0x8000);
+    src[5] = 0x8000_0000 | (8191 << 18);
+    writePrototypeGlyphs(pixels, store, 0, 1);
+    expect(Number.isFinite(pixels[5])).toBe(true);
+    expect(Number.isFinite(pixels[6])).toBe(true);
+    expect(pixels[6]).toBe(0xfffc);
     expect(prototypeByteRange(0, GLYPH_INSTANCE_STRIDE)).toEqual({ offset: 0, length: 32 });
   });
 

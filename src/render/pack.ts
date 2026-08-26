@@ -166,7 +166,11 @@ export function allocatePrototypePixels(width: number, height: number): Float32A
   return new Float32Array(width * height * 4);
 }
 
-/** Copy store glyphs into RGBA32F proto texels (6 uints + 2 pad per glyph). */
+/**
+ * Copy store glyphs into RGBA32F proto texels. Rect stays f16 bit pairs. UV is rewritten as f16
+ * pairs so (1, 1) is not 0xFFFFFFFF (NaN). Metadata is two 16-bit integer floats so ACTIVE and
+ * raster bits cannot become a GPU-canonicalized NaN.
+ */
 export function writePrototypeGlyphs(
   pixels: Float32Array,
   store: ArrayBuffer,
@@ -181,13 +185,18 @@ export function writePrototypeGlyphs(
     const srcBase = glyph * UINTS_PER_STORE_INSTANCE;
     dest[dst] = src[srcBase] ?? 0;
     dest[dst + 1] = src[srcBase + 1] ?? 0;
-    dest[dst + 2] = src[srcBase + 2] ?? 0;
-    dest[dst + 3] = src[srcBase + 3] ?? 0;
-    dest[dst + 4] = src[srcBase + 4] ?? 0;
-    dest[dst + 5] = src[srcBase + 5] ?? 0;
-    dest[dst + 6] = 0;
-    dest[dst + 7] = 0;
+    dest[dst + 2] = unorm16BitsToHalfBits(src[srcBase + 2] ?? 0);
+    dest[dst + 3] = unorm16BitsToHalfBits(src[srcBase + 3] ?? 0);
+    const metadata = src[srcBase + 5] ?? 0;
+    pixels[dst + 4] = 0;
+    pixels[dst + 5] = metadata & 0xffff;
+    pixels[dst + 6] = metadata >>> 16;
+    pixels[dst + 7] = 0;
   }
+}
+
+function unorm16BitsToHalfBits(packed: number): number {
+  return packHalf2x16((packed & 0xffff) / 65_535, (packed >>> 16) / 65_535);
 }
 
 /** Map a store byte range onto the padded prototype texel bytes. */

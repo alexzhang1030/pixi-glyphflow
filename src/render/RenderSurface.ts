@@ -256,6 +256,7 @@ export class RenderSurface {
     }
     if (computeCull === undefined) this.#useCpuCull();
     else this.#refreshComputeCull(computeCull);
+    this.#bindMeshSources();
     this.#lastUploadMs = performance.now() - uploadStart;
   }
 
@@ -389,6 +390,7 @@ export class RenderSurface {
     if (!this.#paletteInitialized) {
       initializeTexture(this.#renderer, this.#paletteSource);
       this.#paletteInitialized = true;
+      this.#bindMeshSources();
       this.#transformUploadBytes += data.byteLength;
       this.#transformWrites += 1;
       return;
@@ -402,6 +404,14 @@ export class RenderSurface {
     );
     this.#transformUploadBytes += uploaded.bytes;
     this.#transformWrites += uploaded.writes;
+  }
+
+  #bindMeshSources(): void {
+    const stats = this.#coordinator.transforms.stats;
+    for (const surface of this.#meshes.values()) {
+      surface.mesh.setPaletteTexture(this.#paletteTexture, stats.textureWidth, stats.effectBase);
+      surface.mesh.setPrototypeTexture(this.#protoTexture, this.#protoWidth);
+    }
   }
 
   #syncPrototype(ranges: readonly Readonly<DirtyByteRange>[]): void {

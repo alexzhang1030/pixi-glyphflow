@@ -42,6 +42,7 @@ export class GlyphMesh extends Mesh<Geometry, Shader> {
   readonly instanceBuffer: Buffer;
   readonly #ownedGeometry: Geometry;
   readonly #ownedShader: Shader;
+  #prototypeTexture: Texture;
 
   constructor(options: GlyphMeshOptions) {
     validateInstanceData(options.instanceData, options.instanceCount);
@@ -201,7 +202,6 @@ export class GlyphMesh extends Mesh<Geometry, Shader> {
           glyphUniforms: {
             uPaletteWidth: { value: options.paletteWidth, type: "f32" },
             uEffectBase: { value: options.effectBase ?? 0, type: "f32" },
-            uPrototypeWidth: { value: prototypeWidth, type: "f32" },
           },
         },
       });
@@ -209,6 +209,8 @@ export class GlyphMesh extends Mesh<Geometry, Shader> {
     this.instanceBuffer = instanceBuffer;
     this.#ownedGeometry = geometry;
     this.#ownedShader = shader;
+    this.#prototypeTexture = options.prototypeTexture;
+    this.onRender = this.#bindPrototype;
   }
 
   updateInstances(data: ArrayBuffer, instanceCount: number): void {
@@ -254,18 +256,24 @@ export class GlyphMesh extends Mesh<Geometry, Shader> {
     this.#ownedShader.resources.uTransformTexture = texture.source;
     this.#ownedShader.resources.glyphUniforms.uniforms.uPaletteWidth = width;
     this.#ownedShader.resources.glyphUniforms.uniforms.uEffectBase = effectBase;
+    this.#bindPrototype();
   }
 
   setPrototypeTexture(texture: Texture, width: number): void {
     if (!Number.isSafeInteger(width) || width <= 0) {
       throw new TypeError("prototype width must be a positive safe integer");
     }
-    this.#ownedShader.resources.uPrototype = texture.source;
-    this.#ownedShader.resources.glyphUniforms.uniforms.uPrototypeWidth = width;
+    this.#prototypeTexture = texture;
+    this.#bindPrototype();
   }
+
+  #bindPrototype = (): void => {
+    this.#ownedShader.resources.uPrototype = this.#prototypeTexture.source;
+  };
 
   override destroy(): void {
     if (this.destroyed) return;
+    this.onRender = null;
     super.destroy();
     this.#ownedGeometry.destroy(true);
     this.#ownedShader.destroy(false);

@@ -15,7 +15,6 @@ uniform sampler2D uTransformTexture;
 uniform sampler2D uPrototype;
 uniform float uPaletteWidth;
 uniform float uEffectBase;
-uniform float uPrototypeWidth;
 
 out vec2 vUv;
 out vec4 vWorldColor;
@@ -32,9 +31,9 @@ vec4 paletteTexel(uint index) {
 }
 
 vec4 protoFetch(uint protoIndex, uint texelOffset) {
-    uint width = uint(uPrototypeWidth);
-    uint texel = protoIndex * 2u + texelOffset;
-    return texelFetch(uPrototype, ivec2(int(texel % width), int(texel / width)), 0);
+    int width = textureSize(uPrototype, 0).x;
+    int texel = int(protoIndex) * 2 + int(texelOffset);
+    return texelFetch(uPrototype, ivec2(texel % width, texel / width), 0);
 }
 
 vec3 unpackRgb(float packed) {
@@ -54,10 +53,10 @@ void main(void) {
         unpackHalf2x16(floatBitsToUint(proto0.y))
     );
     vec4 instanceUv = vec4(
-        unpackUnorm2x16(floatBitsToUint(proto0.z)),
-        unpackUnorm2x16(floatBitsToUint(proto0.w))
+        unpackHalf2x16(floatBitsToUint(proto0.z)),
+        unpackHalf2x16(floatBitsToUint(proto0.w))
     );
-    uint metadata = floatBitsToUint(proto1.y);
+    uint metadata = uint(round(proto1.y)) | (uint(round(proto1.z)) << 16u);
     bool isActive = (metadata & 0x80000000u) != 0u;
     uint paletteBase = aPaletteIndex * 2u;
     vec4 transform0 = paletteTexel(paletteBase);
@@ -267,7 +266,6 @@ struct LocalUniforms {
 struct GlyphUniforms {
     uPaletteWidth: f32,
     uEffectBase: f32,
-    uPrototypeWidth: f32,
 };
 
 @group(2) @binding(10) var<uniform> glyphUniforms: GlyphUniforms;
@@ -290,7 +288,7 @@ fn paletteIndex(linear: u32, width: u32) -> vec2<i32> {
 }
 
 fn protoFetch(proto: u32, texelOffset: u32) -> vec4<f32> {
-    let width = u32(glyphUniforms.uPrototypeWidth);
+    let width = textureDimensions(uPrototype).x;
     let texel = proto * 2u + texelOffset;
     return textureLoad(uPrototype, paletteIndex(texel, width), 0);
 }
@@ -308,10 +306,10 @@ fn mainVertex(
         unpack2x16float(bitcast<u32>(proto0.y)),
     );
     let instanceUv = vec4<f32>(
-        unpack2x16unorm(bitcast<u32>(proto0.z)),
-        unpack2x16unorm(bitcast<u32>(proto0.w)),
+        unpack2x16float(bitcast<u32>(proto0.z)),
+        unpack2x16float(bitcast<u32>(proto0.w)),
     );
-    let metadata = bitcast<u32>(proto1.y);
+    let metadata = u32(round(proto1.y)) | (u32(round(proto1.z)) << 16u);
     let isActive = (metadata & 0x80000000u) != 0u;
     let paletteWidth = u32(glyphUniforms.uPaletteWidth);
     let paletteBase = aPaletteIndex * 2u;
