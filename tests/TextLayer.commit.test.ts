@@ -96,8 +96,67 @@ describe("TextLayer commit and maintenance", () => {
     );
     await layer.commit();
     expect(layouts).toBe(2);
+    expect(layer.get(first)).toMatchObject({ text: "B", x: 81, y: 91 });
+    expect(layer.get(third)).toMatchObject({ text: "B", x: 101, y: 111 });
     expect(Array.from(transforms.data.subarray(0, 2))).toEqual([81, 91]);
     expect(transforms.consumeDirty()).toEqual([{ offset: 0, length: 80 }]);
+
+    layer.updateTextPositions(
+      new Float64Array([first, third]),
+      ["C", "D"],
+      new Float32Array([82, 92, 102, 112]),
+    );
+    await layer.commit();
+    expect(layouts).toBe(4);
+    expect(layer.get(first)).toMatchObject({ text: "C", x: 82, y: 92 });
+    expect(layer.get(third)).toMatchObject({ text: "D", x: 102, y: 112 });
+
+    layer.destroy();
+  });
+
+  test("keeps non-zero anchors on the object path during a content storm", async () => {
+    let layouts = 0;
+    const transforms = new TransformPalette({ initialCapacity: 8, textureWidth: 8 });
+    const layer = new TextLayer({
+      renderer: {} as Renderer,
+      rendering: {
+        transforms,
+        layoutEngine: {
+          layout() {
+            layouts += 1;
+            return RUN;
+          },
+          destroy() {},
+        },
+        glyphProvider: {
+          async rasterize() {
+            return alphaRaster();
+          },
+          destroy() {},
+        },
+        atlasOptions: { pageWidth: 32, pageHeight: 32, maxBytes: 4_096 },
+      },
+    });
+    const ids = layer.createMany([
+      { text: "A", x: 1, y: 1, anchorX: 0.5, anchorY: 0.5 },
+      { text: "A", x: 2, y: 2, anchorX: 0.5, anchorY: 0.5 },
+    ]);
+    await layer.commit();
+    expect(layouts).toBe(1);
+    const first = ids[0];
+    const second = ids[1];
+    if (first === undefined || second === undefined) throw new Error("Fixture ids missing");
+
+    layer.updateTextPositions(
+      new Float64Array([first, second]),
+      "B",
+      new Float32Array([10, 20, 30, 40]),
+    );
+    await layer.commit();
+    expect(layouts).toBe(2);
+    expect(layer.get(first)).toMatchObject({ text: "B", x: 10, y: 20, anchorX: 0.5, anchorY: 0.5 });
+    expect(layer.get(second)).toMatchObject({ text: "B", x: 30, y: 40, anchorX: 0.5, anchorY: 0.5 });
+    expect(layer.getBoundsFor(first)).toMatchObject({ x: 6, y: 15, width: 8, height: 10 });
 
     layer.destroy();
   });

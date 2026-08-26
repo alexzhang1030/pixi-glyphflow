@@ -66,6 +66,7 @@ export type {
 } from "../layout/types";
 export type { GlyphMeshOptions } from "../render/GlyphMesh";
 export type {
+  ContentLaneInput,
   GlyphProviderLike,
   RenderChange,
   RenderCommitResult,

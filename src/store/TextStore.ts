@@ -180,6 +180,35 @@ export class TextStore {
     return this.#resolveSlot(id);
   }
 
+  /** Layer-local identity for an occupied dense slot. @internal */
+  idAt(slot: number): TextId | undefined {
+    if (slot >= this.#highWater || !this.#occupied(slot)) return undefined;
+    const generation = this.#generations[slot] ?? 1;
+    return (this.#idBase + generation * SLOT_RADIX + slot) as TextId;
+  }
+
+  /** Occupied slot text without a snapshot. @internal */
+  textAt(slot: number): string | undefined {
+    if (slot >= this.#highWater || !this.#occupied(slot)) return undefined;
+    return this.#texts[slot];
+  }
+
+  /** Occupied slot interned style without a snapshot. @internal */
+  styleAt(slot: number): Readonly<TextStoreLabel["style"]> | undefined {
+    if (slot >= this.#highWater || !this.#occupied(slot)) return undefined;
+    return this.#styles[slot];
+  }
+
+  /** True when both anchors decode to zero. @internal */
+  anchorsZeroAt(slot: number): boolean {
+    return (
+      slot < this.#highWater &&
+      this.#occupied(slot) &&
+      readF16(this.#anchorX, slot) === 0 &&
+      readF16(this.#anchorY, slot) === 0
+    );
+  }
+
   /** Read the current label occupying a dense slot. @internal */
   snapshotAt(slot: number): Readonly<TextStoreSnapshot> | undefined {
     if (!Number.isSafeInteger(slot) || slot < 0) {

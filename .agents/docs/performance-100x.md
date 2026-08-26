@@ -77,18 +77,27 @@ writes, and remirroring the store.
   content storm with default anchors patches 16 palette bytes instead of rewriting the fill
   record. Non-zero anchors still take the full palette write because packed anchors include
   run bounds.
+- Rendered labels that share one interned (text, style) and zero anchors take
+  `applyContentLane`: one layout, in-place clones, columnar x/y. They do not build per-label
+  `RenderChange` snapshots. Shaping, vertical writing, trusted runs, and non-zero anchors stay
+  on the object path.
 
 ## Remaining slices, in order
 
-1. **Default baked pages.** Known UI alphabets still miss on the first session if no page is
-   supplied and TinySDF has not run. Shipping those pages in the core gzip is rejected.
-2. **Palette storage buffer and atlas texture array.** Wave 3 leftovers. Binding cost, not the
-   zoom hitch.
-3. **Admission-side first-seen budget.** A large pan onto fresh text can still hitch on layout
+1. **Content-storm clone and spatial walk.** `applyContentLane` still clones each dest range and
+   rewrites each spatial AABB from run bounds. The 100k-counter commit no longer builds
+   snapshots, but it still walks N instance copies and N hash-grid writes. Wave 1's ≤ 8 ms
+   `dynamic-counters` target needs a batch clone and the Wave 2 leftover: derive query bounds
+   from store x/y plus cached local width/height instead of a second AABB write.
+2. **Admission-side first-seen budget.** A large pan onto fresh text can still hitch on layout
    and raster in one commit. Any budget must finish on-screen labels in that commit and only
    cap off-screen working-set prep. Do not defer texel uploads for glyphs already instanced.
    Duplicate-string intern removes the per-label layout tax; unique glyphs still raster in the
    seeing commit.
+3. **Palette storage buffer and atlas texture array.** Wave 3 leftovers. Binding cost, not the
+   zoom hitch.
+4. **Default baked pages.** Known UI alphabets still miss on the first session if no page is
+   supplied and TinySDF has not run. Shipping those pages in the core gzip is rejected.
 
 Reject: drip-feed admission, `queryAll()` for compute-cull, BVH rebuilds on the 100k storm, and
 replacing PixiJS with a compute 2D engine.

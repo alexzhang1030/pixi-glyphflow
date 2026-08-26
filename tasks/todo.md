@@ -292,6 +292,13 @@
   - Verify: bun test tests/pack.test.ts tests/TextLayer.commit.test.ts tests/culling.test.ts tests/computeCull.test.ts
   - Files: src/render/pack.ts, src/render/RenderSurface.ts, src/TextLayer.ts, src/culling/computeCull.ts
 
+- [x] Task 12.11: Columnar broadcast content lane for shared-string storms.
+  - Acceptance: Rendered labels that share one interned (text, style) and zero anchors commit
+    through `applyContentLane` with one layout and no per-label snapshots. Mixed text, shaping,
+    trusted runs, and non-zero anchors stay on the object path. Published budgets stay.
+  - Verify: bun test tests/RenderCoordinator.test.ts tests/TextLayer.commit.test.ts tests/TextStore.test.ts
+  - Files: src/render/RenderCoordinator.ts, src/TextLayer.ts, src/store/TextStore.ts
+
 - [x] Task 12.10: Intern duplicate-string layout and clone dest ranges in place.
   - Acceptance: Shared (family, size, weight, text) labels layout once; `clone` reuses dest
     capacity; broadcast `updateTextPositions` with zero anchors patches 16 palette bytes.

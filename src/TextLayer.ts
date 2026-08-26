@@ -151,6 +151,7 @@ export class TextLayer extends Container {
   readonly #cullRecordDirtyScratch: DirtyByteRange[] = [];
   #preparedRing: CullViewport | undefined;
   #laneSlots: Uint32Array;
+  #contentSlots: Uint32Array;
   readonly #boundsScratch: MutableBoundsData = { x: 0, y: 0, width: 0, height: 0 };
   // Broadcast mutations reuse one text/style reference across the batch; estimating once
   // per identity pair removes an O(text) scan per label from bulk intake.
@@ -192,6 +193,7 @@ export class TextLayer extends Container {
     this.#dirtySlots = new Uint32Array(this.#store.capacity);
     this.#bulkSlots = new Uint32Array(this.#store.capacity);
     this.#laneSlots = new Uint32Array(this.#store.capacity);
+    this.#contentSlots = new Uint32Array(this.#store.capacity);
     this.#visibleSlots = new Uint32Array(this.#store.capacity);
     this.#visibleMember = new Uint8Array(this.#store.capacity);
     this.#renderedEpochs = new Uint32Array(this.#store.capacity);
@@ -794,6 +796,9 @@ export class TextLayer extends Container {
     const spatialStart = performance.now();
     let changes: LayerRenderChange[] = [];
     let laneCount = 0;
+    let contentCount = 0;
+    let contentText: string | undefined;
+    let contentStyle: Readonly<TextStyleOptions> | undefined;
     if (refreshResidency) {
       this.#visibleCount = this.#queryVisible(cullPath, drawViewport);
       this.#visibilityDirty = false;
@@ -806,6 +811,9 @@ export class TextLayer extends Container {
           const dirty = this.#buildResidentDirtyChanges();
           changes = dirty.changes;
           laneCount = dirty.laneCount;
+          contentCount = dirty.contentCount;
+          contentText = dirty.contentText;
+          contentStyle = dirty.contentStyle;
         }
         if (
           cameraMoved &&
@@ -827,6 +835,16 @@ export class TextLayer extends Container {
       laneXy = new Float32Array(laneCount * 2);
       this.#store.positionsInto(laneSlots, laneCount, laneXy);
     }
+    let contentSlots: Uint32Array | undefined;
+    let contentXy: Float32Array | undefined;
+    if (contentCount > 0 && contentText !== undefined && contentStyle !== undefined) {
+      contentSlots = this.#contentSlots.slice(0, contentCount);
+      contentSlots.sort();
+      contentXy = new Float32Array(contentCount * 2);
+      this.#store.positionsInto(contentSlots, contentCount, contentXy);
+    } else {
+      contentCount = 0;
+    }
     this.#lastSpatialUpdateMs = performance.now() - spatialStart;
     this.#lastLayoutMs = 0;
     this.#lastInstanceWriteMs = 0;
@@ -837,7 +855,7 @@ export class TextLayer extends Container {
     const needsComputeDispatch = cullPath === "compute-cull";
     if (
       coordinator === undefined ||
-      (changes.length === 0 && laneCount === 0 && !needsComputeDispatch)
+      (changes.length === 0 && laneCount === 0 && contentCount === 0 && !needsComputeDispatch)
     ) {
       if (this.#visibleCount === 0) this.#renderSurface?.dropIdleMeshes();
       this.#lastCommitDurationMs = performance.now() - start;
@@ -849,7 +867,7 @@ export class TextLayer extends Container {
     }
 
     let renderSequence = 0;
-    if (changes.length > 0) {
+    if (changes.length > 0 || contentCount > 0) {
       if (this.#renderSequence === Number.MAX_SAFE_INTEGER) {
         throw new RangeError("TextLayer render sequence capacity exhausted");
       }
@@ -864,13 +882,31 @@ export class TextLayer extends Container {
         this.#lastInstanceWriteMs = coordinator.stats.lastInstanceWriteMs;
         this.#lastPaletteWriteMs = coordinator.stats.lastPaletteWriteMs;
       }
+      let contentResult: RenderCommitResult | undefined;
+      if (
+        contentSlots !== undefined &&
+        contentXy !== undefined &&
+        contentText !== undefined &&
+        contentStyle !== undefined
+      ) {
+        contentResult = await coordinator.applyContentLane({
+          slots: contentSlots,
+          count: contentCount,
+          xy: contentXy,
+          text: contentText,
+          style: contentStyle,
+        });
+        this.#lastLayoutMs += coordinator.stats.lastLayoutMs;
+        this.#lastInstanceWriteMs += coordinator.stats.lastInstanceWriteMs;
+        this.#lastPaletteWriteMs += coordinator.stats.lastPaletteWriteMs;
+      }
       let laneResult: RenderCommitResult | undefined;
       if (laneSlots !== undefined && laneXy !== undefined) {
         const laneStart = performance.now();
         laneResult = coordinator.applyPositionLane(laneSlots, laneCount, laneXy);
         this.#lastPaletteWriteMs += performance.now() - laneStart;
       }
-      const result = commitResult ?? laneResult;
+      const result = mergeRenderResults(commitResult, contentResult, laneResult);
       const spatialWriteStart = performance.now();
       if (commitResult !== undefined) {
         for (const change of changes) {
@@ -894,10 +930,36 @@ export class TextLayer extends Container {
           );
         }
       }
+      if (contentSlots !== undefined && contentCount > 0) {
+        const contentRun = coordinator.getRun(contentSlots[0] ?? 0);
+        if (contentRun !== undefined) {
+          for (let index = 0; index < contentCount; index += 1) {
+            const slot = contentSlots[index];
+            if (slot === undefined) continue;
+            if (!this.#store.copyBoundsLabelAt(slot, this.#labelScratch)) continue;
+            const id = this.#store.idAt(slot);
+            if (id === undefined) continue;
+            this.#spatial.set(
+              slot,
+              transformedLabelBounds(this.#labelScratch, contentRun.bounds, this.#boundsScratch),
+              this.#labelScratch.zIndex,
+              this.#isEffectivelyVisible(id, this.#labelScratch.visible),
+            );
+          }
+        }
+      }
       this.#lastSpatialUpdateMs += performance.now() - spatialWriteStart;
       const computeUpdate: RenderComputeCullUpdate | undefined =
         cullPath === "compute-cull"
-          ? this.#buildComputeCullUpdate(coordinator, changes, laneSlots, laneCount, drawViewport)
+          ? this.#buildComputeCullUpdate(
+              coordinator,
+              changes,
+              laneSlots,
+              laneCount,
+              contentSlots,
+              contentCount,
+              drawViewport,
+            )
           : undefined;
       if (result !== undefined) surface?.apply(result, computeUpdate);
       else if (computeUpdate !== undefined) surface?.refreshComputeCull(computeUpdate);
@@ -1170,6 +1232,7 @@ export class TextLayer extends Container {
     this.#renderedEpochs = growTypedArray(this.#renderedEpochs, required);
     this.#bulkSlots = growTypedArray(this.#bulkSlots, required);
     this.#laneSlots = growTypedArray(this.#laneSlots, required);
+    this.#contentSlots = growTypedArray(this.#contentSlots, required);
     if (this.#cullRecordIndex.length < required) {
       const next = new Int32Array(required).fill(-1);
       next.set(this.#cullRecordIndex);
@@ -1229,6 +1292,8 @@ export class TextLayer extends Container {
     changes: readonly LayerRenderChange[],
     laneSlots: Uint32Array | undefined,
     laneCount: number,
+    contentSlots: Uint32Array | undefined,
+    contentCount: number,
     draw: CullViewport | undefined,
   ): RenderComputeCullUpdate {
     const states = coordinator.getDrawStates();
@@ -1247,6 +1312,10 @@ export class TextLayer extends Container {
       if (laneSlots !== undefined && laneCount > 0) {
         const lanePatched = this.#patchLaneCullRecords(coordinator, laneSlots, laneCount);
         if (lanePatched !== undefined) ranges.push(lanePatched);
+      }
+      if (contentSlots !== undefined && contentCount > 0) {
+        const contentPatched = this.#patchLaneCullRecords(coordinator, contentSlots, contentCount);
+        if (contentPatched !== undefined) ranges.push(contentPatched);
       }
       if (states.length > this.#cullRecordCount) {
         ranges.push(this.#appendCullRecords(coordinator, states));
@@ -1412,11 +1481,23 @@ export class TextLayer extends Container {
     return this.#renderSurface?.prepareCullPath() ?? "cpu-grid";
   }
 
-  #buildResidentDirtyChanges(): { changes: LayerRenderChange[]; laneCount: number } {
+  #buildResidentDirtyChanges(): {
+    changes: LayerRenderChange[];
+    laneCount: number;
+    contentCount: number;
+    contentText: string | undefined;
+    contentStyle: Readonly<TextStyleOptions> | undefined;
+  } {
     const changes: LayerRenderChange[] = [];
     let laneCount = 0;
+    let contentCount = 0;
+    let contentText: string | undefined;
+    let contentStyle: Readonly<TextStyleOptions> | undefined;
+    let contentMixed = false;
     const epoch = this.#renderEpoch;
-    if (epoch === 0) return { changes, laneCount };
+    if (epoch === 0) {
+      return { changes, laneCount, contentCount, contentText, contentStyle };
+    }
     const cullPath = this.#resolveCullPath();
     const draw = this.#drawViewport();
     const ring = draw === undefined ? undefined : expandPrepareRing(draw);
@@ -1460,10 +1541,54 @@ export class TextLayer extends Container {
         laneCount += 1;
         continue;
       }
+      if (!contentMixed && this.#isContentLaneCandidate(slot)) {
+        const text = this.#store.textAt(slot);
+        const style = this.#store.styleAt(slot);
+        if (text === undefined || style === undefined) {
+          contentMixed = true;
+        } else if (contentText === undefined) {
+          contentText = text;
+          contentStyle = style;
+          this.#contentSlots[contentCount] = slot;
+          contentCount += 1;
+          continue;
+        } else if (text === contentText && style === contentStyle) {
+          this.#contentSlots[contentCount] = slot;
+          contentCount += 1;
+          continue;
+        } else {
+          contentMixed = true;
+        }
+      }
       const change = this.#renderChangeForSlot(slot, true);
       if (change !== undefined) changes.push(change);
     }
-    return { changes, laneCount };
+    if (contentMixed && contentCount > 0) {
+      for (let index = 0; index < contentCount; index += 1) {
+        const slot = this.#contentSlots[index];
+        if (slot === undefined) continue;
+        const change = this.#renderChangeForSlot(slot, true);
+        if (change !== undefined) changes.push(change);
+      }
+      return {
+        changes,
+        laneCount,
+        contentCount: 0,
+        contentText: undefined,
+        contentStyle: undefined,
+      };
+    }
+    return { changes, laneCount, contentCount, contentText, contentStyle };
+  }
+
+  #isContentLaneCandidate(slot: number): boolean {
+    const mask = this.#dirtyMasks[slot] ?? TextDirty.None;
+    if ((mask & TextDirty.Content) === 0 || (mask & TextDirty.Style) !== 0) return false;
+    if ((mask & TextDirty.Transform) !== 0 && this.#positionOnly[slot] !== 1) return false;
+    if (!this.#store.anchorsZeroAt(slot)) return false;
+    const id = this.#store.idAt(slot);
+    if (id === undefined) return false;
+    return !this.#layouts.has(id) && !this.#shaping.has(id) && !this.#trustedRuns.has(id);
   }
 
   #buildTightFirstSeen(): LayerRenderChange[] {
@@ -1736,6 +1861,33 @@ function normalizeLabel(
   output.style = spec.style ?? EMPTY_STYLE;
 
   return output;
+}
+
+function mergeRenderResults(
+  ...parts: Array<RenderCommitResult | undefined>
+): RenderCommitResult | undefined {
+  let merged: RenderCommitResult | undefined;
+  for (const part of parts) {
+    if (part === undefined) continue;
+    if (merged === undefined) {
+      merged = part;
+      continue;
+    }
+    merged = {
+      revision: part.revision || merged.revision,
+      stale: merged.stale || part.stale,
+      appliedLabels: merged.appliedLabels + part.appliedLabels,
+      glyphs: part.glyphs,
+      atlasUploads: merged.atlasUploads + part.atlasUploads,
+      atlasCommit: {
+        entries: [...merged.atlasCommit.entries, ...part.atlasCommit.entries],
+        uploads: [...merged.atlasCommit.uploads, ...part.atlasCommit.uploads],
+        evictedKeys: [...merged.atlasCommit.evictedKeys, ...part.atlasCommit.evictedKeys],
+      },
+      drawOrderChanged: merged.drawOrderChanged || part.drawOrderChanged,
+    };
+  }
+  return merged;
 }
 
 function toRenderSnapshot(

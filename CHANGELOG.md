@@ -11,6 +11,8 @@
   bytes with `copyWithin`.
 - Broadcast text-plus-position updates keep the position-only transform kind. Labels with default
   zero anchors patch 16 palette bytes; non-zero anchors still rewrite the fill record.
+- Rendered labels that share one interned text and style skip the per-label snapshot pipeline
+  (`applyContentLane`). One layout, in-place clones, then a packed x/y write.
 - Commits with culling off no longer scan every resident through `queryAll` unless membership or
   visibility changed. Clearing a previous viewport still rebuilds the full set.
 - `updateTextPositions` slides spatial AABBs when the text is unchanged, so a text-plus-position

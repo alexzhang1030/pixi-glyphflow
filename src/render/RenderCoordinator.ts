@@ -90,6 +90,15 @@ export interface RenderCommitResult {
   readonly drawOrderChanged: boolean;
 }
 
+/** Shared-string content storm: one layout, then clone + palette x/y for a slot column. */
+export interface ContentLaneInput {
+  readonly slots: Uint32Array;
+  readonly count: number;
+  readonly xy: Float32Array;
+  readonly text: string;
+  readonly style: Readonly<TextStyleOptions>;
+}
+
 export interface RenderDrawState {
   readonly slot: number;
   readonly zIndex: number;
@@ -358,6 +367,63 @@ export class RenderCoordinator {
     this.#appliedLabels += count;
 
     return this.#result(0, false, written, EMPTY_ATLAS_COMMIT, false);
+  }
+
+  /**
+   * Broadcast text-plus-position: layout once, clone instances, patch palette x/y. Draw states
+   * stay; callers must already have a palette row per slot (rendered labels).
+   */
+  async applyContentLane(input: ContentLaneInput): Promise<Readonly<RenderCommitResult>> {
+    this.#assertActive();
+    if (input.count <= 0) {
+      return this.#result(0, false, 0, EMPTY_ATLAS_COMMIT, false);
+    }
+    if (input.xy.length < input.count * 2) {
+      throw new TypeError("Content lane xy must contain one packed pair per slot");
+    }
+    const ticket = ++this.#ticket;
+    const snapshot = contentLaneSnapshot(input.text, input.style);
+    const prepareStart = performance.now();
+    const interned = this.#lookupIntern(snapshot);
+    let run: Readonly<PositionedRun>;
+    if (interned !== undefined) {
+      run = isPromise(interned) ? await interned : interned;
+    } else {
+      const laidOut = this.#layout.layout(input.slots[0] ?? 0, 1, {
+        text: input.text,
+        style: input.style,
+      });
+      this.#storeIntern(snapshot, laidOut);
+      run = isPromise(laidOut) ? await laidOut : laidOut;
+      if (isPromise(laidOut)) this.#storeIntern(snapshot, run);
+    }
+    if (ticket !== this.#ticket) {
+      this.#staleRevisions += 1;
+      return this.#result(0, true, 0, EMPTY_ATLAS_COMMIT, false);
+    }
+    const missing = this.#ensureMissingGlyphs(run, snapshot);
+    if (missing !== undefined) await missing;
+    this.#lastLayoutMs = performance.now() - prepareStart;
+    if (ticket !== this.#ticket) {
+      this.#staleRevisions += 1;
+      return this.#result(0, true, 0, EMPTY_ATLAS_COMMIT, false);
+    }
+
+    const atlasCommit = this.atlas.commitFrame();
+    const writeStart = performance.now();
+    for (let index = 0; index < input.count; index += 1) {
+      const slot = input.slots[index];
+      if (slot === undefined) throw new Error("Content lane slot list is incomplete");
+      this.#runs.set(slot, run);
+      this.#writeInstances(slot, run, snapshot);
+    }
+    this.transforms.writePositions(input.slots, input.count, input.xy);
+    this.#lastInstanceWriteMs = performance.now() - writeStart;
+    this.#shapedLabels += input.count;
+    this.#appliedLabels += input.count;
+    this.#revisions += 1;
+
+    return this.#result(0, false, input.count, atlasCommit, false);
   }
 
   getRun(slot: number): Readonly<PositionedRun> | undefined {
@@ -862,6 +928,29 @@ class LazyRasterGlyphProvider implements GlyphProviderLike {
 
 function isPromise<T>(value: T | Promise<T>): value is Promise<T> {
   return value instanceof Promise;
+}
+
+function contentLaneSnapshot(
+  text: string,
+  style: Readonly<TextStyleOptions>,
+): Readonly<RenderLabelSnapshot> {
+  return {
+    sourceRevision: 1,
+    text,
+    x: 0,
+    y: 0,
+    scaleX: 1,
+    scaleY: 1,
+    rotation: 0,
+    zIndex: 0,
+    order: 0,
+    blendMode: "normal",
+    alpha: 1,
+    visible: true,
+    anchorX: 0,
+    anchorY: 0,
+    style,
+  };
 }
 
 function internUsesFaceMap(snapshot: Readonly<RenderLabelSnapshot>): boolean {

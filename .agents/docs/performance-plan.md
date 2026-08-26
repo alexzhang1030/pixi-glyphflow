@@ -101,6 +101,10 @@ LRU, 52-bit keys, the 48 MiB store (test-pinned, 44.9 MiB measured), the sparse 
    (family, size, weight, text) skip `LayoutEngine.layout`. `clone` keeps a dest range that already
    fits. Broadcast text-plus-position with zero anchors patches 16 palette bytes. Unique-glyph
    raster in the seeing commit is unchanged.
+7. **Broadcast content lane — LANDED.** Rendered labels that share one interned (text, style) and
+   zero anchors skip per-label snapshots: `applyContentLane` layouts once, clones in place, and
+   writes packed x/y. Mixed text, shaping, trusted runs, and non-zero anchors stay on the object
+   path.
 
 **Regressions and traps the audits confirmed:**
 

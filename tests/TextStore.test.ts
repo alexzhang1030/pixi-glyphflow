@@ -188,6 +188,20 @@ describe("TextStore", () => {
     store.dispose();
   });
 
+  test("reads slot identity, text, style, and zero anchors without a snapshot", () => {
+    const store = new TextStore();
+    const id = store.create(label({ x: 4, y: 5 }));
+    const slot = store.slotOf(id);
+    expect(slot).toBeDefined();
+    expect(store.idAt(slot ?? -1)).toBe(id);
+    expect(store.textAt(slot ?? -1)).toBe("label");
+    expect(store.styleAt(slot ?? -1)).toBe(store.get(id)?.style);
+    expect(store.anchorsZeroAt(slot ?? -1)).toBe(true);
+    store.update(id, { anchorX: 0.5 });
+    expect(store.anchorsZeroAt(slot ?? -1)).toBe(false);
+    store.dispose();
+  });
+
   test("keeps one million reserved slots within 48 MiB", () => {
     const store = new TextStore({ initialCapacity: 1_000_000 });
     expect(store.capacity).toBe(1_048_576);

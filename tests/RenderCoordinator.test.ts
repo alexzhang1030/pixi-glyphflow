@@ -398,6 +398,67 @@ describe("RenderCoordinator", () => {
     registry.destroy();
   });
 
+  test("applies a broadcast content lane with one layout and in-place clones", async () => {
+    const registry = new FontRegistry();
+    await registry.register({ family: "Fixture" });
+    let layoutCalls = 0;
+    const coordinator = new RenderCoordinator({
+      registry,
+      layoutEngine: {
+        layout(_slot, _revision, input) {
+          layoutCalls += 1;
+          return run(input.text);
+        },
+        destroy() {},
+      },
+      glyphProvider: {
+        async rasterize(): Promise<GlyphRaster> {
+          return {
+            mode: "alpha",
+            width: 4,
+            height: 6,
+            pixels: new Uint8Array(24).fill(255),
+            metrics: { bearingX: 0, bearingY: 5, advance: 4 },
+          };
+        },
+        destroy() {},
+      },
+      atlasOptions: { pageWidth: 64, pageHeight: 64, maxBytes: 4_096 },
+      instanceOptions: { initialCapacity: 32 },
+      transformOptions: { initialCapacity: 16, textureWidth: 16 },
+    });
+    const firstSeen = Array.from({ length: 8 }, (_, slot) => ({
+      slot,
+      mask: CONTENT | TRANSFORM | STYLE,
+      snapshot: label(1, slot * 10, 0, "AB"),
+    }));
+    await coordinator.commit(1, firstSeen);
+    coordinator.transforms.consumeDirty();
+    const dest = coordinator.instances.getRange(3);
+    const slots = new Uint32Array([0, 1, 2, 3, 4, 5, 6, 7]);
+    const xy = new Float32Array(16);
+    for (let index = 0; index < 8; index += 1) {
+      xy[index * 2] = index;
+      xy[index * 2 + 1] = 1;
+    }
+
+    const next = await coordinator.applyContentLane({
+      slots,
+      count: 8,
+      xy,
+      text: "CD",
+      style: { fontFamily: "Fixture", fontSize: 16, fill: 0xffffff },
+    });
+    expect(next).toMatchObject({ stale: false, appliedLabels: 8, glyphs: 16 });
+    expect(layoutCalls).toBe(2);
+    expect(coordinator.instances.getRange(3)).toEqual(dest);
+    expect(coordinator.transforms.consumeDirty()).toEqual([{ offset: 0, length: 240 }]);
+    expect(Array.from(coordinator.transforms.data.subarray(0, 2))).toEqual([0, 1]);
+
+    coordinator.destroy();
+    registry.destroy();
+  });
+
   test("keeps the draw-list epoch while draw states only append", async () => {
     const registry = new FontRegistry();
     await registry.register({ family: "Fixture" });

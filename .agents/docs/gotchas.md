@@ -171,6 +171,11 @@ key. Do not intern trusted runs; those stay per-label.
 Content-plus-position commits with default zero anchors patch palette x/y only. Non-zero anchors
 still rewrite the fill record because packed anchors are `anchor * run bounds`.
 
+Rendered labels that share one interned (text, style) pair take `applyContentLane` instead of
+per-label snapshots. A mixed-text dirty wave, a shaping/layout/trusted side table, or a non-zero
+anchor forces the object path for the whole content group. Do not put first-seen unrendered
+slots on that lane: they still need a full palette `set`.
+
 ## Palette row uploads must stay 256-byte aligned when taller than one row
 
 `uploadFloatTextureRanges` stacks contiguous full palette rows into one `texSubImage2D` /
