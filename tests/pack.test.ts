@@ -1,13 +1,23 @@
 import { describe, expect, test } from "bun:test";
 
 import {
+  allocatePrototypePixels,
   packF16,
   packHalf2x16,
   paletteUploadRects,
   premultiplyRgba8,
+  prototypeByteRange,
+  prototypeTextureLayout,
   unpackF16,
   unpackHalf2x16,
+  writeDrawInstance,
+  writePrototypeGlyphs,
 } from "../src/render/pack";
+import {
+  GLYPH_DRAW_STRIDE,
+  GLYPH_INSTANCE_STRIDE,
+  GLYPH_PROTO_TEXTURE_WIDTH,
+} from "../src/render/types";
 
 describe("packHalf2x16", () => {
   test("round-trips unit rotation and integer anchors", () => {
@@ -59,5 +69,36 @@ describe("paletteUploadRects", () => {
       { x: 0, y: 1, width: 8, height: 1, texel: 8 },
       { x: 0, y: 2, width: 8, height: 1, texel: 16 },
     ]);
+  });
+});
+
+describe("prototype texture pack", () => {
+  test("grows width before height exceeds the device max", () => {
+    expect(prototypeTextureLayout(1)).toEqual({ width: GLYPH_PROTO_TEXTURE_WIDTH, height: 1 });
+    expect(prototypeTextureLayout(512)).toEqual({ width: GLYPH_PROTO_TEXTURE_WIDTH, height: 1 });
+    expect(prototypeTextureLayout(513)).toEqual({ width: GLYPH_PROTO_TEXTURE_WIDTH, height: 2 });
+    expect(prototypeTextureLayout(8_000_000, 4096)).toEqual({ width: 4096, height: 3907 });
+  });
+
+  test("copies store words into two padded texels per glyph", () => {
+    const store = new ArrayBuffer(GLYPH_INSTANCE_STRIDE);
+    const src = new Uint32Array(store);
+    src[0] = 1;
+    src[1] = 2;
+    src[2] = 3;
+    src[3] = 4;
+    src[4] = 5;
+    src[5] = 0x8000_0001;
+    const pixels = allocatePrototypePixels(GLYPH_PROTO_TEXTURE_WIDTH, 1);
+    writePrototypeGlyphs(pixels, store, 0, 1);
+    const dest = new Uint32Array(pixels.buffer);
+    expect([...dest.subarray(0, 8)]).toEqual([1, 2, 3, 4, 5, 0x8000_0001, 0, 0]);
+    expect(prototypeByteRange(0, GLYPH_INSTANCE_STRIDE)).toEqual({ offset: 0, length: 32 });
+  });
+
+  test("writes an 8-byte draw record", () => {
+    const words = new Uint32Array(GLYPH_DRAW_STRIDE / 4);
+    writeDrawInstance(words, 0, 11, 22);
+    expect([...words]).toEqual([11, 22]);
   });
 });

@@ -2,11 +2,18 @@
 
 ## CI Chrome does not draw `float16x4` instance attributes
 
-Keep the 24-byte CPU layout (four `f16` local-rect components). Bind the rect as `uint32x2` and unpack in the shader with `unpackHalf2x16` / `unpack2x16float`.
+Keep the 24-byte CPU store layout (four `f16` local-rect components). Shaders fetch those bits from
+the prototype texture and unpack with `unpackHalf2x16` / `unpack2x16float`. Draw instances are two
+`uint32`s (`aProtoIndex`, `aPaletteIndex`).
 
-`bun run test:browser` on CI Chrome drew 0 pixels when `GlyphMesh` used `float16x4` while the shaders declared `vec4`. ANGLE either skipped `HALF_FLOAT` instance attributes or rejected that type pairing. Palette index and metadata already use integer attributes; that path is proven.
+`bun run test:browser` on CI Chrome drew 0 pixels when `GlyphMesh` used `float16x4` while the shaders
+declared `vec4`. ANGLE either skipped `HALF_FLOAT` instance attributes or rejected that type pairing.
+Integer attributes and RGBA32F + `floatBitsToUint` are the proven path. Do not bind the prototype
+as `RGBA32UI` / `usampler2D` to "skip" the bit cast.
 
-Do not revert to 32-byte `float32x4` rects to make CI green.
+Do not revert to 32-byte `float32x4` rects to make CI green. Do not bind the 24-byte store as the
+instance buffer: after `share`, `highWater` is unique glyphs and their baked palette is the
+prototype's.
 
 ## PixiJS WebGPU devices keep the 128 MiB storage binding default
 
@@ -26,9 +33,9 @@ as reserved. Use `src` / `dst`. Do not name locals `from` or `to`.
 ## A compact mesh is not a permanent compute-cull veto
 
 Late glyph allocation leaves instance ranges out of draw order, so the CPU path builds compact
-meshes. Do not read that shape as `cpu-grid` forever. A single atlas bank stays on the direct
-store; GPU scatter writes draw-state order. Multi-segment scenes and a store with `highWater` more
-than twice the live instances stay on the CPU compact path.
+meshes. Do not read that shape as `cpu-grid` forever. A single atlas bank keeps one `GlyphMesh`;
+GPU scatter writes 8-byte draw-state-order refs. Multi-segment scenes and a store with `highWater`
+more than twice the live instances stay on the CPU compact path.
 
 ## Compute culling needs a larger CPU working set than its draw set
 
@@ -49,9 +56,10 @@ the palette. Re-query only on show/hide/add/remove or when the camera leaves the
 `getRange` must return the live range. Copying and freezing it on every pack or segment walk is the
 hot leaf.
 
-Mirror instance dirty ranges into the compute pass on every compute frame. A patch-path commit that
-skips the mirror leaves stale glyph bytes and stale record offsets in `instances_in`; content edits
-can relocate a range, so record patches must rewrite offset and count, not only the AABB.
+Compute scatter no longer reads the store. Upload dirty store bytes into the prototype texture.
+Content edits can relocate a range, so record patches must rewrite offset and count, not only the
+AABB. Size `instances_out` from logical `activeInstances * 8`, not `highWater * 24`. Shared
+duplicates make `highWater` much smaller than the visible glyph count.
 
 `ComputeCullPass.ensureCapacity` pushes the CPU-side indirect args (instance count 0) to the GPU.
 An idle compute frame must return before touching it, or the previous dispatch's draw count is
@@ -184,10 +192,9 @@ visibility. Do not call `spatial.set` per content-lane slot.
 
 Duplicate strings share one instance block. Do not bake dest palette indices into those bytes —
 scatter and the CPU compact mesh write `paletteIndex` from the cull record or draw span (`slot`).
-Shared offsets make `naturalOrder` false (`sourceIndex` walks backward), so WebGL cannot draw the
-store buffer directly: `highWater` is the unique glyphs and their palette is the prototype's.
-Compute-cull scatter still expands N visible copies. One mesh per unique string, instanced by
-label count, is not the default: it drops insertion order and explodes when texts are unique.
+Draw records are `(storeGlyphIndex, paletteIndex)`. Shaders fetch rect/UV/metadata. One mesh per
+unique string, instanced by label count, is not the default: it drops insertion order and explodes
+when texts are unique.
 `set` on a shared dest must copy-on-write. `clone` still copies exclusively; the live path uses
 `share` / `shareMany`. `clone` / `cloneMany` of a dest that already shares must copy-on-write.
 In-place write would patch the prototype palette. A second `share` onto dests that already point

@@ -92,27 +92,21 @@ writes, and remirroring the store.
   `writeFills` for the full palette row, then draw-state insert. They do not build per-label
   `RenderChange` snapshots. Scale, rotation, non-zero anchors, z-index, stroke, and trusted runs
   stay on the object path. Already-rendered storms stay on the content lane (`writePositions`).
+- Draw instances are 8 bytes: store glyph index plus palette index. Shaders `texelFetch` rect, UV,
+  and metadata from an RGBA32F prototype texture packed from the unique store. CPU compact and
+  WebGPU scatter write two uints per visible glyph. The 24-byte store is not the instance buffer.
+  One `GlyphMesh`, insertion order and z stay. One mesh per unique string is still rejected.
 
 ## Remaining slices, in order
 
-1. **Prototype-fetch instance mesh (shader contract).** After `share`, the store holds unique
-   glyphs but draw still expands N copies: WebGPU scatter writes 24 bytes per visible glyph,
-   WebGL compact does the same because spans cannot merge across palette indices. The current
-   `GlyphMesh` already *is* an instanced quad. `million-full` at 0.10 ms is GPU submission, not
-   the leftover. The walkable next step is: instance buffer becomes `(prototypeGlyph, paletteIndex)`,
-   shaders fetch rect/UV/metadata from the unique prototype. One draw, insertion order and z stay.
-   Reject as the default: one `GlyphMesh` per unique string instanced by label count. That batches
-   away from insertion order (compositing / z-tie gotcha) and becomes one mesh per counter on
-   `dynamic-counters`. WebGL 2 has no multi-draw-indirect to hide that. Do not swap the live layer
-   for the synthetic `million-full` mesh.
-2. **Admission-side first-seen budget.** A large pan onto fresh **unique** text can still hitch
+1. **Admission-side first-seen budget.** A large pan onto fresh **unique** text can still hitch
    on layout and raster in one commit. Any budget must finish on-screen labels in that commit
    and only cap off-screen working-set prep. Do not defer texel uploads for glyphs already
    instanced. Duplicate-string intern and the admit lane remove the per-label layout and
    snapshot tax; unique glyphs still raster in the seeing commit.
-3. **Palette storage buffer and atlas texture array.** Wave 3 leftovers. Binding cost, not the
-   zoom hitch. Same contract class as prototype-fetch; do them together if the shaders open.
-4. **Default baked pages.** Known UI alphabets still miss on the first session if no page is
+2. **Palette storage buffer and atlas texture array.** Wave 3 leftovers. Binding cost, not the
+   zoom hitch. Prototype-fetch opened the shaders; these can share that opening.
+3. **Default baked pages.** Known UI alphabets still miss on the first session if no page is
    supplied and TinySDF has not run. Shipping those pages in the core gzip is rejected.
 
 Reject: drip-feed admission, `queryAll()` for compute-cull, BVH rebuilds on the 100k storm, and

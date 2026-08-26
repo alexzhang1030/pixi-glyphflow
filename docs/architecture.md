@@ -68,8 +68,9 @@ Trusted glyph runs let an upstream layout system supply immutable typed arrays w
 ownership and revision stamps.
 
 `RenderCoordinator` prepares accepted changes without a microtask per label. Cache hits and atlas
-hits stay on the same turn. Duplicate strings clone a prototype instance range and rewrite the
-palette index. Compute-cull still instances an expanded working set for camera slack, but it only
+hits stay on the same turn. Duplicate strings share one prototype instance range. Draw instances
+are an 8-byte `(prototypeGlyph, paletteIndex)` pair; shaders fetch the unique rect, UV, and
+metadata. Compute-cull still instances an expanded working set for camera slack, but it only
 layouts and rasters first-seen labels that intersect the tight draw view plus a 0.25-viewport ring.
 `tinySdf: true` builds those HarfBuzz glyphs as a local SDF from the canvas mask.
 `rasterizerOptions.prebuilt` serves packed pages first so a known alphabet miss is a crop, not a
@@ -92,9 +93,11 @@ the character-based MSDF generator. A bounded worker pool runs in parallel and s
 inside each worker so mutable font state remains isolated. Small distance fields rasterize at a
 48-pixel minimum and carry a physical-to-logical scale through atlas entries and packed instances.
 
-Each live glyph instance uses 24 bytes (four `f16` local-rect components bound as `uint32x2`,
-`unorm16x4` UVs, palette index, and metadata). Shaders unpack the rect with `unpackHalf2x16` /
-`unpack2x16float`. The published instance ceiling stays 32 bytes until new artifacts exist. Each
+Each live glyph store record uses 24 bytes (four `f16` local-rect components, packed UVs, a
+prototype palette word, and metadata). Draw instances are 8 bytes: the store glyph index and the
+label palette index. Shaders fetch the store from an `rgba32float` prototype texture and unpack
+the rect with `unpackHalf2x16` / `unpack2x16float`. The published instance ceiling stays 32 bytes
+until new artifacts exist. Each
 fill-only label transform uses 32 bytes (two
 `rgba32float` texels). Stroke and drop shadow occupy one extra texel after the core region when
 any label uses those effects. The instance free list is a power-of-two segregated first-fit.
@@ -108,8 +111,9 @@ or budgeted WebGPU queue writes.
 bank, z order, and blend mode, so page changes within a bank stay in one ordered instanced draw.
 Equal-z labels retain insertion order. `GlyphMesh` selects the correct page per instance through
 paired GLSL and WGSL shaders for MSDF, SDF, alpha, color, fill, stroke, shadow, anchor, rotation,
-scale, and alpha behavior. Eight fragment textures plus the vertex transform palette fit the WebGL 2
-minimum texture-unit budget and the WebGPU minimum sampled-texture limit.
+scale, and alpha behavior. Eight fragment textures plus the vertex transform palette and the
+prototype texture fit the WebGL 2 minimum texture-unit budget and the WebGPU minimum sampled-texture
+limit.
 
 ## Culling and camera integration
 
@@ -122,9 +126,9 @@ working viewport. A stable prefix sum and scatter compact those resident glyphs 
 padded draw viewport. Camera motion inside the working viewport does not query the grid or write the
 instance store, and it skips the first-seen ring query while the draw viewport stays inside the last
 prepared ring. Crossing the working-set edge refreshes residency. GPU mirrors sync incrementally:
-commits upload only dirty instance byte ranges and changed or appended cull records, keyed by a
+commits upload dirty prototype texels and changed or appended cull records, keyed by a
 draw-list epoch that appends preserve; re-sorts, removals, and cull-path fallbacks force a full
-repack or resync.
+repack or resync. Scatter writes 8-byte draw records and does not read the store.
 
 The direct `GlyphMesh` rebinds its instance attributes to the compact buffer and uses an indexed
 indirect draw. The encoder hook checks geometry ownership and is removed when the pass is

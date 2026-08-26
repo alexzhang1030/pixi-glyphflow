@@ -9,7 +9,6 @@ import {
   planComputeCullStorageBytes,
 } from "../culling/computeCull";
 import { COMPUTE_CULL_WGSL } from "../culling/computeCull.wgsl";
-import type { DirtyByteRange } from "./types";
 
 const UNIFORM_BYTES = 32;
 
@@ -40,16 +39,14 @@ export class ComputeCullPass {
   #counts: GPUBuffer | undefined;
   #prefix: GPUBuffer | undefined;
   #groupSums: GPUBuffer | undefined;
-  #instancesIn: GPUBuffer | undefined;
   #instancesOut: GPUBuffer | undefined;
   #uniform: GPUBuffer | undefined;
   readonly indirectBuffer: Buffer;
   #labelCapacity = 0;
-  #instanceBytes = 0;
+  #drawBytes = 0;
   #recordCount = 0;
   #bindGroup: GPUBindGroup | undefined;
   #recordsSynced = false;
-  #instancesSynced = false;
   readonly #uniformScratch = new ArrayBuffer(UNIFORM_BYTES);
   readonly #uniformFloats = new Float32Array(this.#uniformScratch);
   readonly #uniformInts = new Uint32Array(this.#uniformScratch);
@@ -70,7 +67,7 @@ export class ComputeCullPass {
   }
 
   get synced(): boolean {
-    return this.#recordsSynced && this.#instancesSynced;
+    return this.#recordsSynced;
   }
 
   trackGeometry(geometry: Geometry): void {
@@ -98,9 +95,8 @@ export class ComputeCullPass {
           { binding: 2, visibility: GPUShaderStage.COMPUTE, buffer: { type: "storage" } },
           { binding: 3, visibility: GPUShaderStage.COMPUTE, buffer: { type: "storage" } },
           { binding: 4, visibility: GPUShaderStage.COMPUTE, buffer: { type: "storage" } },
-          { binding: 5, visibility: GPUShaderStage.COMPUTE, buffer: { type: "read-only-storage" } },
+          { binding: 5, visibility: GPUShaderStage.COMPUTE, buffer: { type: "storage" } },
           { binding: 6, visibility: GPUShaderStage.COMPUTE, buffer: { type: "storage" } },
-          { binding: 7, visibility: GPUShaderStage.COMPUTE, buffer: { type: "storage" } },
         ],
       });
       const layout = device.createPipelineLayout({ bindGroupLayouts: [bindGroupLayout] });
@@ -131,7 +127,7 @@ export class ComputeCullPass {
     }
   }
 
-  ensureCapacity(labelCount: number, instanceBytes: number): boolean {
+  ensureCapacity(labelCount: number, drawInstanceBytes: number): boolean {
     const device = this.#device;
     if (device === undefined || !this.#ready) return false;
     const limit = Math.min(device.limits.maxStorageBufferBindingSize, device.limits.maxBufferSize);
@@ -139,7 +135,7 @@ export class ComputeCullPass {
       Math.max(CULL_WORKGROUP, labelCount) * CULL_RECORD_STRIDE,
       limit,
     );
-    const bytes = planComputeCullStorageBytes(Math.max(24, instanceBytes), limit);
+    const bytes = planComputeCullStorageBytes(Math.max(8, drawInstanceBytes), limit);
     if (recordBytes === undefined || bytes === undefined) return false;
     const labels = recordBytes / CULL_RECORD_STRIDE;
     if (labels > this.#labelCapacity) {
@@ -175,24 +171,16 @@ export class ComputeCullPass {
       );
       this.#labelCapacity = labels;
     }
-    if (bytes > this.#instanceBytes) {
+    if (bytes > this.#drawBytes) {
       this.#bindGroup = undefined;
-      this.#instancesSynced = false;
-      this.#instancesIn?.destroy();
       this.#instancesOut?.destroy();
-      this.#instancesIn = createBuffer(
-        device,
-        bytes,
-        GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST,
-        "pixi-glyphflow-cull-instances-in",
-      );
       this.#instancesOut = createBuffer(
         device,
         bytes,
         GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST | GPUBufferUsage.VERTEX,
         "pixi-glyphflow-cull-instances-out",
       );
-      this.#instanceBytes = bytes;
+      this.#drawBytes = bytes;
     }
     if (this.#uniform === undefined) {
       this.#uniform = createBuffer(
@@ -223,32 +211,9 @@ export class ComputeCullPass {
     return true;
   }
 
-  /** `instances` must always be the complete store buffer so a resync can upload it whole. */
-  uploadInstances(
-    instances: ArrayBuffer,
-    byteLength: number,
-    dirty: readonly Readonly<DirtyByteRange>[],
-  ): boolean {
-    const device = this.#device;
-    if (device === undefined || this.#instancesIn === undefined || byteLength === 0) return false;
-    if (!this.#instancesSynced) {
-      device.queue.writeBuffer(this.#instancesIn, 0, instances, 0, byteLength);
-      this.#instancesSynced = true;
-      return true;
-    }
-    if (dirty.length === 0) return false;
-    for (const range of dirty) {
-      if (range.offset >= byteLength) continue;
-      const length = Math.min(range.length, byteLength - range.offset);
-      device.queue.writeBuffer(this.#instancesIn, range.offset, instances, range.offset, length);
-    }
-    return true;
-  }
-
   /** The GPU mirrors go stale while another cull path runs; force full uploads on re-entry. */
   invalidateSync(): void {
     this.#recordsSynced = false;
-    this.#instancesSynced = false;
   }
 
   dispatch(viewport: CullViewport): boolean {
@@ -265,7 +230,6 @@ export class ComputeCullPass {
       this.#counts === undefined ||
       this.#prefix === undefined ||
       this.#groupSums === undefined ||
-      this.#instancesIn === undefined ||
       this.#instancesOut === undefined ||
       this.#uniform === undefined
     ) {
@@ -291,9 +255,8 @@ export class ComputeCullPass {
           { binding: 2, resource: { buffer: this.#counts } },
           { binding: 3, resource: { buffer: this.#prefix } },
           { binding: 4, resource: { buffer: this.#groupSums } },
-          { binding: 5, resource: { buffer: this.#instancesIn } },
-          { binding: 6, resource: { buffer: this.#instancesOut } },
-          { binding: 7, resource: { buffer: indirect } },
+          { binding: 5, resource: { buffer: this.#instancesOut } },
+          { binding: 6, resource: { buffer: indirect } },
         ],
       });
     this.#bindGroup = bindGroup;
@@ -341,7 +304,7 @@ export class ComputeCullPass {
       options.geometry,
       options.shader.gpuProgram,
     );
-    const instanceBuffer = options.geometry.attributes.aInstanceRect?.buffer;
+    const instanceBuffer = options.geometry.attributes.aProtoIndex?.buffer;
     for (const [slot, attributeName] of Object.entries(names)) {
       const attribute = options.geometry.attributes[attributeName];
       if (instanceBuffer !== undefined && attribute?.buffer === instanceBuffer) {
@@ -361,12 +324,10 @@ export class ComputeCullPass {
     this.#counts?.destroy();
     this.#prefix?.destroy();
     this.#groupSums?.destroy();
-    this.#instancesIn?.destroy();
     this.#instancesOut?.destroy();
     this.#uniform?.destroy();
     this.#bindGroup = undefined;
     this.#recordsSynced = false;
-    this.#instancesSynced = false;
     this.indirectBuffer.destroy();
     this.#geometries.clear();
     this.#ready = false;

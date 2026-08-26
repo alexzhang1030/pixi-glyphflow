@@ -45,10 +45,11 @@ glyphs fit one atlas bank. WebGL, unavailable devices, multi-segment meshes, and
 CPU grid. `lod: true` drops labels whose projected font height is below one pixel. That changes
 pixels and stays off by default.
 
-PixiJS creates WebGPU devices with the 128 MiB core `maxStorageBufferBindingSize`. A million-label
-instance buffer can be 256 MiB. `requestComputeCullGpu()` requests the adapter's storage and buffer
-limits and returns `{ adapter, device }` for `Application.init({ gpu })`. If a live buffer still
-exceeds the device limit, the layer uses `cpu-grid`.
+PixiJS creates WebGPU devices with the 128 MiB core `maxStorageBufferBindingSize`. Compute cull
+binds record storage and an 8-byte-per-visible-glyph compact draw buffer. `requestComputeCullGpu()`
+requests the adapter's storage and buffer limits and returns `{ adapter, device }` for
+`Application.init({ gpu })`. If a live buffer still exceeds the device limit, the layer uses
+`cpu-grid`.
 
 `showAll()` and `hideAll()` return the number of labels whose `visible` state changed. Repeated calls
 return `0` and preserve revision state. One following `commit()` publishes the complete visibility
@@ -147,7 +148,8 @@ diagnostic types.
 These primitives support custom renderer pipelines that preserve the package storage and shader
 contracts. `GLYPH_TEXTURE_BANK_SIZE` is `8`; `GlyphMeshOptions.textures` accepts consecutive atlas
 pages beginning with `texture`, and `setTextures()` updates that bank while retaining the primary
-texture used by PixiJS blend-state selection. `GlyphAtlas` keys are `string | number`; the live
+texture used by PixiJS blend-state selection. Draw instances use `GLYPH_DRAW_STRIDE` (8 bytes);
+`prototypeTexture` holds the unique 24-byte store records. `GlyphAtlas` keys are `string | number`; the live
 coordinator path packs numeric identities and still accepts diagnostic strings.
 
 `TextLayerOptions.rendering.rasterizerOptions` configures the default `RasterGlyphProvider`.

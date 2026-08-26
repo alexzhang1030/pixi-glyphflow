@@ -117,11 +117,9 @@ LRU, 52-bit keys, the 48 MiB store (test-pinned, 44.9 MiB measured), the sparse 
     one layout per (text, style), `shareMany`, `writeFills`, draw-state insert, `placeMany`.
     Unique-glyph raster in the seeing commit is unchanged. Wave 1's ≤ 8 ms `dynamic-counters`
     target still needs a reference M1 Pro artifact before anyone claims the number.
-11. **Prototype-fetch instance mesh — OPEN.** Draw still expands shared prototype bytes per
-    visible glyph. The walkable path is an 8-byte instance `(prototypeGlyph, paletteIndex)` plus
-    shader fetch of the unique rect/UV. One `GlyphMesh` per unique string is rejected as the
-    default (insertion order, unique-text mesh count). Shader contract; same class as the Wave 3
-    palette storage leftover.
+11. **Prototype-fetch instance mesh — LANDED.** Draw instances are `(prototypeGlyph, paletteIndex)`.
+    Shaders fetch the unique 24-byte store from an RGBA32F prototype texture. Scatter and CPU
+    compact write 8 bytes per visible glyph. One mesh per unique string stays rejected.
 
 **Regressions and traps the audits confirmed:**
 

@@ -118,7 +118,8 @@ storage budgets stay until a human accepts new numbers.
   anchors uses a columnar content lane: one layout, a shared prototype range, packed x/y, and
   `placeMany` AABBs from the shared run box. Non-zero anchors, non-unit scale, shaping
   overrides, and trusted runs stay on the object path. Duplicate strings do not copy instance
-  bytes; compact/draw stamps the palette index.
+  bytes. Draw instances are 8 bytes per visible glyph; shaders fetch the unique store from a
+  prototype texture. Compact and scatter stamp the palette index.
 - Set an atlas ceiling that matches the product glyph working set.
 - Compute-cull layouts first-seen labels in the tight draw view plus a 0.25-viewport ring. The
   expanded working set is residency slack, not a prepare batch. Known strings hit the shape cache
