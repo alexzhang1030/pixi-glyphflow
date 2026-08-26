@@ -25,6 +25,17 @@ A dirty proto upload for store glyph 1 then writes glyph 0 (often cleared, `isAc
 the live texel. `packedFloatTexelView` copies the range first. Do not pass `data.subarray(...)`
 straight to `texSubImage2D`.
 
+The first proto `initializeTexture` uploads whatever `highWater` is at that moment (often glyph 0
+only). Three appearance glyphs still fit in one 1024-wide row, so the texture size does not grow
+and later glyphs live on the GPU only through dirty rects. Growing the palette recreates a vertex
+texture and Pixi re-inits sibling sources from that first upload, so protoIndex ≥ 1 becomes
+inactive. After a palette buffer replace, allocate a new proto pixel buffer, write the live store,
+create a new `BufferImageSource`, and `initializeTexture` it. That upload is the new first-upload
+snapshot. Do not wrap the same `Float32Array` and `destroy` the old `Texture`: Pixi keys the GL
+texture by the resource buffer, and destroy(old) kills the replacement. `source.update()` on the
+old source also leaves the first-upload snapshot stale. A first-stroke-only label stays on
+protoIndex 0 and hides this. W→AB→W plus stroke does not.
+
 Do not revert to 32-byte `float32x4` rects to make CI green. Do not bind the 24-byte store as the
 instance buffer: after `share`, `highWater` is unique glyphs and their baked palette is the
 prototype's.

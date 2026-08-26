@@ -130,6 +130,7 @@ export class RenderSurface {
   #protoPixels: Float32Array;
   #protoWidth = GLYPH_PROTO_TEXTURE_WIDTH;
   #protoInitialized = false;
+  #paletteGrew = false;
   #syncedDrawEpoch = -1;
   #syncedSegmentEpoch = -1;
   #submittedGlyphs = 0;
@@ -257,6 +258,10 @@ export class RenderSurface {
     }
     if (computeCull === undefined) this.#useCpuCull();
     else this.#refreshComputeCull(computeCull);
+    if (this.#paletteGrew) {
+      this.#refreshPrototypeTexture();
+      this.#paletteGrew = false;
+    }
     this.#bindMeshSources();
     this.#lastUploadMs = performance.now() - uploadStart;
   }
@@ -386,6 +391,7 @@ export class RenderSurface {
         surface.mesh.setPaletteTexture(this.#paletteTexture, stats.textureWidth, stats.effectBase);
       }
       oldTexture.destroy(true);
+      this.#paletteGrew = true;
     }
     if (ranges.length === 0) return;
     if (!this.#paletteInitialized) {
@@ -415,6 +421,33 @@ export class RenderSurface {
     }
   }
 
+  /** Palette growth re-inits proto from the first upload. See `.agents/docs/gotchas.md`. */
+  #refreshPrototypeTexture(): void {
+    const highWater = this.#coordinator.instances.stats.highWater;
+    if (this.#protoPixels.length === 0) return;
+    const height = Math.max(1, this.#protoPixels.length / (this.#protoWidth * 4));
+    const pixels = allocatePrototypePixels(this.#protoWidth, height);
+    writePrototypeGlyphs(pixels, this.#coordinator.instances.buffer, 0, highWater);
+    this.#adoptPrototypePixels(pixels, this.#protoWidth);
+    initializeTexture(this.#renderer, this.#protoSource);
+    this.#protoInitialized = true;
+    this.#instanceUploadBytes += pixels.byteLength;
+    this.#instanceWrites += 1;
+  }
+
+  #adoptPrototypePixels(pixels: Float32Array, width: number): void {
+    const oldTexture = this.#protoTexture;
+    this.#protoPixels = pixels;
+    this.#protoWidth = width;
+    this.#protoSource = createPrototypeSource(pixels, width, pixels.length / (width * 4));
+    this.#protoTexture = new Texture({ source: this.#protoSource });
+    this.#protoInitialized = false;
+    for (const surface of this.#meshes.values()) {
+      surface.mesh.setPrototypeTexture(this.#protoTexture, width);
+    }
+    oldTexture.destroy(true);
+  }
+
   #syncPrototype(ranges: readonly Readonly<DirtyByteRange>[]): void {
     const store = this.#coordinator.instances;
     const highWater = store.stats.highWater;
@@ -423,17 +456,9 @@ export class RenderSurface {
     const layout = prototypeTextureLayout(highWater, maxSize);
     const needed = layout.width * layout.height * 4;
     if (this.#protoPixels.length !== needed || this.#protoWidth !== layout.width) {
-      const oldTexture = this.#protoTexture;
-      this.#protoPixels = allocatePrototypePixels(layout.width, layout.height);
-      this.#protoWidth = layout.width;
-      writePrototypeGlyphs(this.#protoPixels, store.buffer, 0, highWater);
-      this.#protoSource = createPrototypeSource(this.#protoPixels, layout.width, layout.height);
-      this.#protoTexture = new Texture({ source: this.#protoSource });
-      this.#protoInitialized = false;
-      for (const surface of this.#meshes.values()) {
-        surface.mesh.setPrototypeTexture(this.#protoTexture, layout.width);
-      }
-      oldTexture.destroy(true);
+      const pixels = allocatePrototypePixels(layout.width, layout.height);
+      writePrototypeGlyphs(pixels, store.buffer, 0, highWater);
+      this.#adoptPrototypePixels(pixels, layout.width);
     } else {
       for (const range of ranges) {
         const startGlyph = Math.floor(range.offset / GLYPH_INSTANCE_STRIDE);

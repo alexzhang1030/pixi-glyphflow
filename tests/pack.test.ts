@@ -76,6 +76,8 @@ describe("paletteUploadRects", () => {
 describe("prototype texture pack", () => {
   test("grows width before height exceeds the device max", () => {
     expect(prototypeTextureLayout(1)).toEqual({ width: GLYPH_PROTO_TEXTURE_WIDTH, height: 1 });
+    // Appearance W→AB frees slot 0 and allocates two glyphs at highWater 3. Still one row.
+    expect(prototypeTextureLayout(3)).toEqual({ width: GLYPH_PROTO_TEXTURE_WIDTH, height: 1 });
     expect(prototypeTextureLayout(512)).toEqual({ width: GLYPH_PROTO_TEXTURE_WIDTH, height: 1 });
     expect(prototypeTextureLayout(513)).toEqual({ width: GLYPH_PROTO_TEXTURE_WIDTH, height: 2 });
     expect(prototypeTextureLayout(8_000_000, 4096)).toEqual({ width: 4096, height: 3907 });

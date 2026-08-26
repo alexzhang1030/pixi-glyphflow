@@ -9,9 +9,10 @@
   16-bit integer floats so RGBA32F cannot canonicalize NaN. Prototype width comes from
   `textureSize` / `textureDimensions`, not a third glyph uniform. The first stroke rebinds
   `uPrototype` after the palette grows. WebGL proto/palette dirty uploads copy a zero-offset
-  float view; ANGLE ignores `Float32Array.subarray` byte offsets on RGBA32F. WebGPU scatter
-  and CPU compact write two uints per
-  visible glyph instead of copying the 24-byte store. One mesh and insertion order stay.
+  float view; ANGLE ignores `Float32Array.subarray` byte offsets on RGBA32F. Growing the palette
+  replaces the prototype source with a new pixel buffer so Pixi's first-upload snapshot cannot
+  drop dirty glyphs after texel 0. WebGPU scatter and CPU compact write two uints per visible
+  glyph instead of copying the 24-byte store. One mesh and insertion order stay.
 - Duplicate strings intern one layout result per (family, size, weight, text). Later first-seen
   copies and broadcast `updateTextPositions` skip `LayoutEngine.layout` until the font registry
   revision changes.
