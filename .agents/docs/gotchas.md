@@ -184,6 +184,10 @@ visibility. Do not call `spatial.set` per content-lane slot.
 
 Duplicate strings share one instance block. Do not bake dest palette indices into those bytes —
 scatter and the CPU compact mesh write `paletteIndex` from the cull record or draw span (`slot`).
+Shared offsets make `naturalOrder` false (`sourceIndex` walks backward), so WebGL cannot draw the
+store buffer directly: `highWater` is the unique glyphs and their palette is the prototype's.
+Compute-cull scatter still expands N visible copies. One mesh per unique string, instanced by
+label count, is not the default: it drops insertion order and explodes when texts are unique.
 `set` on a shared dest must copy-on-write. `clone` still copies exclusively; the live path uses
 `share` / `shareMany`. `clone` / `cloneMany` of a dest that already shares must copy-on-write.
 In-place write would patch the prototype palette. A second `share` onto dests that already point
