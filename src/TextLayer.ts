@@ -910,7 +910,11 @@ export class TextLayer extends Container {
       const spatialWriteStart = performance.now();
       if (commitResult !== undefined) {
         for (const change of changes) {
-          if (change.snapshot === undefined || change.positionOnly === true) continue;
+          if (change.snapshot === undefined) continue;
+          // Position-only movers already slid their AABB at intake. Content-plus-xy
+          // that stayed on the object path (anchors, mixed text, shaping) still
+          // replaced that box with an estimate and must take the laid-out run.
+          if (change.positionOnly === true && (change.mask & TextDirty.Content) === 0) continue;
           const run = coordinator.getRun(change.slot);
           const current = this.#store.snapshotAt(change.slot);
           if (

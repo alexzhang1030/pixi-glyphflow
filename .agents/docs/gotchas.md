@@ -176,6 +176,11 @@ per-label snapshots. A mixed-text dirty wave, a shaping/layout/trusted side tabl
 anchor forces the object path for the whole content group. Do not put first-seen unrendered
 slots on that lane: they still need a full palette `set`.
 
+`updateTextPositions` keeps the position-only transform kind even when text changes. Intake then
+writes an estimate AABB. After layout, rewrite that box from the run: the content lane does it
+for the shared-string group; the object path must still do it when `mask` includes Content.
+Skipping every `positionOnly` change leaves hit bounds on the estimate forever.
+
 ## Palette row uploads must stay 256-byte aligned when taller than one row
 
 `uploadFloatTextureRanges` stacks contiguous full palette rows into one `texSubImage2D` /

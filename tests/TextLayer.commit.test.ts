@@ -138,8 +138,8 @@ describe("TextLayer commit and maintenance", () => {
       },
     });
     const ids = layer.createMany([
-      { text: "A", x: 1, y: 1, anchorX: 0.5, anchorY: 0.5 },
-      { text: "A", x: 2, y: 2, anchorX: 0.5, anchorY: 0.5 },
+      { text: "A", x: 1, y: 1, anchor: 0.5 },
+      { text: "A", x: 2, y: 2, anchor: 0.5 },
     ]);
     await layer.commit();
     expect(layouts).toBe(1);
@@ -154,8 +154,18 @@ describe("TextLayer commit and maintenance", () => {
     );
     await layer.commit();
     expect(layouts).toBe(2);
-    expect(layer.get(first)).toMatchObject({ text: "B", x: 10, y: 20, anchorX: 0.5, anchorY: 0.5 });
-    expect(layer.get(second)).toMatchObject({ text: "B", x: 30, y: 40, anchorX: 0.5, anchorY: 0.5 });
+    expect(layer.get(first)).toMatchObject({
+      text: "B",
+      x: 10,
+      y: 20,
+      anchor: { x: 0.5, y: 0.5 },
+    });
+    expect(layer.get(second)).toMatchObject({
+      text: "B",
+      x: 30,
+      y: 40,
+      anchor: { x: 0.5, y: 0.5 },
+    });
     expect(layer.getBoundsFor(first)).toMatchObject({ x: 6, y: 15, width: 8, height: 10 });
 
     layer.destroy();
