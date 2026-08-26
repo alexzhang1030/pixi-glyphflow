@@ -8,9 +8,10 @@ import {
 const F32 = new Float32Array(1);
 const U32 = new Uint32Array(F32.buffer);
 
-export const UINTS_PER_STORE_INSTANCE = GLYPH_INSTANCE_STRIDE / Uint32Array.BYTES_PER_ELEMENT;
-export const UINTS_PER_DRAW_INSTANCE = GLYPH_DRAW_STRIDE / Uint32Array.BYTES_PER_ELEMENT;
-export const UINTS_PER_PROTO_GLYPH = GLYPH_PROTO_TEXELS_PER_GLYPH * 4;
+export const UINTS_PER_STORE_INSTANCE: number =
+  GLYPH_INSTANCE_STRIDE / Uint32Array.BYTES_PER_ELEMENT;
+export const UINTS_PER_DRAW_INSTANCE: number = GLYPH_DRAW_STRIDE / Uint32Array.BYTES_PER_ELEMENT;
+export const UINTS_PER_PROTO_GLYPH: number = GLYPH_PROTO_TEXELS_PER_GLYPH * 4;
 
 /** Pack two f32 values into one uint32 as IEEE-754 binary16 pair. */
 export function packHalf2x16(x: number, y: number): number {
@@ -147,8 +148,8 @@ export interface PrototypeTextureLayout {
 /** Size a prototype texture so `glyphCount` glyphs fit inside `maxTextureSize`. */
 export function prototypeTextureLayout(
   glyphCount: number,
-  maxTextureSize = 4096,
-  minWidth = GLYPH_PROTO_TEXTURE_WIDTH,
+  maxTextureSize: number = 4096,
+  minWidth: number = GLYPH_PROTO_TEXTURE_WIDTH,
 ): PrototypeTextureLayout {
   const texels = Math.max(GLYPH_PROTO_TEXELS_PER_GLYPH, glyphCount * GLYPH_PROTO_TEXELS_PER_GLYPH);
   const limit = Math.max(1, maxTextureSize);

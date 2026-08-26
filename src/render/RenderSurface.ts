@@ -632,9 +632,7 @@ export class RenderSurface {
     }
     let surface = this.#meshes.get(0);
     const dummy =
-      surface !== undefined &&
-      !surface.compact &&
-      surface.data.byteLength >= GLYPH_DRAW_STRIDE
+      surface !== undefined && !surface.compact && surface.data.byteLength >= GLYPH_DRAW_STRIDE
         ? surface.data
         : new ArrayBuffer(GLYPH_DRAW_STRIDE);
     if (surface === undefined) {
