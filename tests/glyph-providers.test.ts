@@ -369,6 +369,61 @@ describe("glyph providers", () => {
     registry.destroy();
   });
 
+  test("batches same-size TinySDF misses and serializes canvas rasters", async () => {
+    const registry = new FontRegistry();
+    const font = await registry.register({ family: "System UI" });
+    let canvasCalls = 0;
+    const gates: Array<(raster: GlyphRaster) => void> = [];
+    const provider = new RasterGlyphProvider(registry, {
+      canvasRasterizer(): Promise<GlyphRaster> {
+        canvasCalls += 1;
+        return new Promise((resolve) => {
+          gates.push(resolve);
+        });
+      },
+      async createMsdfGenerator() {
+        throw new Error("MSDF generator must not start for TinySDF");
+      },
+    });
+    const base = {
+      family: "System UI",
+      fontRevision: font.revision,
+      fontSize: 16,
+      mode: "sdf",
+    } as const;
+    const pending = Promise.all([
+      provider.rasterize({ ...base, glyphId: 65, glyphText: "A" }),
+      provider.rasterize({ ...base, glyphId: 66, glyphText: "B" }),
+    ]);
+
+    await waitForCanvasGate(gates, 1);
+    expect(canvasCalls).toBe(1);
+
+    const alpha = {
+      mode: "alpha",
+      width: 8,
+      height: 8,
+      pixels: new Uint8Array(64).fill(255),
+      metrics: { bearingX: 1, bearingY: 6, advance: 8 },
+    } satisfies GlyphRaster;
+    gates[0]?.(alpha);
+    await waitForCanvasGate(gates, 2);
+    expect(canvasCalls).toBe(2);
+    gates[1]?.(alpha);
+
+    const rasters = await pending;
+    expect(rasters[0]?.mode).toBe("sdf");
+    expect(rasters[1]?.mode).toBe("sdf");
+    expect(provider.stats).toMatchObject({
+      tinySdfRasters: 2,
+      canvasRasters: 2,
+      distanceFieldRasters: 0,
+    });
+
+    await provider.destroy();
+    registry.destroy();
+  });
+
   test("keys canvas glyphs by the complete multilingual font stack", async () => {
     const registry = new FontRegistry();
     const font = await registry.register({ family: "System UI" });
@@ -410,3 +465,14 @@ describe("glyph providers", () => {
     registry.destroy();
   });
 });
+
+async function waitForCanvasGate(
+  gates: ReadonlyArray<(raster: GlyphRaster) => void>,
+  count: number,
+): Promise<void> {
+  for (let turn = 0; turn < 100; turn += 1) {
+    if (gates.length >= count) return;
+    await Promise.resolve();
+  }
+  throw new Error(`Timed out waiting for TinySDF canvas gate ${String(count)}`);
+}

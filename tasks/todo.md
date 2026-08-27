@@ -336,6 +336,13 @@
   - Verify: bun test tests/RenderCoordinator.test.ts tests/GlyphInstanceStore.test.ts tests/TextLayer.commit.test.ts tests/TextStore.test.ts tests/culling.test.ts
   - Files: src/render/RenderCoordinator.ts, src/render/GlyphInstanceStore.ts, src/store/TextStore.ts, src/TextLayer.ts
 
+- [x] Task 12.18: Batch same-size TinySDF misses and intern FontFace load.
+  - Acceptance: Same-size `mode: "sdf"` rasters share one FontFace wait and serialize canvas
+    plus EDT. A gated pair records one canvas start until the first gate resolves. EDT stays
+    per glyph. Published budgets stay. Default baked pages stay out of the core ESM graph.
+  - Verify: bun test tests/glyph-providers.test.ts && bun run typecheck
+  - Files: src/atlas/RasterGlyphProvider.ts
+
 - [x] Task 12.17: Prepare unique admit groups in parallel.
   - Acceptance: `applyAdmitLane` starts every group's layout and raster together. A gated
     two-string wave records both layouts before either resolves. Writes stay serial. On-screen
