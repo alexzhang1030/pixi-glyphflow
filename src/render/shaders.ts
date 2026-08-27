@@ -2,10 +2,8 @@ export const GLYPH_VERTEX_GLSL = /* glsl */ `
 #version 300 es
 
 in vec2 aVertex;
-in uvec2 aInstanceRect;
-in vec4 aInstanceUv;
+in uint aProtoIndex;
 in uint aPaletteIndex;
-in uint aMetadata;
 
 uniform mat3 uProjectionMatrix;
 uniform mat3 uWorldTransformMatrix;
@@ -14,6 +12,7 @@ uniform mat3 uTransformMatrix;
 uniform vec4 uColor;
 uniform float uRound;
 uniform sampler2D uTransformTexture;
+uniform sampler2D uPrototype;
 uniform float uPaletteWidth;
 uniform float uEffectBase;
 
@@ -31,6 +30,12 @@ vec4 paletteTexel(uint index) {
     return texelFetch(uTransformTexture, ivec2(int(index % width), int(index / width)), 0);
 }
 
+vec4 protoFetch(uint protoIndex, uint texelOffset) {
+    int width = textureSize(uPrototype, 0).x;
+    int texel = int(protoIndex) * 2 + int(texelOffset);
+    return texelFetch(uPrototype, ivec2(texel % width, texel / width), 0);
+}
+
 vec3 unpackRgb(float packed) {
     uint value = uint(round(packed));
     return vec3(
@@ -41,8 +46,18 @@ vec3 unpackRgb(float packed) {
 }
 
 void main(void) {
-    vec4 instanceRect = vec4(unpackHalf2x16(aInstanceRect.x), unpackHalf2x16(aInstanceRect.y));
-    bool isActive = (aMetadata & 0x80000000u) != 0u;
+    vec4 proto0 = protoFetch(aProtoIndex, 0u);
+    vec4 proto1 = protoFetch(aProtoIndex, 1u);
+    vec4 instanceRect = vec4(
+        unpackHalf2x16(floatBitsToUint(proto0.x)),
+        unpackHalf2x16(floatBitsToUint(proto0.y))
+    );
+    vec4 instanceUv = vec4(
+        unpackHalf2x16(floatBitsToUint(proto0.z)),
+        unpackHalf2x16(floatBitsToUint(proto0.w))
+    );
+    uint metadata = uint(round(proto1.y)) | (uint(round(proto1.z)) << 16u);
+    bool isActive = (metadata & 0x80000000u) != 0u;
     uint paletteBase = aPaletteIndex * 2u;
     vec4 transform0 = paletteTexel(paletteBase);
     vec4 transform1 = paletteTexel(paletteBase + 1u);
@@ -58,17 +73,17 @@ void main(void) {
     vec3 projected = uProjectionMatrix * uWorldTransformMatrix * uTransformMatrix
         * vec3(localPosition, 1.0);
     gl_Position = isActive ? vec4(projected.xy, 0.0, 1.0) : vec4(2.0, 2.0, 0.0, 1.0);
-    vUv = mix(aInstanceUv.xy, aInstanceUv.zw, aVertex);
+    vUv = mix(instanceUv.xy, instanceUv.zw, aVertex);
     vWorldColor = uWorldColorAlpha * uColor;
-    vMode = (aMetadata >> 16u) & 3u;
+    vMode = (metadata >> 16u) & 3u;
     uint aux = uint(round(transform1.w));
     vEffects = (aux & 65536u) != 0u
         ? paletteTexel(uint(uEffectBase) + aPaletteIndex)
         : vec4(0.0);
-    vUvBounds = aInstanceUv;
+    vUvBounds = instanceUv;
     vFill = vec4(unpackRgb(transform1.z), transform1.w);
-    vRasterScale = max(float((aMetadata >> 18u) & 8191u) / 64.0, 1.0);
-    vTextureSlot = aMetadata & 7u;
+    vRasterScale = max(float((metadata >> 18u) & 8191u) / 64.0, 1.0);
+    vTextureSlot = metadata & 7u;
 }
 `;
 
@@ -254,6 +269,7 @@ struct GlyphUniforms {
 };
 
 @group(2) @binding(10) var<uniform> glyphUniforms: GlyphUniforms;
+@group(2) @binding(11) var uPrototype: texture_2d<f32>;
 
 struct VertexOutput {
     @builtin(position) position: vec4<f32>,
@@ -271,16 +287,30 @@ fn paletteIndex(linear: u32, width: u32) -> vec2<i32> {
     return vec2<i32>(i32(linear % width), i32(linear / width));
 }
 
+fn protoFetch(proto: u32, texelOffset: u32) -> vec4<f32> {
+    let width = textureDimensions(uPrototype).x;
+    let texel = proto * 2u + texelOffset;
+    return textureLoad(uPrototype, paletteIndex(texel, width), 0);
+}
+
 @vertex
 fn mainVertex(
     @location(0) aVertex: vec2<f32>,
-    @location(1) aInstanceRect: vec2<u32>,
-    @location(2) aInstanceUv: vec4<f32>,
-    @location(3) aPaletteIndex: u32,
-    @location(4) aMetadata: u32,
+    @location(1) aProtoIndex: u32,
+    @location(2) aPaletteIndex: u32,
 ) -> VertexOutput {
-    let instanceRect = vec4<f32>(unpack2x16float(aInstanceRect.x), unpack2x16float(aInstanceRect.y));
-    let isActive = (aMetadata & 0x80000000u) != 0u;
+    let proto0 = protoFetch(aProtoIndex, 0u);
+    let proto1 = protoFetch(aProtoIndex, 1u);
+    let instanceRect = vec4<f32>(
+        unpack2x16float(bitcast<u32>(proto0.x)),
+        unpack2x16float(bitcast<u32>(proto0.y)),
+    );
+    let instanceUv = vec4<f32>(
+        unpack2x16float(bitcast<u32>(proto0.z)),
+        unpack2x16float(bitcast<u32>(proto0.w)),
+    );
+    let metadata = u32(round(proto1.y)) | (u32(round(proto1.z)) << 16u);
+    let isActive = (metadata & 0x80000000u) != 0u;
     let paletteWidth = u32(glyphUniforms.uPaletteWidth);
     let paletteBase = aPaletteIndex * 2u;
     let transform0 = textureLoad(uTransformTexture, paletteIndex(paletteBase, paletteWidth), 0);
@@ -313,14 +343,14 @@ fn mainVertex(
     }
     return VertexOutput(
         clip,
-        mix(aInstanceUv.xy, aInstanceUv.zw, aVertex),
+        mix(instanceUv.xy, instanceUv.zw, aVertex),
         globalUniforms.uWorldColorAlpha * localUniforms.uColor,
-        (aMetadata >> 16u) & 3u,
+        (metadata >> 16u) & 3u,
         effects,
-        aInstanceUv,
+        instanceUv,
         vec4<f32>(unpackRgb(transform1.z), transform1.w),
-        max(f32((aMetadata >> 18u) & 8191u) / 64.0, 1.0),
-        aMetadata & 7u,
+        max(f32((metadata >> 18u) & 8191u) / 64.0, 1.0),
+        metadata & 7u,
     );
 }
 

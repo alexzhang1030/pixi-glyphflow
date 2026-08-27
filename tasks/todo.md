@@ -300,6 +300,13 @@
   - Verify: bun test tests/TransformPalette.test.ts tests/TextStore.test.ts tests/RenderCoordinator.test.ts tests/TextLayer.commit.test.ts
   - Files: src/render/TransformPalette.ts, src/store/TextStore.ts, src/render/RenderCoordinator.ts, src/TextLayer.ts
 
+- [x] Task 12.15: Prototype-fetch instance mesh.
+  - Acceptance: Draw instances are 8-byte `(protoIndex, paletteIndex)` records. Shaders fetch
+    the unique 24-byte store from an RGBA32F prototype texture. Scatter and CPU compact write
+    two uints per visible glyph. One `GlyphMesh` and insertion order stay. Published budgets stay.
+  - Verify: bun test tests/GlyphMesh.test.ts tests/computeCull.test.ts tests/pack.test.ts && bun run typecheck
+  - Files: src/render/types.ts, src/render/pack.ts, src/render/shaders.ts, src/render/GlyphMesh.ts, src/culling/computeCull.ts, src/culling/computeCull.wgsl.ts, src/render/ComputeCullPass.ts, src/render/RenderSurface.ts
+
 - [x] Task 12.13: Share prototype instance ranges for duplicate strings.
   - Acceptance: `share` / `shareMany` retarget dests at one block; scatter and CPU compact
     write `paletteIndex` from the record/span; `set` copy-on-writes a shared dest;

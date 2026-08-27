@@ -21,14 +21,28 @@ import {
 } from "../culling/computeCull";
 import { ComputeCullPass } from "./ComputeCullPass";
 import { GlyphMesh } from "./GlyphMesh";
-import { FLOAT_TEXEL_BYTES, paletteUploadRects, premultiplyRgba8 } from "./pack";
+import {
+  allocatePrototypePixels,
+  FLOAT_TEXEL_BYTES,
+  packedFloatTexelView,
+  paletteUploadRects,
+  premultiplyRgba8,
+  prototypeByteRange,
+  prototypeTextureLayout,
+  writeDrawInstance,
+  writePrototypeGlyphs,
+} from "./pack";
 import type { RenderCommitResult, RenderCoordinator, RenderDrawState } from "./RenderCoordinator";
-import { GLYPH_INSTANCE_STRIDE, GLYPH_TEXTURE_BANK_SIZE, type DirtyByteRange } from "./types";
+import {
+  GLYPH_DRAW_STRIDE,
+  GLYPH_INSTANCE_STRIDE,
+  GLYPH_PROTO_TEXTURE_WIDTH,
+  GLYPH_TEXTURE_BANK_SIZE,
+  type DirtyByteRange,
+} from "./types";
 
 const ACTIVE_BIT = 0x8000_0000;
 const PAGE_MASK = 0x0000_ffff;
-const EMPTY_DIRTY_RANGES: readonly Readonly<DirtyByteRange>[] = Object.freeze([]);
-
 function emptySegmentWalk(): SegmentWalk {
   return { segments: [], naturalOrder: true, count: 0, lastSourceIndex: -1 };
 }
@@ -111,6 +125,14 @@ export class RenderSurface {
   #paletteTexture: Texture;
   #paletteData: Float32Array;
   #paletteInitialized = false;
+  #protoSource: BufferImageSource;
+  #protoTexture: Texture;
+  #protoPixels: Float32Array;
+  #protoWidth = GLYPH_PROTO_TEXTURE_WIDTH;
+  #protoInitialized = false;
+  #paletteGrew = false;
+  #syncedDrawEpoch = -1;
+  #syncedSegmentEpoch = -1;
   #submittedGlyphs = 0;
   #atlasUploadBytes = 0;
   #instanceUploadBytes = 0;
@@ -140,6 +162,9 @@ export class RenderSurface {
     this.#paletteData = coordinator.transforms.data;
     this.#paletteSource = createPaletteSource(coordinator);
     this.#paletteTexture = new Texture({ source: this.#paletteSource });
+    this.#protoPixels = allocatePrototypePixels(GLYPH_PROTO_TEXTURE_WIDTH, 1);
+    this.#protoSource = createPrototypeSource(this.#protoPixels, GLYPH_PROTO_TEXTURE_WIDTH, 1);
+    this.#protoTexture = new Texture({ source: this.#protoSource });
   }
 
   prepareCullPath(): CullPath {
@@ -166,21 +191,18 @@ export class RenderSurface {
   refreshComputeCull(update: Readonly<RenderComputeCullUpdate>): CullPath {
     this.#assertActive();
     const uploadStart = performance.now();
-    const path = this.#refreshComputeCull(update, EMPTY_DIRTY_RANGES);
+    const path = this.#refreshComputeCull(update);
     this.#lastUploadMs = performance.now() - uploadStart;
     return path;
   }
 
-  #refreshComputeCull(
-    update: Readonly<RenderComputeCullUpdate>,
-    instanceRanges: readonly Readonly<DirtyByteRange>[],
-  ): CullPath {
+  #refreshComputeCull(update: Readonly<RenderComputeCullUpdate>): CullPath {
     if (this.prepareCullPath() !== "compute-cull") {
       return this.#useCpuCull();
     }
     if (update.recordDirty === "all" && update.recordCount === 0) {
       this.#destroyMeshes();
-    } else if (!this.#hasDirectComputeMesh()) this.#syncMeshes([], update);
+    } else if (!this.#hasDirectComputeMesh()) this.#syncMeshes(update);
     const pass = this.#cullPass;
     const surface = this.#meshes.get(0);
     if (pass === undefined || surface === undefined || !this.#hasDirectComputeMesh()) {
@@ -190,7 +212,6 @@ export class RenderSurface {
     // ensureCapacity resets the indirect args, so an idle frame must return before it.
     if (
       update.recordDirty === "none" &&
-      instanceRanges.length === 0 &&
       pass.synced &&
       cullViewportsEqual(this.#lastCullViewport, update.viewport)
     ) {
@@ -198,12 +219,11 @@ export class RenderSurface {
       return this.#cullPath;
     }
     const store = this.#coordinator.instances;
-    const instanceBytes = store.stats.highWater * GLYPH_INSTANCE_STRIDE;
-    if (!pass.ensureCapacity(update.recordCount, instanceBytes)) {
+    const drawBytes = store.stats.activeInstances * GLYPH_DRAW_STRIDE;
+    if (!pass.ensureCapacity(update.recordCount, drawBytes)) {
       return this.#useCpuCull();
     }
     pass.uploadRecords(update.records, update.recordCount, update.recordDirty);
-    pass.uploadInstances(store.buffer, instanceBytes, instanceRanges);
     if (!pass.dispatch(update.viewport)) {
       this.#syncCompactDraw(update);
       return this.#useCpuCull();
@@ -223,25 +243,26 @@ export class RenderSurface {
     const transformRanges = this.#coordinator.transforms.consumeDirty();
     const instanceRanges = this.#coordinator.instances.consumeDirty();
     this.#syncPalette(transformRanges);
+    this.#syncPrototype(instanceRanges);
     const needsComputeRebuild = this.#needsComputeMeshRebuild(computeCull);
-    const skipSegmentWalk =
-      computeCull !== undefined &&
-      this.#hasDirectComputeMesh() &&
-      instanceRanges.length === 0 &&
-      !needsComputeRebuild;
+    const needDrawRebuild =
+      result.drawOrderChanged ||
+      this.#meshes.size === 0 ||
+      needsComputeRebuild ||
+      this.#syncedDrawEpoch !== this.#coordinator.drawListEpoch ||
+      this.#syncedSegmentEpoch !== this.#coordinator.instances.segmentEpoch;
     if (this.#coordinator.getDrawStates().length === 0) {
       this.#destroyMeshes();
-    } else if (
-      !skipSegmentWalk &&
-      (instanceRanges.length > 0 ||
-        result.drawOrderChanged ||
-        this.#meshes.size === 0 ||
-        needsComputeRebuild)
-    ) {
-      this.#syncMeshes(instanceRanges, computeCull);
+    } else if (needDrawRebuild) {
+      this.#syncMeshes(computeCull);
     }
     if (computeCull === undefined) this.#useCpuCull();
-    else this.#refreshComputeCull(computeCull, instanceRanges);
+    else this.#refreshComputeCull(computeCull);
+    if (this.#paletteGrew) {
+      this.#refreshPrototypeTexture();
+      this.#paletteGrew = false;
+    }
+    this.#bindMeshSources();
     this.#lastUploadMs = performance.now() - uploadStart;
   }
 
@@ -278,6 +299,8 @@ export class RenderSurface {
     this.#lastCullViewport = undefined;
     this.#paletteTexture.destroy(true);
     this.#paletteData = new Float32Array();
+    this.#protoTexture.destroy(true);
+    this.#protoPixels = new Float32Array();
     this.#submittedGlyphs = 0;
     this.#destroyed = true;
   }
@@ -368,11 +391,13 @@ export class RenderSurface {
         surface.mesh.setPaletteTexture(this.#paletteTexture, stats.textureWidth, stats.effectBase);
       }
       oldTexture.destroy(true);
+      this.#paletteGrew = true;
     }
     if (ranges.length === 0) return;
     if (!this.#paletteInitialized) {
       initializeTexture(this.#renderer, this.#paletteSource);
       this.#paletteInitialized = true;
+      this.#bindMeshSources();
       this.#transformUploadBytes += data.byteLength;
       this.#transformWrites += 1;
       return;
@@ -388,10 +413,90 @@ export class RenderSurface {
     this.#transformWrites += uploaded.writes;
   }
 
-  #syncMeshes(
-    ranges: readonly Readonly<DirtyByteRange>[],
-    computeCull: Readonly<RenderComputeCullUpdate> | undefined,
-  ): void {
+  #bindMeshSources(): void {
+    const stats = this.#coordinator.transforms.stats;
+    for (const surface of this.#meshes.values()) {
+      surface.mesh.setPaletteTexture(this.#paletteTexture, stats.textureWidth, stats.effectBase);
+      surface.mesh.setPrototypeTexture(this.#protoTexture, this.#protoWidth);
+    }
+  }
+
+  /** Rewrite the live store into the existing proto texture. See `.agents/docs/gotchas.md`. */
+  #refreshPrototypeTexture(): void {
+    const highWater = this.#coordinator.instances.stats.highWater;
+    if (this.#protoPixels.length === 0) return;
+    writePrototypeGlyphs(this.#protoPixels, this.#coordinator.instances.buffer, 0, highWater);
+    this.#protoSource.update();
+    const uploaded = uploadFloatTextureRanges(
+      this.#renderer,
+      this.#protoSource,
+      this.#protoPixels,
+      this.#protoWidth,
+      [{ offset: 0, length: this.#protoPixels.byteLength }],
+    );
+    initializeTexture(this.#renderer, this.#protoSource);
+    this.#protoInitialized = true;
+    this.#instanceUploadBytes += uploaded.bytes;
+    this.#instanceWrites += uploaded.writes;
+  }
+
+  #adoptPrototypePixels(pixels: Float32Array, width: number): void {
+    const oldTexture = this.#protoTexture;
+    this.#protoPixels = pixels;
+    this.#protoWidth = width;
+    this.#protoSource = createPrototypeSource(pixels, width, pixels.length / (width * 4));
+    this.#protoTexture = new Texture({ source: this.#protoSource });
+    this.#protoInitialized = false;
+    for (const surface of this.#meshes.values()) {
+      surface.mesh.setPrototypeTexture(this.#protoTexture, width);
+    }
+    oldTexture.destroy(true);
+  }
+
+  #syncPrototype(ranges: readonly Readonly<DirtyByteRange>[]): void {
+    const store = this.#coordinator.instances;
+    const highWater = store.stats.highWater;
+    if (highWater === 0 && ranges.length === 0) return;
+    const maxSize = rendererMaxTextureSize(this.#renderer);
+    const layout = prototypeTextureLayout(highWater, maxSize);
+    const needed = layout.width * layout.height * 4;
+    if (this.#protoPixels.length !== needed || this.#protoWidth !== layout.width) {
+      const pixels = allocatePrototypePixels(layout.width, layout.height);
+      writePrototypeGlyphs(pixels, store.buffer, 0, highWater);
+      this.#adoptPrototypePixels(pixels, layout.width);
+    } else {
+      for (const range of ranges) {
+        const startGlyph = Math.floor(range.offset / GLYPH_INSTANCE_STRIDE);
+        const endGlyph = Math.ceil((range.offset + range.length) / GLYPH_INSTANCE_STRIDE);
+        writePrototypeGlyphs(
+          this.#protoPixels,
+          store.buffer,
+          startGlyph,
+          Math.max(0, endGlyph - startGlyph),
+        );
+      }
+    }
+    if (ranges.length === 0 && this.#protoInitialized) return;
+    if (!this.#protoInitialized) {
+      initializeTexture(this.#renderer, this.#protoSource);
+      this.#protoInitialized = true;
+      this.#instanceUploadBytes += this.#protoPixels.byteLength;
+      this.#instanceWrites += 1;
+      return;
+    }
+    const protoRanges = ranges.map((range) => prototypeByteRange(range.offset, range.length));
+    const uploaded = uploadFloatTextureRanges(
+      this.#renderer,
+      this.#protoSource,
+      this.#protoPixels,
+      this.#protoWidth,
+      protoRanges,
+    );
+    this.#instanceUploadBytes += uploaded.bytes;
+    this.#instanceWrites += uploaded.writes;
+  }
+
+  #syncMeshes(computeCull: Readonly<RenderComputeCullUpdate> | undefined): void {
     const store = this.#coordinator.instances;
     const storeStats = store.stats;
     if (storeStats.activeInstances === 0 || this.#coordinator.getDrawStates().length === 0) {
@@ -406,18 +511,12 @@ export class RenderSurface {
       highWater: storeStats.highWater,
       activeInstances: storeStats.activeInstances,
     });
-    if (this.#computeEligible && (draw.naturalOrder || computeCull !== undefined)) {
+    if (this.#computeEligible && computeCull !== undefined) {
       const segment = draw.segments[0];
       if (segment === undefined) throw new Error("Active glyph segment is unavailable");
-      this.#syncDirectMesh(
-        segment.bank,
-        segment.blendMode,
-        data,
-        storeStats.highWater,
-        ranges,
-        computeCull !== undefined,
-      );
+      this.#syncComputeMesh(segment.bank, segment.blendMode);
       this.#submittedGlyphs = storeStats.activeInstances;
+      this.#markDrawSynced();
       return;
     }
     const compactDraw =
@@ -431,8 +530,14 @@ export class RenderSurface {
               computeCull.recordCount,
             ),
           );
-    this.#syncCompactMeshes(data, compactDraw.segments);
+    this.#syncCompactMeshes(compactDraw.segments);
     this.#submittedGlyphs = compactDraw.count;
+    this.#markDrawSynced();
+  }
+
+  #markDrawSynced(): void {
+    this.#syncedDrawEpoch = this.#coordinator.drawListEpoch;
+    this.#syncedSegmentEpoch = this.#coordinator.instances.segmentEpoch;
   }
 
   /** Full walks are cached; while both epochs hold, states only append and pages are stable. */
@@ -562,61 +667,36 @@ export class RenderSurface {
     return included;
   }
 
-  #syncDirectMesh(
-    bank: number,
-    blendMode: BLEND_MODES,
-    data: ArrayBuffer,
-    instanceCount: number,
-    ranges: readonly Readonly<DirtyByteRange>[],
-    computeCullActive: boolean,
-  ): void {
+  #syncComputeMesh(bank: number, blendMode: BLEND_MODES): void {
     for (const [key, surface] of this.#meshes) {
       if (key !== 0) this.#destroyMesh(key, surface);
     }
     let surface = this.#meshes.get(0);
+    const dummy =
+      surface !== undefined && !surface.compact && surface.data.byteLength >= GLYPH_DRAW_STRIDE
+        ? surface.data
+        : new ArrayBuffer(GLYPH_DRAW_STRIDE);
     if (surface === undefined) {
-      surface = this.#createMesh(0, bank, blendMode, data, instanceCount, false);
-      initializeBuffer(this.#renderer, surface.mesh);
-      surface.initialized = true;
-      this.#instanceUploadBytes += data.byteLength;
-      this.#instanceWrites += 1;
+      surface = this.#createMesh(0, bank, blendMode, dummy, 1, false);
+      // Indirect draw binds the compute pass compact buffer. Leave the dummy unread.
+      surface.initialized = false;
       return;
     }
     this.#configureMesh(surface, bank, blendMode, 0);
     surface.compact = false;
-    if (surface.data !== data) {
-      surface.data = data;
-      surface.mesh.updateInstances(data, instanceCount);
-      initializeBuffer(this.#renderer, surface.mesh);
-      surface.initialized = true;
-      this.#instanceUploadBytes += data.byteLength;
-      this.#instanceWrites += 1;
-      return;
+    if (surface.data !== dummy) {
+      surface.data = dummy;
+      surface.mesh.updateInstances(dummy, 1);
+    } else {
+      surface.mesh.setInstanceCount(1);
     }
-    surface.mesh.setInstanceCount(instanceCount);
-    if (computeCullActive) {
-      // The indirect draw binds the compute pass's compacted buffer, so the mesh's own
-      // GPU copy is unread; leave it stale and let a cull fallback re-initialize it.
-      surface.initialized = false;
-      return;
-    }
-    if (!surface.initialized) {
-      initializeBuffer(this.#renderer, surface.mesh);
-      surface.initialized = true;
-      this.#instanceUploadBytes += data.byteLength;
-      this.#instanceWrites += 1;
-      return;
-    }
-    const uploaded = uploadBufferRanges(this.#renderer, surface.mesh, data, ranges);
-    this.#instanceUploadBytes += uploaded.bytes;
-    this.#instanceWrites += uploaded.writes;
+    surface.initialized = false;
   }
 
-  #syncCompactMeshes(source: ArrayBuffer, segments: readonly DrawSegment[]): void {
+  #syncCompactMeshes(segments: readonly DrawSegment[]): void {
     for (const [key, surface] of this.#meshes) {
       if (key >= segments.length) this.#destroyMesh(key, surface);
     }
-    const bytes = new Uint8Array(source);
     for (let key = 0; key < segments.length; key += 1) {
       const segment = segments[key];
       if (segment === undefined) throw new Error(`Draw segment ${String(key)} is unavailable`);
@@ -625,22 +705,16 @@ export class RenderSurface {
       const buffer =
         current !== undefined &&
         current.compact &&
-        current.data.byteLength >= capacity * GLYPH_INSTANCE_STRIDE
+        current.data.byteLength >= capacity * GLYPH_DRAW_STRIDE
           ? current.data
-          : new ArrayBuffer(capacity * GLYPH_INSTANCE_STRIDE);
-      const target = new Uint8Array(buffer);
+          : new ArrayBuffer(capacity * GLYPH_DRAW_STRIDE);
       const words = new Uint32Array(buffer);
-      let targetOffset = 0;
+      let write = 0;
       for (const span of segment.spans) {
-        const sourceOffset = span.offset * GLYPH_INSTANCE_STRIDE;
-        const byteLength = span.count * GLYPH_INSTANCE_STRIDE;
-        target.set(bytes.subarray(sourceOffset, sourceOffset + byteLength), targetOffset);
-        const first = targetOffset / Uint32Array.BYTES_PER_ELEMENT;
-        const uintsPerInstance = GLYPH_INSTANCE_STRIDE / Uint32Array.BYTES_PER_ELEMENT;
         for (let glyph = 0; glyph < span.count; glyph += 1) {
-          words[first + glyph * uintsPerInstance + 4] = span.paletteIndex;
+          writeDrawInstance(words, write, span.offset + glyph, span.paletteIndex);
+          write += 1;
         }
-        targetOffset += byteLength;
       }
       let surface = current;
       if (surface === undefined) {
@@ -661,7 +735,7 @@ export class RenderSurface {
       }
       initializeBuffer(this.#renderer, surface.mesh);
       surface.initialized = true;
-      this.#instanceUploadBytes += segment.count * GLYPH_INSTANCE_STRIDE;
+      this.#instanceUploadBytes += segment.count * GLYPH_DRAW_STRIDE;
       this.#instanceWrites += 1;
     }
     this.#orderSegmentMeshes(segments.length);
@@ -694,6 +768,8 @@ export class RenderSurface {
       textures,
       paletteTexture: this.#paletteTexture,
       paletteWidth: paletteStats.textureWidth,
+      prototypeTexture: this.#protoTexture,
+      prototypeWidth: this.#protoWidth,
       effectBase: paletteStats.effectBase,
       instanceData: data,
       instanceCount: count,
@@ -751,6 +827,8 @@ export class RenderSurface {
   #destroyMeshes(): void {
     for (const [key, surface] of this.#meshes) this.#destroyMesh(key, surface);
     this.#submittedGlyphs = 0;
+    this.#syncedDrawEpoch = -1;
+    this.#syncedSegmentEpoch = -1;
   }
 
   #hasDirectComputeMesh(): boolean {
@@ -773,8 +851,9 @@ export class RenderSurface {
       view,
       this.#visibleCullRecords(update.records, update.viewport, update.recordCount),
     );
-    this.#syncCompactMeshes(store.buffer, draw.segments);
+    this.#syncCompactMeshes(draw.segments);
     this.#submittedGlyphs = draw.count;
+    this.#markDrawSynced();
   }
 
   #useCpuCull(): CullPath {
@@ -782,14 +861,6 @@ export class RenderSurface {
       this.#cullPass?.untrackGeometry(surface.mesh.geometry);
     }
     this.#cullPass?.invalidateSync();
-    // A direct mesh skipped its uploads while the compute pass owned the draw.
-    const direct = this.#meshes.get(0);
-    if (direct !== undefined && !direct.compact && !direct.initialized) {
-      initializeBuffer(this.#renderer, direct.mesh);
-      direct.initialized = true;
-      this.#instanceUploadBytes += direct.data.byteLength;
-      this.#instanceWrites += 1;
-    }
     this.#cullPath = "cpu-grid";
     this.#lastCullViewport = undefined;
     return this.#cullPath;
@@ -798,6 +869,35 @@ export class RenderSurface {
   #assertActive(): void {
     if (this.#destroyed) throw new Error("RenderSurface has been destroyed");
   }
+}
+
+function createPrototypeSource(
+  pixels: Float32Array,
+  width: number,
+  height: number,
+): BufferImageSource {
+  return new BufferImageSource({
+    resource: pixels,
+    width,
+    height,
+    format: "rgba32float",
+    alphaMode: "no-premultiply-alpha",
+    scaleMode: "nearest",
+    autoGenerateMipmaps: false,
+    label: "pixi-glyphflow-prototypes",
+  });
+}
+
+function rendererMaxTextureSize(renderer: Renderer): number {
+  if (isWebGLRenderer(renderer)) {
+    const size = renderer.gl.getParameter(renderer.gl.MAX_TEXTURE_SIZE);
+    return typeof size === "number" && size > 0 ? size : 4096;
+  }
+  if (isWebGPURenderer(renderer)) {
+    const size = renderer.gpu?.device?.limits.maxTextureDimension2D;
+    return typeof size === "number" && size > 0 ? size : 8192;
+  }
+  return 4096;
 }
 
 function createPaletteSource(coordinator: RenderCoordinator): BufferImageSource {
@@ -894,49 +994,6 @@ function initializeBuffer(renderer: Renderer, mesh: GlyphMesh): void {
   else mesh.instanceBuffer.update();
 }
 
-function uploadBufferRanges(
-  renderer: Renderer,
-  mesh: GlyphMesh,
-  data: ArrayBuffer,
-  ranges: readonly Readonly<DirtyByteRange>[],
-): Readonly<{ bytes: number; writes: number }> {
-  let bytes = 0;
-  let writes = 0;
-  if (isWebGLRenderer(renderer)) {
-    const gl = renderer.gl;
-    const resource = renderer.buffer.getGlBuffer(mesh.instanceBuffer);
-    gl.bindBuffer(resource.type, resource.buffer);
-    for (const range of ranges) {
-      gl.bufferSubData(
-        resource.type,
-        range.offset,
-        new Uint8Array(data, range.offset, range.length),
-      );
-      bytes += range.length;
-      writes += 1;
-    }
-  } else if (isWebGPURenderer(renderer)) {
-    const resource = renderer.buffer.getGPUBuffer(mesh.instanceBuffer);
-    for (const range of ranges) {
-      renderer.gpu.device.queue.writeBuffer(
-        resource,
-        range.offset,
-        data,
-        range.offset,
-        range.length,
-      );
-      bytes += range.length;
-      writes += 1;
-    }
-  } else if (ranges.length > 0) {
-    mesh.instanceBuffer.update();
-    bytes = data.byteLength;
-    writes = 1;
-  }
-
-  return { bytes, writes };
-}
-
 function uploadFloatTextureRanges(
   renderer: Renderer,
   source: BufferImageSource,
@@ -965,7 +1022,7 @@ function uploadFloatTextureRanges(
             rect.height,
             resource.format,
             resource.type,
-            data.subarray(rect.texel * 4, (rect.texel + texels) * 4),
+            packedFloatTexelView(data, rect.texel, texels),
           );
           bytes += texels * FLOAT_TEXEL_BYTES;
           writes += 1;
@@ -981,7 +1038,7 @@ function uploadFloatTextureRanges(
         const texels = rect.width * rect.height;
         renderer.gpu.device.queue.writeTexture(
           { texture, origin: { x: rect.x, y: rect.y, z: 0 } },
-          data.subarray(rect.texel * 4, (rect.texel + texels) * 4),
+          packedFloatTexelView(data, rect.texel, texels),
           { bytesPerRow: rect.width * FLOAT_TEXEL_BYTES, rowsPerImage: rect.height },
           { width: rect.width, height: rect.height, depthOrArrayLayers: 1 },
         );

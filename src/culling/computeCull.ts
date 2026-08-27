@@ -1,4 +1,5 @@
-import { GLYPH_INSTANCE_STRIDE, type DirtyByteRange } from "../render/types";
+import { writeDrawInstance } from "../render/pack";
+import { GLYPH_DRAW_STRIDE, type DirtyByteRange } from "../render/types";
 import type { BoundsData } from "./types";
 
 export type CullPath = "cpu-grid" | "compute-cull";
@@ -8,7 +9,6 @@ export type CullRecordDirty = "all" | "none" | readonly Readonly<DirtyByteRange>
 export const CULL_RECORD_STRIDE = 32;
 export const CULL_WORKGROUP = 256;
 const FLOATS_PER_RECORD = CULL_RECORD_STRIDE / Float32Array.BYTES_PER_ELEMENT;
-const UINTS_PER_INSTANCE = GLYPH_INSTANCE_STRIDE / Uint32Array.BYTES_PER_ELEMENT;
 
 export interface CullViewport {
   readonly x: number;
@@ -232,27 +232,19 @@ export function compactVisibleInstances(
     counts[index] = count;
     instanceCount += count;
   }
-  const compact = new Uint8Array(instanceCount * GLYPH_INSTANCE_STRIDE);
-  const source = new Uint8Array(instances);
+  void instances;
+  const compact = new Uint8Array(instanceCount * GLYPH_DRAW_STRIDE);
+  const words = new Uint32Array(compact.buffer, compact.byteOffset, compact.byteLength / 4);
   let write = 0;
   for (let index = 0; index < recordCount; index += 1) {
     const count = counts[index] ?? 0;
     if (count === 0) continue;
     const instanceOffset = uints[index * FLOATS_PER_RECORD + 4] ?? 0;
     const paletteIndex = uints[index * FLOATS_PER_RECORD + 6] ?? 0;
-    const byteLength = count * GLYPH_INSTANCE_STRIDE;
-    compact.set(
-      source.subarray(
-        instanceOffset * GLYPH_INSTANCE_STRIDE,
-        instanceOffset * GLYPH_INSTANCE_STRIDE + byteLength,
-      ),
-      write * GLYPH_INSTANCE_STRIDE,
-    );
-    const words = new Uint32Array(compact.buffer, compact.byteOffset, compact.byteLength / 4);
     for (let glyph = 0; glyph < count; glyph += 1) {
-      words[(write + glyph) * UINTS_PER_INSTANCE + 4] = paletteIndex;
+      writeDrawInstance(words, write, instanceOffset + glyph, paletteIndex);
+      write += 1;
     }
-    write += count;
   }
   return {
     compact,

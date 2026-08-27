@@ -19,7 +19,7 @@ import {
   writeCullRecordAt,
 } from "../src/culling/computeCull";
 import { COMPUTE_CULL_WGSL } from "../src/culling/computeCull.wgsl";
-import { GLYPH_INSTANCE_STRIDE } from "../src/render/types";
+import { GLYPH_DRAW_STRIDE, GLYPH_INSTANCE_STRIDE } from "../src/render/types";
 
 /** PixiJS `requestDevice()` default; see the storage-binding gotcha. */
 const WEBGPU_DEFAULT_MAX_STORAGE_BUFFER_BINDING_SIZE = 134_217_728;
@@ -93,6 +93,9 @@ describe("compute cull host reference", () => {
   test("avoids WGSL reserved identifiers in the scatter pass", () => {
     expect(COMPUTE_CULL_WGSL).not.toMatch(/\blet from\b/);
     expect(COMPUTE_CULL_WGSL).not.toMatch(/\blet to\b/);
+    expect(COMPUTE_CULL_WGSL).toContain("UINTS_PER_DRAW");
+    expect(COMPUTE_CULL_WGSL).toContain("instances_out[dst] = srcBase + glyph");
+    expect(COMPUTE_CULL_WGSL).not.toContain("instances_in");
   });
 
   test("keeps axis-aligned overlap and rejects separated boxes", () => {
@@ -140,13 +143,16 @@ describe("compute cull host reference", () => {
 
     expect(result.instanceCount).toBe(2);
     expect(result.indirect).toEqual(createIndirectArgs(2));
+    expect(result.compact.byteLength).toBe(2 * GLYPH_DRAW_STRIDE);
     const compact = new Uint32Array(
       result.compact.buffer,
       result.compact.byteOffset,
       result.compact.byteLength / 4,
     );
-    expect(compact[4]).toBe(21);
-    expect(compact[10]).toBe(31);
+    expect(compact[0]).toBe(2);
+    expect(compact[1]).toBe(21);
+    expect(compact[2]).toBe(3);
+    expect(compact[3]).toBe(31);
   });
 
   test("scatters shared prototype instances with per-record palette indices", () => {
@@ -182,15 +188,20 @@ describe("compute cull host reference", () => {
       padding: 0,
     });
     expect(result.instanceCount).toBe(4);
+    expect(result.compact.byteLength).toBe(4 * GLYPH_DRAW_STRIDE);
     const compact = new Uint32Array(
       result.compact.buffer,
       result.compact.byteOffset,
       result.compact.byteLength / 4,
     );
-    expect(compact[4]).toBe(7);
-    expect(compact[10]).toBe(7);
-    expect(compact[16]).toBe(9);
-    expect(compact[22]).toBe(9);
+    expect(compact[0]).toBe(0);
+    expect(compact[1]).toBe(7);
+    expect(compact[2]).toBe(1);
+    expect(compact[3]).toBe(7);
+    expect(compact[4]).toBe(0);
+    expect(compact[5]).toBe(9);
+    expect(compact[6]).toBe(1);
+    expect(compact[7]).toBe(9);
   });
 
   test("packs AABB and instance ranges into 32-byte records", () => {

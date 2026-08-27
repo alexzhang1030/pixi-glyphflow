@@ -1,7 +1,13 @@
-/** Live GPU instance record. The published ceiling stays 32 until new artifacts exist. */
+/** Live CPU/GPU store record. The published ceiling stays 32 until new artifacts exist. */
 export const GLYPH_INSTANCE_STRIDE = 24;
+/** Draw instance: store glyph index + palette index. Shaders fetch rect, UV, and metadata. */
+export const GLYPH_DRAW_STRIDE = 8;
 /** Published 1.1.0 instance budget. Do not fail CI below this until a Chrome rerun. */
 export const GLYPH_INSTANCE_STRIDE_CEILING = 32;
+/** RGBA32F texels per store glyph in the prototype texture (24 bytes + 8 pad). */
+export const GLYPH_PROTO_TEXELS_PER_GLYPH = 2;
+/** Default prototype texture width. Grow only when height would exceed the device max. */
+export const GLYPH_PROTO_TEXTURE_WIDTH = 1024;
 /** Atlas textures bound per glyph draw. Fits WebGL 2's minimum texture-unit budget. */
 export const GLYPH_TEXTURE_BANK_SIZE = 8;
 

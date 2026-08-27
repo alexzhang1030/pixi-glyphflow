@@ -1,5 +1,17 @@
+import {
+  GLYPH_DRAW_STRIDE,
+  GLYPH_INSTANCE_STRIDE,
+  GLYPH_PROTO_TEXELS_PER_GLYPH,
+  GLYPH_PROTO_TEXTURE_WIDTH,
+} from "./types";
+
 const F32 = new Float32Array(1);
 const U32 = new Uint32Array(F32.buffer);
+
+export const UINTS_PER_STORE_INSTANCE: number =
+  GLYPH_INSTANCE_STRIDE / Uint32Array.BYTES_PER_ELEMENT;
+export const UINTS_PER_DRAW_INSTANCE: number = GLYPH_DRAW_STRIDE / Uint32Array.BYTES_PER_ELEMENT;
+export const UINTS_PER_PROTO_GLYPH: number = GLYPH_PROTO_TEXELS_PER_GLYPH * 4;
 
 /** Pack two f32 values into one uint32 as IEEE-754 binary16 pair. */
 export function packHalf2x16(x: number, y: number): number {
@@ -126,4 +138,102 @@ export function paletteUploadRects(
     remaining -= width;
   }
   return rects;
+}
+
+export interface PrototypeTextureLayout {
+  readonly width: number;
+  readonly height: number;
+}
+
+/** Size a prototype texture so `glyphCount` glyphs fit inside `maxTextureSize`. */
+export function prototypeTextureLayout(
+  glyphCount: number,
+  maxTextureSize: number = 4096,
+  minWidth: number = GLYPH_PROTO_TEXTURE_WIDTH,
+): PrototypeTextureLayout {
+  const texels = Math.max(GLYPH_PROTO_TEXELS_PER_GLYPH, glyphCount * GLYPH_PROTO_TEXELS_PER_GLYPH);
+  const limit = Math.max(1, maxTextureSize);
+  let width = Math.min(limit, Math.max(1, minWidth));
+  let height = Math.ceil(texels / width);
+  while (height > limit && width < limit) {
+    width = Math.min(limit, width * 2);
+    height = Math.ceil(texels / width);
+  }
+  return { width, height: Math.max(1, height) };
+}
+
+export function allocatePrototypePixels(width: number, height: number): Float32Array {
+  return new Float32Array(width * height * 4);
+}
+
+/**
+ * WebGL `texSubImage2D` ignores `byteOffset` on a FLOAT `Float32Array` view (ANGLE / SwiftShader
+ * read from the start of the underlying buffer). Copy any non-zero-offset range before upload.
+ */
+export function packedFloatTexelView(
+  data: Float32Array,
+  texel: number,
+  texels: number,
+): Float32Array {
+  const start = texel * 4;
+  const view = data.subarray(start, start + texels * 4);
+  return view.byteOffset === 0 ? view : view.slice();
+}
+
+/**
+ * Copy store glyphs into RGBA32F proto texels. Rect stays f16 bit pairs. UV is rewritten as f16
+ * pairs so (1, 1) is not 0xFFFFFFFF (NaN). Metadata is two 16-bit integer floats so ACTIVE and
+ * raster bits cannot become a GPU-canonicalized NaN.
+ */
+export function writePrototypeGlyphs(
+  pixels: Float32Array,
+  store: ArrayBuffer,
+  startGlyph: number,
+  glyphCount: number,
+): void {
+  const dest = new Uint32Array(pixels.buffer, pixels.byteOffset, pixels.length);
+  const src = new Uint32Array(store);
+  for (let index = 0; index < glyphCount; index += 1) {
+    const glyph = startGlyph + index;
+    const dst = glyph * UINTS_PER_PROTO_GLYPH;
+    const srcBase = glyph * UINTS_PER_STORE_INSTANCE;
+    dest[dst] = src[srcBase] ?? 0;
+    dest[dst + 1] = src[srcBase + 1] ?? 0;
+    dest[dst + 2] = unorm16BitsToHalfBits(src[srcBase + 2] ?? 0);
+    dest[dst + 3] = unorm16BitsToHalfBits(src[srcBase + 3] ?? 0);
+    const metadata = src[srcBase + 5] ?? 0;
+    pixels[dst + 4] = 0;
+    pixels[dst + 5] = metadata & 0xffff;
+    pixels[dst + 6] = metadata >>> 16;
+    pixels[dst + 7] = 0;
+  }
+}
+
+function unorm16BitsToHalfBits(packed: number): number {
+  return packHalf2x16((packed & 0xffff) / 65_535, (packed >>> 16) / 65_535);
+}
+
+/** Map a store byte range onto the padded prototype texel bytes. */
+export function prototypeByteRange(
+  storeOffset: number,
+  storeLength: number,
+): { readonly offset: number; readonly length: number } {
+  const startGlyph = Math.floor(storeOffset / GLYPH_INSTANCE_STRIDE);
+  const endGlyph = Math.ceil((storeOffset + storeLength) / GLYPH_INSTANCE_STRIDE);
+  const glyphs = Math.max(0, endGlyph - startGlyph);
+  return {
+    offset: startGlyph * GLYPH_PROTO_TEXELS_PER_GLYPH * FLOAT_TEXEL_BYTES,
+    length: glyphs * GLYPH_PROTO_TEXELS_PER_GLYPH * FLOAT_TEXEL_BYTES,
+  };
+}
+
+export function writeDrawInstance(
+  words: Uint32Array,
+  index: number,
+  protoIndex: number,
+  paletteIndex: number,
+): void {
+  const base = index * UINTS_PER_DRAW_INSTANCE;
+  words[base] = protoIndex >>> 0;
+  words[base + 1] = paletteIndex >>> 0;
 }

@@ -1,13 +1,24 @@
 import { describe, expect, test } from "bun:test";
 
 import {
+  allocatePrototypePixels,
   packF16,
   packHalf2x16,
+  packedFloatTexelView,
   paletteUploadRects,
   premultiplyRgba8,
+  prototypeByteRange,
+  prototypeTextureLayout,
   unpackF16,
   unpackHalf2x16,
+  writeDrawInstance,
+  writePrototypeGlyphs,
 } from "../src/render/pack";
+import {
+  GLYPH_DRAW_STRIDE,
+  GLYPH_INSTANCE_STRIDE,
+  GLYPH_PROTO_TEXTURE_WIDTH,
+} from "../src/render/types";
 
 describe("packHalf2x16", () => {
   test("round-trips unit rotation and integer anchors", () => {
@@ -59,5 +70,60 @@ describe("paletteUploadRects", () => {
       { x: 0, y: 1, width: 8, height: 1, texel: 8 },
       { x: 0, y: 2, width: 8, height: 1, texel: 16 },
     ]);
+  });
+});
+
+describe("prototype texture pack", () => {
+  test("grows width before height exceeds the device max", () => {
+    expect(prototypeTextureLayout(1)).toEqual({ width: GLYPH_PROTO_TEXTURE_WIDTH, height: 1 });
+    // Appearance W→AB frees slot 0 and allocates two glyphs at highWater 3. Still one row.
+    expect(prototypeTextureLayout(3)).toEqual({ width: GLYPH_PROTO_TEXTURE_WIDTH, height: 1 });
+    expect(prototypeTextureLayout(512)).toEqual({ width: GLYPH_PROTO_TEXTURE_WIDTH, height: 1 });
+    expect(prototypeTextureLayout(513)).toEqual({ width: GLYPH_PROTO_TEXTURE_WIDTH, height: 2 });
+    expect(prototypeTextureLayout(8_000_000, 4096)).toEqual({ width: 4096, height: 3907 });
+  });
+
+  test("copies store words into two padded texels per glyph", () => {
+    const store = new ArrayBuffer(GLYPH_INSTANCE_STRIDE);
+    const src = new Uint32Array(store);
+    src[0] = packHalf2x16(1, 2);
+    src[1] = packHalf2x16(3, 4);
+    src[2] = 65_535 | (65_535 << 16);
+    src[3] = 65_535 | (65_535 << 16);
+    src[4] = 5;
+    src[5] = 0x8000_0001;
+    const pixels = allocatePrototypePixels(GLYPH_PROTO_TEXTURE_WIDTH, 1);
+    writePrototypeGlyphs(pixels, store, 0, 1);
+    const dest = new Uint32Array(pixels.buffer);
+    expect(dest[0]).toBe(src[0]);
+    expect(dest[1]).toBe(src[1]);
+    expect(Number.isFinite(pixels[2])).toBe(true);
+    expect(Number.isFinite(pixels[3])).toBe(true);
+    expect(unpackHalf2x16(dest[2] ?? 0)).toEqual([1, 1]);
+    expect(unpackHalf2x16(dest[3] ?? 0)).toEqual([1, 1]);
+    expect(pixels[5]).toBe(1);
+    expect(pixels[6]).toBe(0x8000);
+    src[5] = 0x8000_0000 | (8191 << 18);
+    writePrototypeGlyphs(pixels, store, 0, 1);
+    expect(Number.isFinite(pixels[5])).toBe(true);
+    expect(Number.isFinite(pixels[6])).toBe(true);
+    expect(pixels[6]).toBe(0xfffc);
+    expect(prototypeByteRange(0, GLYPH_INSTANCE_STRIDE)).toEqual({ offset: 0, length: 32 });
+  });
+
+  test("copies a non-zero-offset float texel view before a WebGL upload", () => {
+    const data = new Float32Array(16);
+    data[8] = 7;
+    data[9] = 8;
+    const view = packedFloatTexelView(data, 2, 2);
+    expect(view.byteOffset).toBe(0);
+    expect([...view.subarray(0, 2)]).toEqual([7, 8]);
+    expect(packedFloatTexelView(data, 0, 2).byteOffset).toBe(0);
+  });
+
+  test("writes an 8-byte draw record", () => {
+    const words = new Uint32Array(GLYPH_DRAW_STRIDE / 4);
+    writeDrawInstance(words, 0, 11, 22);
+    expect([...words]).toEqual([11, 22]);
   });
 });

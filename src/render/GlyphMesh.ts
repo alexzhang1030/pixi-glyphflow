@@ -11,7 +11,7 @@ import {
 } from "pixi.js";
 
 import { GLYPH_FRAGMENT_GLSL, GLYPH_SHADER_WGSL, GLYPH_VERTEX_GLSL } from "./shaders";
-import { GLYPH_INSTANCE_STRIDE, GLYPH_TEXTURE_BANK_SIZE } from "./types";
+import { GLYPH_DRAW_STRIDE, GLYPH_PROTO_TEXTURE_WIDTH, GLYPH_TEXTURE_BANK_SIZE } from "./types";
 
 type TextureBank = readonly [
   Texture,
@@ -30,6 +30,8 @@ export interface GlyphMeshOptions {
   readonly textures?: readonly Texture[];
   readonly paletteTexture: Texture;
   readonly paletteWidth: number;
+  readonly prototypeTexture: Texture;
+  readonly prototypeWidth?: number;
   readonly effectBase?: number;
   readonly instanceData: ArrayBuffer;
   readonly instanceCount: number;
@@ -40,11 +42,16 @@ export class GlyphMesh extends Mesh<Geometry, Shader> {
   readonly instanceBuffer: Buffer;
   readonly #ownedGeometry: Geometry;
   readonly #ownedShader: Shader;
+  #prototypeTexture: Texture;
 
   constructor(options: GlyphMeshOptions) {
     validateInstanceData(options.instanceData, options.instanceCount);
     if (!Number.isSafeInteger(options.paletteWidth) || options.paletteWidth <= 0) {
       throw new TypeError("paletteWidth must be a positive safe integer");
+    }
+    const prototypeWidth = options.prototypeWidth ?? GLYPH_PROTO_TEXTURE_WIDTH;
+    if (!Number.isSafeInteger(prototypeWidth) || prototypeWidth <= 0) {
+      throw new TypeError("prototypeWidth must be a positive safe integer");
     }
     const textures = normalizeTextureBank(options.texture, options.textures);
     const vertexBuffer = new Buffer({
@@ -62,34 +69,18 @@ export class GlyphMesh extends Mesh<Geometry, Shader> {
       label: "pixi-glyphflow-geometry",
       attributes: {
         aVertex: { buffer: vertexBuffer, format: "float32x2" },
-        aInstanceRect: {
-          // Four f16s in 8 bytes. Bind as uint32x2 so WebGL 2 (ANGLE/CI Chrome)
-          // does not need HALF_FLOAT vertex attribs; shaders unpack the bits.
+        aProtoIndex: {
           buffer: instanceBuffer,
-          format: "uint32x2",
-          stride: GLYPH_INSTANCE_STRIDE,
+          format: "uint32",
+          stride: GLYPH_DRAW_STRIDE,
           offset: 0,
-          instance: true,
-        },
-        aInstanceUv: {
-          buffer: instanceBuffer,
-          format: "unorm16x4",
-          stride: GLYPH_INSTANCE_STRIDE,
-          offset: 8,
           instance: true,
         },
         aPaletteIndex: {
           buffer: instanceBuffer,
           format: "uint32",
-          stride: GLYPH_INSTANCE_STRIDE,
-          offset: 16,
-          instance: true,
-        },
-        aMetadata: {
-          buffer: instanceBuffer,
-          format: "uint32",
-          stride: GLYPH_INSTANCE_STRIDE,
-          offset: 20,
+          stride: GLYPH_DRAW_STRIDE,
+          offset: 4,
           instance: true,
         },
       },
@@ -184,6 +175,15 @@ export class GlyphMesh extends Mesh<Geometry, Shader> {
                 visibility: ShaderStage.VERTEX,
                 buffer: { type: "uniform" },
               },
+              {
+                binding: 11,
+                visibility: ShaderStage.VERTEX,
+                texture: {
+                  sampleType: "unfilterable-float",
+                  viewDimension: "2d",
+                  multisampled: false,
+                },
+              },
             ],
           ],
         }),
@@ -198,6 +198,7 @@ export class GlyphMesh extends Mesh<Geometry, Shader> {
           uTexture7: textures[7].source,
           uSampler: textures[0].source.style,
           uTransformTexture: options.paletteTexture.source,
+          uPrototype: options.prototypeTexture.source,
           glyphUniforms: {
             uPaletteWidth: { value: options.paletteWidth, type: "f32" },
             uEffectBase: { value: options.effectBase ?? 0, type: "f32" },
@@ -208,6 +209,8 @@ export class GlyphMesh extends Mesh<Geometry, Shader> {
     this.instanceBuffer = instanceBuffer;
     this.#ownedGeometry = geometry;
     this.#ownedShader = shader;
+    this.#prototypeTexture = options.prototypeTexture;
+    this.onRender = this.#bindPrototype;
   }
 
   updateInstances(data: ArrayBuffer, instanceCount: number): void {
@@ -215,7 +218,7 @@ export class GlyphMesh extends Mesh<Geometry, Shader> {
     if (this.instanceBuffer.data.buffer !== data) {
       this.instanceBuffer.data = new Uint8Array(data);
     } else {
-      this.instanceBuffer.update(instanceCount * GLYPH_INSTANCE_STRIDE);
+      this.instanceBuffer.update(instanceCount * GLYPH_DRAW_STRIDE);
     }
     this.geometry.instanceCount = instanceCount;
   }
@@ -253,10 +256,24 @@ export class GlyphMesh extends Mesh<Geometry, Shader> {
     this.#ownedShader.resources.uTransformTexture = texture.source;
     this.#ownedShader.resources.glyphUniforms.uniforms.uPaletteWidth = width;
     this.#ownedShader.resources.glyphUniforms.uniforms.uEffectBase = effectBase;
+    this.#bindPrototype();
   }
+
+  setPrototypeTexture(texture: Texture, width: number): void {
+    if (!Number.isSafeInteger(width) || width <= 0) {
+      throw new TypeError("prototype width must be a positive safe integer");
+    }
+    this.#prototypeTexture = texture;
+    this.#bindPrototype();
+  }
+
+  #bindPrototype = (): void => {
+    this.#ownedShader.resources.uPrototype = this.#prototypeTexture.source;
+  };
 
   override destroy(): void {
     if (this.destroyed) return;
+    this.onRender = null;
     super.destroy();
     this.#ownedGeometry.destroy(true);
     this.#ownedShader.destroy(false);
@@ -270,7 +287,7 @@ function validateInstanceData(data: ArrayBuffer, instanceCount: number): void {
   if (!Number.isSafeInteger(instanceCount) || instanceCount < 0) {
     throw new TypeError("instanceCount must be a non-negative safe integer");
   }
-  if (instanceCount * GLYPH_INSTANCE_STRIDE > data.byteLength) {
+  if (instanceCount * GLYPH_DRAW_STRIDE > data.byteLength) {
     throw new RangeError("instanceCount exceeds the supplied instanceData capacity");
   }
 }

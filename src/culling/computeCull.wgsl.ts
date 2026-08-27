@@ -28,12 +28,11 @@ struct Viewport {
 @group(0) @binding(2) var<storage, read_write> counts: array<u32>;
 @group(0) @binding(3) var<storage, read_write> prefix: array<u32>;
 @group(0) @binding(4) var<storage, read_write> group_sums: array<u32>;
-@group(0) @binding(5) var<storage, read> instances_in: array<u32>;
-@group(0) @binding(6) var<storage, read_write> instances_out: array<u32>;
-@group(0) @binding(7) var<storage, read_write> indirect: array<u32>;
+@group(0) @binding(5) var<storage, read_write> instances_out: array<u32>;
+@group(0) @binding(6) var<storage, read_write> indirect: array<u32>;
 
 const WORKGROUP: u32 = ${String(CULL_WORKGROUP)}u;
-const UINTS_PER_INSTANCE: u32 = 6u;
+const UINTS_PER_DRAW: u32 = 2u;
 
 fn visible(record: CullRecord) -> bool {
   let left = viewport.x - viewport.padding;
@@ -119,14 +118,9 @@ fn scatter(@builtin(global_invocation_id) id: vec3<u32>) {
   let srcBase = record.instance_offset;
   let palette = record.palette_index;
   for (var glyph = 0u; glyph < count; glyph++) {
-    let src = (srcBase + glyph) * UINTS_PER_INSTANCE;
-    let dst = (dest + glyph) * UINTS_PER_INSTANCE;
-    instances_out[dst] = instances_in[src];
-    instances_out[dst + 1u] = instances_in[src + 1u];
-    instances_out[dst + 2u] = instances_in[src + 2u];
-    instances_out[dst + 3u] = instances_in[src + 3u];
-    instances_out[dst + 4u] = palette;
-    instances_out[dst + 5u] = instances_in[src + 5u];
+    let dst = (dest + glyph) * UINTS_PER_DRAW;
+    instances_out[dst] = srcBase + glyph;
+    instances_out[dst + 1u] = palette;
   }
 }
 `;

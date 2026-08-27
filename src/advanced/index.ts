@@ -11,8 +11,11 @@ export { RenderCoordinator } from "../render/RenderCoordinator";
 export { WebGLAdapter } from "../render/WebGLAdapter";
 export { WebGPUAdapter } from "../render/WebGPUAdapter";
 export {
+  GLYPH_DRAW_STRIDE,
   GLYPH_INSTANCE_STRIDE,
   GLYPH_INSTANCE_STRIDE_CEILING,
+  GLYPH_PROTO_TEXELS_PER_GLYPH,
+  GLYPH_PROTO_TEXTURE_WIDTH,
   GLYPH_TEXTURE_BANK_SIZE,
 } from "../render/types";
 export {

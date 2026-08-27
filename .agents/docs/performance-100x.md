@@ -92,6 +92,12 @@ writes, and remirroring the store.
   `writeFills` for the full palette row, then draw-state insert. They do not build per-label
   `RenderChange` snapshots. Scale, rotation, non-zero anchors, z-index, stroke, and trusted runs
   stay on the object path. Already-rendered storms stay on the content lane (`writePositions`).
+- Draw instances are 8 bytes: store glyph index plus palette index. Shaders `texelFetch` rect, UV,
+  and metadata from an RGBA32F prototype texture packed from the unique store. CPU compact and
+  WebGPU scatter write two uints per visible glyph. The 24-byte store is not the instance buffer.
+  Palette growth rewrites the existing proto texture so Pixi's first-upload snapshot cannot drop
+  dirty glyphs after texel 0. Replacing that `Texture` leaves vertex fetches empty. One
+  `GlyphMesh`, insertion order and z stay. One mesh per unique string is still rejected.
 
 ## Remaining slices, in order
 
@@ -101,7 +107,7 @@ writes, and remirroring the store.
    instanced. Duplicate-string intern and the admit lane remove the per-label layout and
    snapshot tax; unique glyphs still raster in the seeing commit.
 2. **Palette storage buffer and atlas texture array.** Wave 3 leftovers. Binding cost, not the
-   zoom hitch.
+   zoom hitch. Prototype-fetch opened the shaders; these can share that opening.
 3. **Default baked pages.** Known UI alphabets still miss on the first session if no page is
    supplied and TinySDF has not run. Shipping those pages in the core gzip is rejected.
 

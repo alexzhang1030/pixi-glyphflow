@@ -12,10 +12,18 @@ import type { TextId, TextLabelSpec, TextUpdate } from "../../src";
 import {
   GlyphAtlas,
   GlyphMesh,
+  GLYPH_DRAW_STRIDE,
   GLYPH_INSTANCE_STRIDE,
   TRANSFORM_PALETTE_STRIDE,
 } from "../../src/advanced";
-import { packF16, packHalf2x16 } from "../../src/render/pack";
+import {
+  allocatePrototypePixels,
+  packF16,
+  packHalf2x16,
+  prototypeTextureLayout,
+  writeDrawInstance,
+  writePrototypeGlyphs,
+} from "../../src/render/pack";
 import { bindViewport } from "../../src/viewport";
 import type {
   BrowserBenchmarkConfiguration,
@@ -733,8 +741,8 @@ function createStressMesh(
     palette[offset + 6] = 0xffffff;
     palette[offset + 7] = 65_535;
   }
-  const instanceData = new ArrayBuffer(glyphCount * INSTANCE_STRIDE);
-  const view = new DataView(instanceData);
+  const store = new ArrayBuffer(glyphCount * INSTANCE_STRIDE);
+  const view = new DataView(store);
   for (let glyph = 0; glyph < glyphCount; glyph += 1) {
     const offset = glyph * INSTANCE_STRIDE;
     view.setUint16(offset, packF16((glyph % 8) * 0.12), true);
@@ -747,6 +755,14 @@ function createStressMesh(
     view.setUint16(offset + 14, 65_535, true);
     view.setUint32(offset + 16, Math.floor(glyph / 8), true);
     view.setUint32(offset + 20, ACTIVE_ALPHA_METADATA, true);
+  }
+  const protoLayout = prototypeTextureLayout(glyphCount, maximumTextureSize as number);
+  const protoPixels = allocatePrototypePixels(protoLayout.width, protoLayout.height);
+  writePrototypeGlyphs(protoPixels, store, 0, glyphCount);
+  const instanceData = new ArrayBuffer(glyphCount * GLYPH_DRAW_STRIDE);
+  const drawWords = new Uint32Array(instanceData);
+  for (let glyph = 0; glyph < glyphCount; glyph += 1) {
+    writeDrawInstance(drawWords, glyph, glyph, Math.floor(glyph / 8));
   }
   const atlasSource = new BufferImageSource({
     resource: new Uint8Array([255]),
@@ -766,12 +782,24 @@ function createStressMesh(
     alphaMode: "no-premultiply-alpha",
     autoGenerateMipmaps: false,
   });
+  const protoSource = new BufferImageSource({
+    resource: protoPixels,
+    width: protoLayout.width,
+    height: protoLayout.height,
+    format: "rgba32float",
+    scaleMode: "nearest",
+    alphaMode: "no-premultiply-alpha",
+    autoGenerateMipmaps: false,
+  });
   const atlasTexture = new Texture({ source: atlasSource });
   const paletteTexture = new Texture({ source: paletteSource });
+  const protoTexture = new Texture({ source: protoSource });
   const mesh = new GlyphMesh({
     texture: atlasTexture,
     paletteTexture,
     paletteWidth,
+    prototypeTexture: protoTexture,
+    prototypeWidth: protoLayout.width,
     instanceData,
     instanceCount: glyphCount,
   });
@@ -785,6 +813,7 @@ function createStressMesh(
       mesh.destroy();
       atlasTexture.destroy(true);
       paletteTexture.destroy(true);
+      protoTexture.destroy(true);
     },
   });
 }
