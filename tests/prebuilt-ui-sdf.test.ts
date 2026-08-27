@@ -93,5 +93,32 @@ describe("pixi-glyphflow/prebuilt", () => {
     expect(root).not.toContain("prebuilt/");
     expect(advanced).not.toContain("uiSdf");
     expect(advanced).not.toContain("../prebuilt");
+
+    const distEntry = resolve(projectRoot, "dist/index.js");
+    if (await Bun.file(distEntry).exists()) {
+      const graph = await readStaticJsGraph(distEntry);
+      expect(graph).not.toContain("uiSdf");
+      expect(graph).not.toContain("glyphflow-ui");
+      expect(graph).not.toContain("183c3c1818001800");
+    }
   });
 });
+
+async function readStaticJsGraph(entry: string): Promise<string> {
+  const visited = new Set<string>();
+  const sources: string[] = [];
+  const pending = [entry];
+  while (pending.length > 0) {
+    const path = pending.pop();
+    if (path === undefined || visited.has(path)) continue;
+    visited.add(path);
+    const source = await readFile(path, "utf8");
+    sources.push(source);
+    for (const match of source.matchAll(/(?:from\s*|import\s*)["'](\.[^"']+)["']/g)) {
+      const specifier = match[1];
+      if (specifier === undefined || !specifier.endsWith(".js")) continue;
+      pending.push(resolve(path, "..", specifier));
+    }
+  }
+  return sources.join("\n");
+}
