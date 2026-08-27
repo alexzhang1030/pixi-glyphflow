@@ -541,6 +541,70 @@ describe("RenderCoordinator", () => {
     registry.destroy();
   });
 
+  test("prepares unique admit groups in parallel", async () => {
+    const registry = new FontRegistry();
+    await registry.register({ family: "Fixture" });
+    const gates = new Map<string, () => void>();
+    let layoutCalls = 0;
+    const coordinator = new RenderCoordinator({
+      registry,
+      layoutEngine: {
+        layout(_slot, _revision, input) {
+          layoutCalls += 1;
+          return new Promise<Readonly<PositionedRun>>((resolve) => {
+            gates.set(input.text, () => resolve(run(input.text)));
+          });
+        },
+        destroy() {},
+      },
+      glyphProvider: {
+        async rasterize(): Promise<GlyphRaster> {
+          return {
+            mode: "alpha",
+            width: 4,
+            height: 6,
+            pixels: new Uint8Array(24).fill(255),
+            metrics: { bearingX: 0, bearingY: 5, advance: 4 },
+          };
+        },
+        destroy() {},
+      },
+      atlasOptions: { pageWidth: 64, pageHeight: 64, maxBytes: 4_096 },
+      instanceOptions: { initialCapacity: 16 },
+      transformOptions: { initialCapacity: 8, textureWidth: 8 },
+    });
+    const style = { fontFamily: "Fixture", fontSize: 16, fill: 0xffffff };
+    const first = coordinator.applyAdmitLane([
+      {
+        slots: new Uint32Array([0]),
+        count: 1,
+        xy: new Float32Array([0, 0]),
+        orders: new Uint32Array([0]),
+        text: "AB",
+        style,
+      },
+      {
+        slots: new Uint32Array([1]),
+        count: 1,
+        xy: new Float32Array([12, 0]),
+        orders: new Uint32Array([1]),
+        text: "CD",
+        style,
+      },
+    ]);
+    await waitForGate(gates, "AB");
+    await waitForGate(gates, "CD");
+    expect(layoutCalls).toBe(2);
+    gates.get("AB")?.();
+    gates.get("CD")?.();
+    expect(await first).toMatchObject({ stale: false, appliedLabels: 2, glyphs: 4 });
+    expect(coordinator.getRun(0)?.text).toBe("AB");
+    expect(coordinator.getRun(1)?.text).toBe("CD");
+
+    coordinator.destroy();
+    registry.destroy();
+  });
+
   test("keeps the draw-list epoch while draw states only append", async () => {
     const registry = new FontRegistry();
     await registry.register({ family: "Fixture" });

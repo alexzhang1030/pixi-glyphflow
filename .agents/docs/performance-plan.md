@@ -129,6 +129,10 @@ LRU, 52-bit keys, the 48 MiB store (test-pinned, 44.9 MiB measured), the sparse 
     unshaped until they enter the tight view or an intern hit exists. A ring copy of a tight
     unique string this commit stays in that group. No leftover rAF, no `prepareBudgetMs`.
     Unique glyphs that are on screen still raster in that commit.
+13. **Parallel admit-group prepare — LANDED.** `applyAdmitLane` starts every unique group's
+    layout and raster together, same as object-path `#prepareChanges`. Layout count stays one
+    per (text, style). Wall-clock is no longer the sum of those prepares. Instance and palette
+    writes stay serial after the wave settles. Tight-view unique still finishes in that commit.
 
 **Regressions and traps the audits confirmed:**
 

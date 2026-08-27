@@ -73,7 +73,8 @@ are an 8-byte `(prototypeGlyph, paletteIndex)` pair; shaders fetch the unique re
 metadata. Compute-cull still instances an expanded working set for camera slack, but it only
 layouts and rasters first-seen labels that intersect the tight draw view. The 0.25-viewport ring
 still admits intern hits and same-commit copies of a tight unique string. Ring-only unique misses
-stay unshaped.
+stay unshaped. Unique admit groups prepare in parallel so a tight-view wave is not the sum of
+each string's layout and raster.
 `tinySdf: true` builds those HarfBuzz glyphs as a local SDF from the canvas mask.
 `rasterizerOptions.prebuilt` serves packed pages first so a known alphabet miss is a crop, not a
 generator start. `culling.lod` drops labels whose projected font height is below one pixel.

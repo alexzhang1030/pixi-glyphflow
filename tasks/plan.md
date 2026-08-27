@@ -212,8 +212,9 @@ The 1.1.0 suite already meets the formal million-label frame budgets. The next p
   and atlas texture arrays remain follow-up work.
 - Wave 4: TinySDF / prebake / four-channel rect uploads, duplicate-string layout intern,
   shared prototype instance ranges, the first-seen admit lane, the broadcast content lane,
-  spatial `placeMany`, the prototype-fetch instance mesh, and compute-cull ring-only unique
-  deferral are in source. Tight-view unique raster and a remaining upload budget stay open.
+  spatial `placeMany`, the prototype-fetch instance mesh, compute-cull ring-only unique
+  deferral, and parallel admit-group prepare are in source. Tight-view unique raster (layout
+  count per unseen string, TinySDF per glyph) and a remaining upload budget stay open.
 - Wave 5: optional Slug outline mode, collision, SIMD, SharedArrayBuffer ring.
 
 ### Checkpoint

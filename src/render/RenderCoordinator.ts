@@ -419,7 +419,9 @@ export class RenderCoordinator {
 
   /**
    * First-seen fill-only groups: layout once per (text, style), share the prototype, write full
-   * palette rows, insert zero-z draw states. Callers must place spatial AABBs after this returns.
+   * palette rows, insert zero-z draw states. Unique groups prepare in parallel so a tight-view
+   * first-seen wave is not the sum of each string's layout and raster. Callers must place spatial
+   * AABBs after this returns.
    */
   async applyAdmitLane(groups: readonly AdmitLaneGroup[]): Promise<Readonly<RenderCommitResult>> {
     this.#assertActive();
@@ -428,11 +430,7 @@ export class RenderCoordinator {
     }
     const ticket = ++this.#ticket;
     const prepareStart = performance.now();
-    const prepared: Array<{
-      readonly group: AdmitLaneGroup;
-      readonly run: Readonly<PositionedRun>;
-      readonly snapshot: Readonly<RenderLabelSnapshot>;
-    }> = [];
+    const queued: AdmitLaneGroup[] = [];
     for (const group of groups) {
       if (group.count <= 0) continue;
       if (group.xy.length < group.count * 2) {
@@ -444,18 +442,27 @@ export class RenderCoordinator {
       if (group.slots.length < group.count) {
         throw new TypeError("Admit lane slot list is shorter than count");
       }
-      const column = await this.#prepareSharedColumn(
-        group.text,
-        group.style,
-        group.slots[0] ?? 0,
-        ticket,
-      );
-      if (column === undefined) {
+      queued.push(group);
+    }
+    const columns = await Promise.all(
+      queued.map((group) =>
+        this.#prepareSharedColumn(group.text, group.style, group.slots[0] ?? 0, ticket).then(
+          (column) => ({ group, column }),
+        ),
+      ),
+    );
+    const prepared: Array<{
+      readonly group: AdmitLaneGroup;
+      readonly run: Readonly<PositionedRun>;
+      readonly snapshot: Readonly<RenderLabelSnapshot>;
+    }> = [];
+    for (const item of columns) {
+      if (item.column === undefined) {
         this.#lastLayoutMs = performance.now() - prepareStart;
         this.#staleRevisions += 1;
         return this.#result(0, true, 0, EMPTY_ATLAS_COMMIT, false);
       }
-      prepared.push({ group, run: column.run, snapshot: column.snapshot });
+      prepared.push({ group: item.group, run: item.column.run, snapshot: item.column.snapshot });
     }
     this.#lastLayoutMs = performance.now() - prepareStart;
 
