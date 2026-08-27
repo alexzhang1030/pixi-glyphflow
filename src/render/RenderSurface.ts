@@ -966,9 +966,9 @@ function createAtlasArray(
     arrayLayerCount: layerCapacity,
     scaleMode: "linear",
     autoGenerateMipmaps: false,
-    // Four-channel pages are premultiplied in copyAtlasUpload so a raw sub-rect
-    // write matches a full-layer update. Single-channel fields have no RGB step.
-    alphaMode: kind === "rgba" ? "no-premultiply-alpha" : "premultiply-alpha-on-upload",
+    // Four-channel pages are premultiplied in copyAtlasUpload. Array uploads cannot
+    // use UNPACK_PREMULTIPLY_ALPHA / UNPACK_FLIP_Y, so both formats stay raw.
+    alphaMode: "no-premultiply-alpha",
     label: `pixi-glyphflow-atlas-${kind}`,
   });
   return {
@@ -999,20 +999,21 @@ function initializeAtlasArray(renderer: Renderer, array: AtlasArray): void {
   if (isWebGLRenderer(renderer)) {
     const gl = renderer.gl;
     const resource = renderer.texture.getGlSource(array.source);
-    gl.bindTexture(gl.TEXTURE_2D_ARRAY, resource.texture);
-    gl.pixelStorei(gl.UNPACK_ALIGNMENT, 1);
-    gl.texImage3D(
-      gl.TEXTURE_2D_ARRAY,
-      0,
-      resource.internalFormat,
-      array.width,
-      array.height,
-      array.layerCapacity,
-      0,
-      resource.format,
-      resource.type,
-      null,
-    );
+    withAtlasUnpack(gl, () => {
+      gl.bindTexture(gl.TEXTURE_2D_ARRAY, resource.texture);
+      gl.texImage3D(
+        gl.TEXTURE_2D_ARRAY,
+        0,
+        resource.internalFormat,
+        array.width,
+        array.height,
+        array.layerCapacity,
+        0,
+        resource.format,
+        resource.type,
+        null,
+      );
+    });
     return;
   }
   if (isWebGPURenderer(renderer)) {
@@ -1058,10 +1059,8 @@ function uploadAtlasVolume(
   if (isWebGLRenderer(renderer)) {
     const gl = renderer.gl;
     const resource = renderer.texture.getGlSource(page.array.source);
-    const previousAlignment = gl.getParameter(gl.UNPACK_ALIGNMENT) as number;
-    gl.bindTexture(gl.TEXTURE_2D_ARRAY, resource.texture);
-    gl.pixelStorei(gl.UNPACK_ALIGNMENT, 1);
-    try {
+    withAtlasUnpack(gl, () => {
+      gl.bindTexture(gl.TEXTURE_2D_ARRAY, resource.texture);
       gl.texSubImage3D(
         gl.TEXTURE_2D_ARRAY,
         0,
@@ -1075,9 +1074,7 @@ function uploadAtlasVolume(
         resource.type,
         pixels,
       );
-    } finally {
-      gl.pixelStorei(gl.UNPACK_ALIGNMENT, previousAlignment);
-    }
+    });
     return;
   }
   if (isWebGPURenderer(renderer)) {
@@ -1093,6 +1090,23 @@ function uploadAtlasVolume(
       { width, height, depthOrArrayLayers: 1 },
     );
     return;
+  }
+}
+
+/** WebGL forbids UNPACK_FLIP_Y and UNPACK_PREMULTIPLY_ALPHA on 3D / array uploads. */
+function withAtlasUnpack(gl: WebGL2RenderingContext, write: () => void): void {
+  const previousAlignment = gl.getParameter(gl.UNPACK_ALIGNMENT) as number;
+  const previousFlipY = gl.getParameter(gl.UNPACK_FLIP_Y_WEBGL) as boolean;
+  const previousPremultiply = gl.getParameter(gl.UNPACK_PREMULTIPLY_ALPHA_WEBGL) as boolean;
+  gl.pixelStorei(gl.UNPACK_ALIGNMENT, 1);
+  gl.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL, false);
+  gl.pixelStorei(gl.UNPACK_PREMULTIPLY_ALPHA_WEBGL, false);
+  try {
+    write();
+  } finally {
+    gl.pixelStorei(gl.UNPACK_ALIGNMENT, previousAlignment);
+    gl.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL, previousFlipY);
+    gl.pixelStorei(gl.UNPACK_PREMULTIPLY_ALPHA_WEBGL, previousPremultiply);
   }
 }
 

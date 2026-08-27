@@ -130,6 +130,7 @@ describe("GlyphMesh", () => {
     expect(GLYPH_VERTEX_GLSL).toContain("vRasterScale");
     expect(GLYPH_VERTEX_GLSL).toContain("metadata & 255u");
     expect(GLYPH_FRAGMENT_GLSL).toContain("median3");
+    expect(GLYPH_FRAGMENT_GLSL).toContain("precision highp sampler2DArray");
     expect(GLYPH_FRAGMENT_GLSL).toContain("uniform sampler2DArray uAtlasR");
     expect(GLYPH_FRAGMENT_GLSL).toContain("uniform sampler2DArray uAtlasRGBA");
     expect(GLYPH_FRAGMENT_GLSL).toContain("textureSize(uAtlasR, 0).xy");

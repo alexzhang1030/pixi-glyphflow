@@ -92,6 +92,7 @@ export const GLYPH_FRAGMENT_GLSL = /* glsl */ `
 
 precision highp float;
 precision highp int;
+precision highp sampler2DArray;
 
 uniform sampler2DArray uAtlasR;
 uniform sampler2DArray uAtlasRGBA;
