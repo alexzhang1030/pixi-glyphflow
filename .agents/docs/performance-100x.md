@@ -124,7 +124,8 @@ writes, and remirroring the store.
 - Atlas pages bind as layers in two texture arrays. `vMode` selects R or RGBA. Compact
   walks split only on blend and z. Growing an array reallocates and recopies layers.
   Array sources skip Pixi's 2D buffer uploader. WebGPU glyph rects pad `bytesPerRow` to
-  256. Palette SSBO is still not started.
+  256. A mid-commit layer grow must not initialize the destroyed predecessor. Palette
+  SSBO is still not started.
 
 ## Remaining slices, in order
 

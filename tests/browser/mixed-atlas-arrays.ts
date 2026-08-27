@@ -44,8 +44,12 @@ async function run(): Promise<void> {
   document.body.appendChild(app.canvas);
   const layer = new TextLayer({
     renderer: app.renderer,
-    culling: { bounds: { x: 0, y: 0, width: 320, height: 180 } },
+    culling: { enabled: true, padding: 0 },
     rendering: {
+      // 256² pages overflow after a handful of 48px TinySDF glyphs, so one
+      // commit grows the R array (dummy → 1 layer → 2). That used to
+      // initialize a destroyed source and throw addressModeU.
+      atlasOptions: { pageWidth: 256, pageHeight: 256 },
       rasterizerOptions: {
         tinySdf: true,
         distanceFieldMinFontSize: 48,
@@ -53,16 +57,18 @@ async function run(): Promise<void> {
     },
   });
   app.stage.addChild(layer);
+  layer.setViewportBounds({ x: 0, y: 0, width: 320, height: 180 });
+  await layer.commit();
   layer.createMany([
     {
-      text: "字流",
-      x: 24,
+      text: "ABCDEFGHIJKLMNOPQRSTUVWXYZ字流",
+      x: 8,
       y: 70,
       style: { fontFamily: "Arial", fontSize: 28, fill: 0xffffff },
     },
     {
       text: "Emoji · 🌏",
-      x: 24,
+      x: 8,
       y: 120,
       style: { fontFamily: "Arial", fontSize: 22, fill: 0xe8f6ff },
     },

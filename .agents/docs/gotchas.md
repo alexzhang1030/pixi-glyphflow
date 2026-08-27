@@ -73,8 +73,12 @@ arrays. Write layers with `texSubImage3D` / `writeTexture` at `origin.z = layer`
 (`packGpuTextureRows`). WebGL rejects `UNPACK_FLIP_Y_WEBGL` and `UNPACK_PREMULTIPLY_ALPHA_WEBGL`
 on 3D / array uploads (`INVALID_OPERATION`); clear both around the write. GLSL ES 3.00 needs
 `precision highp sampler2DArray` or the fragment program fails to compile and draws 0 pixels.
-R8 (sdf/alpha) and RGBA8 (msdf/color) cannot share one array. Do not start leftover #2 with a
-palette SSBO: WebGL 2 has no storage buffers.
+R8 (sdf/alpha) and RGBA8 (msdf/color) cannot share one array. Growing an array mid-commit
+leaves the replaced `AtlasArray` in that frame's dirty set. `getGlSource` on the destroyed
+source reads `source.style === null` and throws `addressModeU`. Skip destroyed arrays;
+rebind live meshes to the next source before `texture.destroy(true)`. Bind `uSampler` to an
+owned `TextureStyle`, not `source.style`. Do not start leftover #2 with a palette SSBO:
+WebGL 2 has no storage buffers.
 
 ## Compute culling needs a larger CPU working set than its draw set
 

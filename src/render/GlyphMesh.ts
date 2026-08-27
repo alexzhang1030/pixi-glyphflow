@@ -7,11 +7,18 @@ import {
   Mesh,
   Shader,
   ShaderStage,
+  TextureStyle,
   type Texture,
 } from "pixi.js";
 
 import { GLYPH_FRAGMENT_GLSL, GLYPH_SHADER_WGSL, GLYPH_VERTEX_GLSL } from "./shaders";
 import { GLYPH_DRAW_STRIDE, GLYPH_PROTO_TEXTURE_WIDTH, GLYPH_TEXTURE_BANK_SIZE } from "./types";
+
+/** Owned sampler. Do not bind `source.style` — destroying that source nulls it. */
+const ATLAS_SAMPLER_STYLE = new TextureStyle({
+  addressMode: "clamp-to-edge",
+  scaleMode: "linear",
+});
 
 export interface GlyphMeshOptions {
   readonly texture: Texture;
@@ -152,7 +159,7 @@ export class GlyphMesh extends Mesh<Geometry, Shader> {
         resources: {
           uAtlasR: atlasR.source,
           uAtlasRGBA: atlasRGBA.source,
-          uSampler: atlasR.source.style,
+          uSampler: ATLAS_SAMPLER_STYLE,
           uTransformTexture: options.paletteTexture.source,
           uPrototype: options.prototypeTexture.source,
           glyphUniforms: {
@@ -193,7 +200,7 @@ export class GlyphMesh extends Mesh<Geometry, Shader> {
     this.texture = atlasR;
     this.#ownedShader.resources.uAtlasR = atlasR.source;
     this.#ownedShader.resources.uAtlasRGBA = atlasRGBA.source;
-    this.#ownedShader.resources.uSampler = atlasR.source.style;
+    this.#ownedShader.resources.uSampler = ATLAS_SAMPLER_STYLE;
   }
 
   setPaletteTexture(texture: Texture, width: number, effectBase = 0): void {

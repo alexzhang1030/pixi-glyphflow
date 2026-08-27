@@ -39,6 +39,7 @@ function assertFixture(state: FixtureState, renderer: RendererAdapter): void {
   expect(result.rendererAdapter).toBe(renderer);
   expect(result.pixels).toBeGreaterThan(200);
   expect(result.drawCalls).toBe(1);
-  expect(result.atlasTextureCount).toBeGreaterThanOrEqual(1);
-  expect(result.atlasTextureCount).toBeLessThanOrEqual(2);
+  // Tiny 256² pages plus emoji force at least two R layers (or R + RGBA).
+  expect(result.atlasTextureCount).toBeGreaterThanOrEqual(2);
+  expect(result.atlasTextureCount).toBeLessThanOrEqual(32);
 }

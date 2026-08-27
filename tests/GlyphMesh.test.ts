@@ -88,6 +88,32 @@ describe("GlyphMesh", () => {
     mesh.destroy();
   });
 
+  test("owns the atlas sampler so destroying a page cannot null the bind", () => {
+    const mesh = new GlyphMesh({
+      ...meshOptions(),
+      shader: new Shader({
+        gpuProgram: GpuProgram.from({
+          vertex: { source: GLYPH_SHADER_WGSL, entryPoint: "mainVertex" },
+          fragment: { source: GLYPH_SHADER_WGSL, entryPoint: "mainFragment" },
+        }),
+        resources: {
+          uAtlasR: Texture.WHITE.source,
+          uAtlasRGBA: Texture.WHITE.source,
+          uSampler: Texture.WHITE.source.style,
+          uTransformTexture: Texture.WHITE.source,
+          uPrototype: Texture.WHITE.source,
+          glyphUniforms: {
+            uPaletteWidth: { value: 1, type: "f32" },
+            uEffectBase: { value: 0, type: "f32" },
+          },
+        },
+      }),
+    });
+    mesh.setTextures([Texture.WHITE, Texture.WHITE]);
+    expect(mesh.shader?.resources.uSampler).not.toBe(mesh.texture.source.style);
+    mesh.destroy();
+  });
+
   test("keeps the prototype sampler after a palette rebind", () => {
     const prototypeTexture = Texture.WHITE;
     const mesh = new GlyphMesh({

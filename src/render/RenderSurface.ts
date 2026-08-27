@@ -351,6 +351,10 @@ export class RenderSurface {
       dirtyArrays.add(page.array);
     }
     for (const array of dirtyArrays) {
+      // A mid-commit layer grow leaves the replaced array in this set after
+      // #adoptAtlasArray destroys it. getGlSource on that source reads a null
+      // style and throws addressModeU. See `.agents/docs/gotchas.md`.
+      if (array.source.destroyed || array.source.style === null) continue;
       if (!array.initialized) {
         initializeAtlasArray(this.#renderer, array);
         array.initialized = true;
@@ -404,7 +408,7 @@ export class RenderSurface {
     if (!needsReplace) return current;
     const minLayers = Math.max(info.layer + 1, current.dummy ? 1 : current.layerCount);
     const next = createAtlasArray(kind, info.width, info.height, minLayers, false);
-    current.texture.destroy(true);
+    const previous = current.texture;
     if (kind === "r") this.#rArray = next;
     else this.#rgbaArray = next;
     for (const page of this.#pages.values()) {
@@ -412,6 +416,10 @@ export class RenderSurface {
     }
     this.#atlasGeneration += 1;
     this.#pageRebuilds += 1;
+    // Pixi BindGroup.destroy()s itself when a bound TextureSource is destroyed.
+    // Point live meshes at `next` before tearing the old source down.
+    this.#bindMeshSources();
+    previous.destroy(true);
     return next;
   }
 
@@ -1002,6 +1010,9 @@ function nextLayerCapacity(needed: number): number {
  * with texSubImage3D / writeTexture. Do not call source.update() on these arrays.
  */
 function initializeAtlasArray(renderer: Renderer, array: AtlasArray): void {
+  if (array.source.destroyed || array.source.style === null) {
+    throw new Error("Cannot initialize a destroyed atlas array");
+  }
   if (isWebGLRenderer(renderer)) {
     const gl = renderer.gl;
     const resource = renderer.texture.getGlSource(array.source);
