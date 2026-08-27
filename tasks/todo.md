@@ -336,6 +336,14 @@
   - Verify: bun test tests/RenderCoordinator.test.ts tests/GlyphInstanceStore.test.ts tests/TextLayer.commit.test.ts tests/TextStore.test.ts tests/culling.test.ts
   - Files: src/render/RenderCoordinator.ts, src/render/GlyphInstanceStore.ts, src/store/TextStore.ts, src/TextLayer.ts
 
+- [x] Task 12.23: Skip empty-ink glyph generation.
+  - Acceptance: White_Space except Ogham U+1680 and default-ignorable scalars skip
+    raster and instance quads. Layout advance and the label AABB stay. Trusted runs,
+    ligatures, and shared-cluster marks still generate. An empty TinySDF mask skips
+    both EDTs. On-screen unique ink still finishes in that commit. Published budgets stay.
+  - Verify: bun test tests/RenderCoordinator.test.ts tests/tinySdf.test.ts && bun run docs:check
+  - Files: src/render/RenderCoordinator.ts, src/atlas/tinySdf.ts
+
 - [x] Task 12.22: Intern physical TinySDF/MSDF fields across logical sizes.
   - Acceptance: A 16px and 32px miss of the same glyph share one TinySDF canvas+EDT or one
     MSDF generator pass when both clamp to `distanceFieldMinFontSize`. Metrics keep the

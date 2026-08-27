@@ -158,7 +158,8 @@ serializes font loading plus atlas generation inside each worker.
 `tinySdf: true` builds HarfBuzz glyphs with a local SDF from the canvas mask. Binary fonts are
 installed as `FontFace` for that path. Concurrent rasters intern that load so one family does
 not start N `FontFace.load()` calls. Same-size misses share a microtask batch. The distance
-transform still runs per unseen physical glyph. Logical sizes that clamp to
+transform still runs per unseen physical glyph that has ink. Empty-ink scalars
+(White_Space except Ogham, plus default ignorables) skip generation. Logical sizes that clamp to
 `distanceFieldMinFontSize` intern one field and keep a per-request raster scale. MSDF generation stays on `@zappar/msdf-generator` unless
 this flag is set. `distanceFieldMinFontSize` defaults to `48`. Smaller layout sizes generate a higher-resolution
 distance field and store its physical-to-logical raster scale with the atlas entry. Glyph geometry,

@@ -139,6 +139,13 @@ because canvas paints `glyphText`; ligatures stay distinct texts. Sizes above th
 are separate physical rasters. Atlas entries stay per size bucket so instance
 `rasterScale` stays honest. Do not put logical `fontSize` in the physical key.
 
+Do not raster or instance a single White_Space or default-ignorable scalar. Those fields
+sit below the 0.5 contour, so skipping the quad is pixel-identical. Keep Ogham U+1680 —
+it is White_Space and often paints. Do not skip `source === "trusted"`, ligatures, or a
+glyph that shares its cluster with a mark. Identify the scalar from `glyphKeys` or
+`codePointAt(cluster)`; do not `Array.from` the remaining text on this path. An empty
+TinySDF mask skips both EDTs and encodes zeros. CJK and other ink still generate.
+
 ## Prebuilt glyph keys omit font revision
 
 `prebuiltGlyphKey` is family, glyph id, glyph text, rounded size, weight, and mode. A re-registered

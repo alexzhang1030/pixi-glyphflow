@@ -693,6 +693,7 @@ export class RenderCoordinator {
     index: number,
     snapshot: Readonly<RenderLabelSnapshot>,
   ): Promise<void> | undefined {
+    if (isEmptyInkGlyph(run, index)) return;
     const mode = this.#glyphMode(run, index);
     const glyphId = run.glyphIds[index] ?? 0;
     const glyphText = lazyGlyphText(run, index, glyphId);
@@ -1091,18 +1092,14 @@ export class RenderCoordinator {
     run: Readonly<PositionedRun>,
     snapshot: Readonly<RenderLabelSnapshot>,
   ): GlyphInstanceBatch {
-    const count = run.glyphCount;
-    this.#ensureBatchCapacity(count);
-    const positions = this.#batchPositions.subarray(0, count * 4);
-    const uvs = this.#batchUvs.subarray(0, count * 4);
-    const paletteIndices = this.#batchPalette.subarray(0, count);
-    const pages = this.#batchPages.subarray(0, count);
-    const modes = this.#batchModes.subarray(0, count);
-    const rasterScales = this.#batchScales.subarray(0, count);
+    const glyphCount = run.glyphCount;
+    this.#ensureBatchCapacity(glyphCount);
     const uniqueKeys: GlyphCacheKey[] = [];
     const seenKeys = this.#seenAtlasKeys;
     seenKeys.clear();
-    for (let index = 0; index < count; index += 1) {
+    let write = 0;
+    for (let index = 0; index < glyphCount; index += 1) {
+      if (isEmptyInkGlyph(run, index)) continue;
       const mode = this.#glyphMode(run, index);
       const glyphId = run.glyphIds[index] ?? 0;
       const glyphText = lazyGlyphText(run, index, glyphId);
@@ -1125,25 +1122,34 @@ export class RenderCoordinator {
       if (entry === undefined) {
         throw new Error(`Atlas entry missing for positioned glyph: ${String(key)}`);
       }
-      const outputOffset = index * 4;
+      const outputOffset = write * 4;
       const rasterScale = entry.metrics?.rasterScale ?? 1;
-      positions[outputOffset] = (run.x[index] ?? 0) + (entry.metrics?.bearingX ?? 0) - run.bounds.x;
-      positions[outputOffset + 1] =
+      this.#batchPositions[outputOffset] =
+        (run.x[index] ?? 0) + (entry.metrics?.bearingX ?? 0) - run.bounds.x;
+      this.#batchPositions[outputOffset + 1] =
         (run.y[index] ?? 0) - (entry.metrics?.bearingY ?? 0) - run.bounds.y;
-      positions[outputOffset + 2] = entry.width / rasterScale;
-      positions[outputOffset + 3] = entry.height / rasterScale;
-      uvs[outputOffset] = entry.u0;
-      uvs[outputOffset + 1] = entry.v0;
-      uvs[outputOffset + 2] = entry.u1;
-      uvs[outputOffset + 3] = entry.v1;
-      paletteIndices[index] = slot;
-      pages[index] = entry.page;
-      modes[index] = modeCode(entry.mode);
-      rasterScales[index] = rasterScale;
+      this.#batchPositions[outputOffset + 2] = entry.width / rasterScale;
+      this.#batchPositions[outputOffset + 3] = entry.height / rasterScale;
+      this.#batchUvs[outputOffset] = entry.u0;
+      this.#batchUvs[outputOffset + 1] = entry.v0;
+      this.#batchUvs[outputOffset + 2] = entry.u1;
+      this.#batchUvs[outputOffset + 3] = entry.v1;
+      this.#batchPalette[write] = slot;
+      this.#batchPages[write] = entry.page;
+      this.#batchModes[write] = modeCode(entry.mode);
+      this.#batchScales[write] = rasterScale;
+      write += 1;
     }
     this.#retainSlotKeys(slot, uniqueKeys);
 
-    return { positions, uvs, paletteIndices, pages, modes, rasterScales };
+    return {
+      positions: this.#batchPositions.subarray(0, write * 4),
+      uvs: this.#batchUvs.subarray(0, write * 4),
+      paletteIndices: this.#batchPalette.subarray(0, write),
+      pages: this.#batchPages.subarray(0, write),
+      modes: this.#batchModes.subarray(0, write),
+      rasterScales: this.#batchScales.subarray(0, write),
+    };
   }
 
   #ensureBatchCapacity(count: number): void {
@@ -1341,6 +1347,55 @@ function validateChanges(changes: readonly RenderChange[]): void {
  */
 function lazyGlyphText(run: Readonly<PositionedRun>, index: number, glyphId: number): string {
   return glyphId > 0 && run.source === "harfbuzz" ? "" : resolveGlyphText(run, index);
+}
+
+/**
+ * Spaces, other White_Space (except Ogham U+1680, which paints), and default-ignorable scalars have
+ * no 0.5 contour. Skip generation and instance quads. Trusted runs stay caller-owned. Ligatures and
+ * shared-cluster marks stay, including RTL cluster order.
+ */
+function isEmptyInkGlyph(run: Readonly<PositionedRun>, index: number): boolean {
+  if (run.source === "trusted") return false;
+  const key = run.glyphKeys?.[index];
+  if (key !== undefined && key.length > 0) {
+    const codePoint = key.codePointAt(0);
+    if (codePoint === undefined) return false;
+    const units = codePoint > 0xffff ? 2 : 1;
+    return key.length === units && isEmptyInkCodePoint(codePoint);
+  }
+  const cluster = run.clusters[index] ?? 0;
+  const codePoint = run.text.codePointAt(cluster);
+  if (codePoint === undefined) return false;
+  const units = codePoint > 0xffff ? 2 : 1;
+  const end = cluster + units;
+  let glyphAtEnd = end >= run.text.length;
+  for (let other = 0; other < run.glyphCount; other += 1) {
+    if (other === index) continue;
+    const otherCluster = run.clusters[other] ?? 0;
+    if (otherCluster === cluster || (otherCluster > cluster && otherCluster < end)) {
+      return false;
+    }
+    if (otherCluster === end) glyphAtEnd = true;
+  }
+  if (!glyphAtEnd && end < run.text.length) return false;
+  return isEmptyInkCodePoint(codePoint);
+}
+
+const EMPTY_INK_RE = /[\p{White_Space}\p{Default_Ignorable_Code_Point}]/u;
+
+function isEmptyInkCodePoint(codePoint: number): boolean {
+  if (codePoint === 0x1680) return false;
+  if (codePoint < 0x80) {
+    return (
+      codePoint === 0x09 ||
+      codePoint === 0x0a ||
+      codePoint === 0x0b ||
+      codePoint === 0x0c ||
+      codePoint === 0x0d ||
+      codePoint === 0x20
+    );
+  }
+  return EMPTY_INK_RE.test(String.fromCodePoint(codePoint));
 }
 
 function resolveGlyphText(run: Readonly<PositionedRun>, index: number): string {

@@ -8,6 +8,12 @@ describe("encodeTinySdf", () => {
     const empty = encodeTinySdf(new Uint8Array(16).fill(0), 4, 4, 2);
     expect([...filled].every((value) => value >= 128)).toBe(true);
     expect([...empty].every((value) => value <= 128)).toBe(true);
+    expect(empty).toEqual(new Uint8Array(16));
+  });
+
+  test("skips both EDTs when the mask has no covered pixel", () => {
+    const empty = encodeTinySdf(new Uint8Array(64).fill(127), 8, 8, 4);
+    expect(empty).toEqual(new Uint8Array(64));
   });
 
   test("puts the contour on a vertical edge", () => {

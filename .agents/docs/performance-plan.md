@@ -134,8 +134,9 @@ LRU, 52-bit keys, the 48 MiB store (test-pinned, 44.9 MiB measured), the sparse 
     per (text, style). Wall-clock is no longer the sum of those prepares. Instance and palette
     writes stay serial after the wave settles. Tight-view unique still finishes in that commit.
 14. **TinySDF microtask batch + FontFace intern — LANDED.** Same-size TinySDF misses share one
-    FontFace wait and serialize canvas plus EDT after that wait. EDT stays per glyph. Neighbors
-    on one sheet would corrupt distances. Concurrent `#ensureDocumentFont` for one family shares
+    FontFace wait and serialize canvas plus EDT after that wait. EDT stays per unseen ink
+    glyph. Neighbors on one sheet would corrupt distances. Concurrent `#ensureDocumentFont`
+    for one family shares
     one `FontFace.load()`. Do not ship default baked pages in the core gzip graph.
 15. **Columnar spatial translate — LANDED.** `translateMany` slides occupied AABBs from packed
     deltas. Translate does not change size, so the size class stays and only a cell-boundary
@@ -159,6 +160,11 @@ LRU, 52-bit keys, the 48 MiB store (test-pinned, 44.9 MiB measured), the sparse 
     omit HarfBuzz id because canvas paints `glyphText`. Sizes above the minimum stay unique
     physical rasters. Atlas entries stay per size bucket. A first unseen CJK at one size
     still generates once.
+19. **Empty-ink generation skip — LANDED.** White_Space except Ogham U+1680, plus
+    default-ignorable scalars, skip `#ensureGlyph` and instance quads. Layout advance and
+    the label AABB stay, so hit tests do not shrink. Trusted runs, ligatures, and
+    shared-cluster marks still generate. `encodeTinySdf` skips both EDTs when the mask has
+    no covered pixel. A first unseen CJK with ink still generates once.
 
 **Regressions and traps the audits confirmed:**
 
@@ -378,7 +384,7 @@ Verify: `bun run test:browser -- glyph-rendering` and both-adapter site/browser 
 
 The packer is no longer the limiter; generation and upload are.
 
-- TinySDF is in tree behind `rasterizerOptions.tinySdf`. It builds an SDF from the canvas mask so `@zappar/msdf-generator` is not on the first miss. Binary families install through `FontFace`, interned per family so a miss burst does not start N loads. Same-size misses share a microtask batch; EDT stays per unseen physical glyph. Logical sizes that clamp to `distanceFieldMinFontSize` intern one field. Exact HarfBuzz glyph IDs still go through MSDF when the flag is off.
+- TinySDF is in tree behind `rasterizerOptions.tinySdf`. It builds an SDF from the canvas mask so `@zappar/msdf-generator` is not on the first miss. Binary families install through `FontFace`, interned per family so a miss burst does not start N loads. Same-size misses share a microtask batch; EDT stays per unseen physical glyph that has ink. Empty-ink scalars skip generation. Logical sizes that clamp to `distanceFieldMinFontSize` intern one field. Exact HarfBuzz glyph IDs still go through MSDF when the flag is off.
 - `rasterizerOptions.prebuilt` is the hybrid page lookup (TMP / Mapbox PBF model). Dynamic TinySDF or MSDF handles the long tail. Default alphabet pages stay out of the core bundle. Optional `pixi-glyphflow/prebuilt` (`uiSdfPrebuilt`) is the side export for a coarse ASCII page.
 - `culling.lod` drops labels whose projected font height is below one pixel. Default is off.
 - Budget atlas uploads per frame and resume across frames. A 20,000-glyph first miss must not hitch a single commit. First-seen layout runs in the seeing commit for the tight draw view. The 0.25-viewport ring still admits intern hits and same-commit copies of a tight unique string. Ring-only unique misses stay unshaped. Do not drip-feed on-screen labels.
