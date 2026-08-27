@@ -101,6 +101,54 @@ describe("SpatialIndex", () => {
     index.destroy();
   });
 
+  test("translates occupied slots from packed deltas without rewriting z or visibility", () => {
+    const index = new SpatialIndex({ initialCapacity: 8 });
+    index.set(0, { x: 0, y: 0, width: 8, height: 10 }, 1, true);
+    index.set(2, { x: 40, y: 40, width: 8, height: 10 }, 2, true);
+    index.set(3, { x: 80, y: 80, width: 8, height: 10 }, 3, false);
+    const slots = new Uint32Array([0, 2, 3, 7]);
+    const deltas = new Float32Array([10, 20, -10, -10, 5, 5, 1, 1]);
+
+    expect(index.translateMany(slots, 3, deltas)).toBe(3);
+    expect(index.get(0)).toEqual({ x: 10, y: 20, width: 8, height: 10 });
+    expect(index.get(2)).toEqual({ x: 30, y: 30, width: 8, height: 10 });
+    expect(index.get(3)).toEqual({ x: 85, y: 85, width: 8, height: 10 });
+    expect(index.hitTest({ x: 11, y: 21 })).toBe(0);
+    expect(index.hitTest({ x: 86, y: 86 })).toBeUndefined();
+    expect(index.translateMany(slots, 3, new Float32Array(6))).toBe(3);
+
+    expect(() => index.translateMany(slots, 3, new Float32Array([1, 2, 3]))).toThrow(TypeError);
+    expect(() =>
+      index.translateMany(slots, 3, new Float32Array([1, 2, Number.NaN, 0, 0, 0])),
+    ).toThrow(TypeError);
+
+    index.destroy();
+  });
+
+  test("keeps size class on translate and rebuckets only when the center crosses a cell", () => {
+    const index = new SpatialIndex({ initialCapacity: 4 });
+    const output = new Uint32Array(4);
+    // 10×10 boxes use the 64-wide level. Center 5,5 starts in cell (0,0).
+    index.set(0, { x: 0, y: 0, width: 10, height: 10 });
+
+    expect(index.translateMany(new Uint32Array([0]), 1, new Float32Array([20, 0]))).toBe(1);
+    expect(index.query({ x: 18, y: 0, width: 20, height: 20 }, output)).toBe(1);
+    expect(output[0]).toBe(0);
+
+    expect(index.translateMany(new Uint32Array([0]), 1, new Float32Array([80, 0]))).toBe(1);
+    expect(index.get(0)).toEqual({ x: 100, y: 0, width: 10, height: 10 });
+    expect(index.query({ x: 98, y: 0, width: 20, height: 20 }, output)).toBe(1);
+    expect(output[0]).toBe(0);
+    expect(index.query({ x: 0, y: 0, width: 20, height: 20 }, output)).toBe(0);
+
+    index.set(1, { x: 0, y: 0, width: 5_000, height: 5_000 });
+    expect(index.translateMany(new Uint32Array([1]), 1, new Float32Array([40, 60]))).toBe(1);
+    expect(index.get(1)).toEqual({ x: 40, y: 60, width: 5_000, height: 5_000 });
+    expect(index.hitTest({ x: 50, y: 70 })).toBe(1);
+
+    index.destroy();
+  });
+
   test("places occupied slots from packed origins and a shared local box", () => {
     const index = new SpatialIndex({ initialCapacity: 8 });
     index.set(0, { x: 0, y: 0, width: 8, height: 10 }, 1, true);

@@ -154,6 +154,8 @@ export class TextLayer extends Container {
   #preparedRing: CullViewport | undefined;
   #laneSlots: Uint32Array;
   #contentSlots: Uint32Array;
+  #translateSlots: Uint32Array;
+  #translateDeltas: Float32Array;
   readonly #boundsScratch: MutableBoundsData = { x: 0, y: 0, width: 0, height: 0 };
   // Broadcast mutations reuse one text/style reference across the batch; estimating once
   // per identity pair removes an O(text) scan per label from bulk intake.
@@ -196,6 +198,8 @@ export class TextLayer extends Container {
     this.#bulkSlots = new Uint32Array(this.#store.capacity);
     this.#laneSlots = new Uint32Array(this.#store.capacity);
     this.#contentSlots = new Uint32Array(this.#store.capacity);
+    this.#translateSlots = new Uint32Array(this.#store.capacity);
+    this.#translateDeltas = new Float32Array(this.#store.capacity * 2);
     this.#visibleSlots = new Uint32Array(this.#store.capacity);
     this.#visibleMember = new Uint8Array(this.#store.capacity);
     this.#renderedEpochs = new Uint32Array(this.#store.capacity);
@@ -522,13 +526,19 @@ export class TextLayer extends Container {
     positions: Float32Array | Float64Array,
   ): number {
     this.#assertActive();
+    this.#ensureTranslateCapacity(ids.length);
+    let moved = 0;
     const changed = this.#store.updatePositions(
       ids,
       positions,
       (slot, x, y, previousX, previousY) => {
-        this.#spatial.translate(slot, x - previousX, y - previousY);
+        this.#translateSlots[moved] = slot;
+        this.#translateDeltas[moved * 2] = x - previousX;
+        this.#translateDeltas[moved * 2 + 1] = y - previousY;
+        moved += 1;
       },
     );
+    if (moved > 0) this.#spatial.translateMany(this.#translateSlots, moved, this.#translateDeltas);
     this.#recordMutation(TextDirty.Transform, changed);
 
     return changed;
@@ -542,6 +552,8 @@ export class TextLayer extends Container {
   ): number {
     this.#assertActive();
     const hasTrustedRuns = this.#trustedRuns.size > 0;
+    this.#ensureTranslateCapacity(ids.length);
+    let moved = 0;
     const result = this.#store.updateTextPositions(
       ids,
       texts,
@@ -559,11 +571,10 @@ export class TextLayer extends Container {
           if (!this.#store.copyBoundsLabelAt(slot, this.#labelScratch)) {
             throw new Error("Updated label disappeared from its store");
           }
-          this.#spatial.translate(
-            slot,
-            this.#labelScratch.x - previousX,
-            this.#labelScratch.y - previousY,
-          );
+          this.#translateSlots[moved] = slot;
+          this.#translateDeltas[moved * 2] = this.#labelScratch.x - previousX;
+          this.#translateDeltas[moved * 2 + 1] = this.#labelScratch.y - previousY;
+          moved += 1;
           return;
         }
         // Rendered unit-transform labels get run bounds at commit (content lane or
@@ -581,6 +592,7 @@ export class TextLayer extends Container {
         }
       },
     );
+    if (moved > 0) this.#spatial.translateMany(this.#translateSlots, moved, this.#translateDeltas);
     this.#recordMutation(result.mask, result.changed);
 
     return result.changed;
@@ -1245,6 +1257,13 @@ export class TextLayer extends Container {
       this.#estimateStyleRef = label.style;
     }
     return transformedLabelBounds(label, this.#estimateScratch, this.#boundsScratch);
+  }
+
+  #ensureTranslateCapacity(count: number): void {
+    if (this.#translateSlots.length >= count) return;
+    const capacity = nextPowerOfTwo(count);
+    this.#translateSlots = new Uint32Array(capacity);
+    this.#translateDeltas = new Float32Array(capacity * 2);
   }
 
   #ensureScratchCapacity(): void {

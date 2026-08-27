@@ -336,6 +336,14 @@
   - Verify: bun test tests/RenderCoordinator.test.ts tests/GlyphInstanceStore.test.ts tests/TextLayer.commit.test.ts tests/TextStore.test.ts tests/culling.test.ts
   - Files: src/render/RenderCoordinator.ts, src/render/GlyphInstanceStore.ts, src/store/TextStore.ts, src/TextLayer.ts
 
+- [x] Task 12.19: Columnar spatial translate for position storms.
+  - Acceptance: `translateMany` slides occupied AABBs from packed deltas without rewriting
+    z or visibility. Size class stays; only a cell-boundary crossing rebuckets.
+    `updatePositions` and same-text `updateTextPositions` call it once per batch. Published
+    budgets stay.
+  - Verify: bun test tests/SpatialIndex.test.ts tests/culling.test.ts tests/TextLayer.commit.test.ts
+  - Files: src/culling/SpatialIndex.ts, src/TextLayer.ts
+
 - [x] Task 12.18: Batch same-size TinySDF misses and intern FontFace load.
   - Acceptance: Same-size `mode: "sdf"` rasters share one FontFace wait and serialize canvas
     plus EDT. A gated pair records one canvas start until the first gate resolves. EDT stays

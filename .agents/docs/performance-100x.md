@@ -106,6 +106,9 @@ writes, and remirroring the store.
   sum of each string's layout and raster. Writes stay serial after that wave.
 - Same-size TinySDF misses share one FontFace wait and serialize canvas plus EDT. EDT stays
   per glyph. A miss burst does not start N `FontFace.load()` calls for one family.
+- Position storms slide spatial AABBs through `translateMany`. Size is unchanged, so the
+  size class stays. Only a cell-boundary crossing rebuckets. `updatePositions` and
+  same-text `updateTextPositions` collect packed deltas and call it once.
 
 ## Remaining slices, in order
 
