@@ -180,19 +180,32 @@ Compute shader and pass internals are not root exports.
 printable ASCII (U+0020–U+007E). The bitmaps are a public-domain VGA 8×8 set scaled to 16 px ink
 and encoded with the same TinySDF radius the dynamic path uses. This is a coarse UI alphabet, not
 production typography. `fontSize` must be `16` (`UI_SDF_FONT_SIZE`); other sizes throw. The first
-call encodes; later calls remap keys only. The pages are not in the core ESM graph — import
-`pixi-glyphflow/prebuilt` and pass the result into `rasterizerOptions.prebuilt` with `tinySdf: true`
-when the host wants known ASCII to be a crop.
+call encodes; later calls remap keys only.
+
+`charsetSdfPrebuilt({ family, charset, fontSize, fontWeight?, distanceFieldMinFontSize?, rasterize? })`
+bakes host text with the same TinySDF path. It skips empty-ink scalars, encodes at
+`max(fontSize, distanceFieldMinFontSize)`, and stores `rasterScale` on each glyph. The first bake
+for a family + physical size + weight + charset paints; later calls remap keys. It does not ship
+CJK bitmaps. `mergePrebuilt` concatenates family pages. `uniqueInkCharset` is the scalar filter.
+The pages are not in the core ESM graph — import `pixi-glyphflow/prebuilt` and pass the result
+into `rasterizerOptions.prebuilt` with `tinySdf: true` when the host wants known ink to be a crop.
 
 ```ts
 import { TextLayer } from "pixi-glyphflow";
-import { uiSdfPrebuilt } from "pixi-glyphflow/prebuilt";
+import { charsetSdfPrebuilt, mergePrebuilt, uiSdfPrebuilt } from "pixi-glyphflow/prebuilt";
 
 const layer = new TextLayer({
   rendering: {
     rasterizerOptions: {
       tinySdf: true,
-      prebuilt: uiSdfPrebuilt({ family: "Inter" }),
+      prebuilt: mergePrebuilt(
+        uiSdfPrebuilt({ family: "Inter" }),
+        await charsetSdfPrebuilt({
+          family: "Noto Sans CJK",
+          charset: "上海字流",
+          fontSize: 14,
+        }),
+      ),
     },
   },
 });

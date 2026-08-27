@@ -215,15 +215,15 @@ remaining supported appearance controls.
 
 ## Package entry points
 
-| Import                          | Purpose                                                          |
-| ------------------------------- | ---------------------------------------------------------------- |
-| `pixi-glyphflow`                | `TextLayer`, `FontRegistry`, and primary types                   |
-| `pixi-glyphflow/viewport`       | pixi-viewport binding                                            |
-| `pixi-glyphflow/accessibility`  | Sparse DOM accessibility mirror                                  |
-| `pixi-glyphflow/shaping`        | HarfBuzz main-thread and worker shapers                          |
-| `pixi-glyphflow/advanced`       | Atlas, mesh, layout, upload, and spatial primitives              |
-| `pixi-glyphflow/prebuilt`       | Optional coarse ASCII SDF pages for `rasterizerOptions.prebuilt` |
-| `pixi-glyphflow/text-worker.js` | Worker module used by the default complex-script pipeline        |
+| Import                          | Purpose                                                             |
+| ------------------------------- | ------------------------------------------------------------------- |
+| `pixi-glyphflow`                | `TextLayer`, `FontRegistry`, and primary types                      |
+| `pixi-glyphflow/viewport`       | pixi-viewport binding                                               |
+| `pixi-glyphflow/accessibility`  | Sparse DOM accessibility mirror                                     |
+| `pixi-glyphflow/shaping`        | HarfBuzz main-thread and worker shapers                             |
+| `pixi-glyphflow/advanced`       | Atlas, mesh, layout, upload, and spatial primitives                 |
+| `pixi-glyphflow/prebuilt`       | Optional ASCII / charset SDF pages for `rasterizerOptions.prebuilt` |
+| `pixi-glyphflow/text-worker.js` | Worker module used by the default complex-script pipeline           |
 
 ## Reference performance
 

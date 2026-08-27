@@ -177,6 +177,12 @@ exact-key only. Do not put default pages on `src/index.ts` or `src/advanced/inde
 VGA 8×8 set at 16 px only (`rasterScale` cannot be below 1). Later calls remap keys. This is
 not production typography and is not wired into the homepage CJK demo.
 
+`charsetSdfPrebuilt` bakes host text with the same TinySDF path. It does not ship CJK bitmaps.
+Paint after `FontFace.load` or inject `rasterize`. Empty-ink scalars are omitted. Logical sizes
+that clamp to `distanceFieldMinFontSize` store `rasterScale`. `mergePrebuilt` concatenates
+family pages. The homepage demo bakes its language samples this way so first-seen CJK is a
+crop. Do not put those pages on `src/index.ts`.
+
 ## LOD remirrors only when labels cross one pixel
 
 `culling.lod` uses `fontSize * scaleY * worldScaleY`. Zoom inside a working set does not remirror

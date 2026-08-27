@@ -130,9 +130,9 @@ storage budgets stay until a human accepts new numbers.
   strings prepare those columns in parallel. Unique groups that share a fill write one
   `writeFills` column.
 - Put stable UI alphabets on `rasterizerOptions.prebuilt` pages. Do not ship those pages in the
-  core bundle. `pixi-glyphflow/prebuilt` (`uiSdfPrebuilt`) is the optional ASCII side export;
-  import it from that entry, not from `pixi-glyphflow`. Empty-ink scalars skip generation;
-  unseen CJK still rasters in the seeing commit.
+  core bundle. `pixi-glyphflow/prebuilt` (`uiSdfPrebuilt`, `charsetSdfPrebuilt`) is the optional
+  side export; import it from that entry, not from `pixi-glyphflow`. Empty-ink scalars skip
+  generation. Known CJK can be a crop when the host bakes that charset.
 - `culling.lod` drops labels whose projected font height is below one pixel. Leave it off unless
   the product accepts missing subpixel text.
 - Read diagnostics at telemetry cadence.

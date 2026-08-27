@@ -33,6 +33,7 @@ const requiredApiTerms = [
   "GlyphAtlas",
   "GlyphMesh",
   "uiSdfPrebuilt",
+  "charsetSdfPrebuilt",
 ] as const;
 const copiedFeatureName = `${"heat"}${"map"}`;
 const forbiddenSourceTraces = [

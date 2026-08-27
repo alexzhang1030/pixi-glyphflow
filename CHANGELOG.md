@@ -4,6 +4,10 @@
 
 ### Added
 
+- Optional `pixi-glyphflow/prebuilt` `charsetSdfPrebuilt` / `mergePrebuilt` / `uniqueInkCharset`:
+  host-painted TinySDF pages for a charset (CJK included). First bake encodes; later calls
+  remap keys. No CJK bitmaps ship in the package. The homepage demo bakes its language
+  samples after `FontFace.load`.
 - Optional `pixi-glyphflow/prebuilt` export: `uiSdfPrebuilt` serves a coarse VGA 8×8 SDF of
   printable ASCII (U+0020–U+007E) as `rasterizerOptions.prebuilt` pages. The first call encodes;
   later calls remap keys. Size is 16 px only. The pages are not in the core ESM graph.

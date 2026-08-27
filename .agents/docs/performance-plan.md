@@ -165,7 +165,12 @@ LRU, 52-bit keys, the 48 MiB store (test-pinned, 44.9 MiB measured), the sparse 
     the label AABB stay, so hit tests do not shrink. Trusted runs, ligatures, and
     shared-cluster marks still generate. `encodeTinySdf` skips both EDTs when the mask has
     no covered pixel. A first unseen CJK with ink still generates once.
-20. **Atlas texture array — LANDED.** Two `sampler2DArray` / `texture_2d_array` textures hold
+20. **Optional charset TinySDF prebake — LANDED.** `charsetSdfPrebuilt` paints a host charset
+    at `max(fontSize, distanceFieldMinFontSize)`, skips empty-ink scalars, and remaps keys
+    on later calls. `mergePrebuilt` concatenates family pages. No CJK bitmaps ship in the
+    core gzip graph. The homepage demo bakes its language samples after `FontFace.load`.
+    Unseen ink still generates.
+21. **Atlas texture array — LANDED.** Two `sampler2DArray` / `texture_2d_array` textures hold
     R8 (sdf/alpha) and RGBA8 (msdf/color) pages as layers. Instance metadata low bits are
     the same-format layer. Compact walks no longer split on `floor(page/8)`. Pixi buffer
     uploaders stay 2D; the surface allocates the array and writes `texSubImage3D` /

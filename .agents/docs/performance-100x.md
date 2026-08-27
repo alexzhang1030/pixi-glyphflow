@@ -121,6 +121,9 @@ writes, and remirroring the store.
 - Empty-ink scalars (White_Space except Ogham U+1680, plus default ignorables) skip
   raster and instance quads. Layout advance and label AABBs stay. Trusted runs, ligatures,
   and shared-cluster marks still generate. An empty TinySDF mask skips both EDTs.
+- Optional `charsetSdfPrebuilt` bakes a host charset with the same TinySDF path. The homepage
+  demo paints its language samples after `FontFace.load` so those CJK misses are crops. No
+  CJK bitmaps ship in the package.
 - Atlas pages bind as layers in two texture arrays. `vMode` selects R or RGBA. Compact
   walks split only on blend and z. Growing an array reallocates and recopies layers.
   Array sources skip Pixi's 2D buffer uploader. WebGPU glyph rects pad `bytesPerRow` to
@@ -136,8 +139,8 @@ writes, and remirroring the store.
    across a miss burst. Same-glyph logical sizes that clamp to `distanceFieldMinFontSize`
    share one field. Empty-ink scalars skip generation. EDT is still per unseen physical
    glyph that has ink. Known ASCII can skip that path when the host imports `uiSdfPrebuilt`.
-   CJK and unseen ink still generate. Do not defer texel uploads for glyphs already
-   instanced.
+   Known CJK can skip when the host bakes `charsetSdfPrebuilt`. Unseen ink still generates.
+   Do not defer texel uploads for glyphs already instanced.
 2. **Palette storage buffer.** Wave 3 leftover. Binding cost, not the zoom hitch. Atlas pages
    are already two `sampler2DArray` / `texture_2d_array` textures (R8 and RGBA8). Do not start
    this leftover with a palette SSBO: WebGL 2 has no storage buffers.

@@ -10,6 +10,7 @@ import {
   type TextLabelSpec,
   type TextShapingOptions,
 } from "pixi-glyphflow";
+import { charsetSdfPrebuilt, mergePrebuilt } from "pixi-glyphflow/prebuilt";
 import { bindViewport, type ViewportBinding } from "pixi-glyphflow/viewport";
 import { Viewport } from "pixi-viewport";
 import { Application, type TextStyleOptions } from "pixi.js";
@@ -69,6 +70,24 @@ const LANGUAGE_SAMPLES: readonly Readonly<LanguageSample>[] = Object.freeze([
   sample("Русский · Привет", true, "ru", "Cyrl"),
   sample("Ελληνικά · Γεια", true, "el", "Grek"),
   Object.freeze({ text: "Emoji · 🌏 ✦", custom: false }),
+]);
+const DEMO_CHARSETS: readonly Readonly<{ family: string; charset: string }>[] = Object.freeze([
+  {
+    family: "Glyphflow CJKV Demo",
+    charset: [
+      "简体中文 · 上海字流",
+      "繁體中文 · 臺北字型",
+      "日本語 · 東京テキスト",
+      "한국어 · 서울글리프",
+      "Tiếng Việt · Hà Nội",
+      "Русский · Привет",
+      "Ελληνικά · Γεια",
+    ].join(""),
+  },
+  { family: "Glyphflow Arabic Demo", charset: "العربية · مرحبا" },
+  { family: "Glyphflow Devanagari Demo", charset: "हिन्दी · नमस्ते" },
+  { family: "Glyphflow Hebrew Demo", charset: "עברית · שלום" },
+  { family: "Glyphflow Thai Demo", charset: "ไทย · สวัสดี" },
 ]);
 const numberFormat = new Intl.NumberFormat("en-US");
 
@@ -334,6 +353,22 @@ async function initialize(backend: RendererBackend, runId: number): Promise<void
   nextViewport.moveCenter(worldWidth / 2, worldHeight / 2);
   nextApp.stage.addChild(nextViewport);
 
+  bootStage.value = "Baking sample glyphs";
+  const customFontAssets = await loadCustomFonts();
+  await installDemoFaces(customFontAssets);
+  const prebuilt = mergePrebuilt(
+    ...(await Promise.all(
+      DEMO_CHARSETS.map((entry) =>
+        charsetSdfPrebuilt({
+          family: entry.family,
+          charset: entry.charset,
+          fontSize: 14,
+          fontWeight: "500",
+          distanceFieldMinFontSize: 48,
+        }),
+      ),
+    )),
+  );
   const nextLayer = new TextLayer({
     renderer: nextApp.renderer,
     initialCapacity: LABEL_COUNT,
@@ -341,6 +376,7 @@ async function initialize(backend: RendererBackend, runId: number): Promise<void
       rasterizerOptions: {
         tinySdf: true,
         distanceFieldMinFontSize: 48,
+        prebuilt,
         createMsdfGenerator: () =>
           Promise.resolve(new MSDF({ workerUrl: msdfWorkerUrl, wasmUrl: msdfWasmUrl })),
       },
@@ -352,7 +388,6 @@ async function initialize(backend: RendererBackend, runId: number): Promise<void
     },
   });
   layer = nextLayer;
-  const customFontAssets = await loadCustomFonts();
   const customFonts = await Promise.all(
     customFontAssets.map((asset) =>
       nextLayer.fonts.register({ family: asset.family, source: asset.bytes }),
@@ -724,6 +759,18 @@ function resolveLanguageSample(
       : LANGUAGE_SAMPLES[index % LANGUAGE_SAMPLES.length],
     showcase,
   });
+}
+
+async function installDemoFaces(fonts: readonly Readonly<LoadedFontAsset>[]): Promise<void> {
+  await Promise.all(
+    fonts.map(async (font) => {
+      const copy = new Uint8Array(font.bytes.byteLength);
+      copy.set(font.bytes);
+      const face = new FontFace(font.family, copy);
+      await face.load();
+      document.fonts.add(face);
+    }),
+  );
 }
 
 async function loadCustomFonts(): Promise<readonly Readonly<LoadedFontAsset>[]> {
