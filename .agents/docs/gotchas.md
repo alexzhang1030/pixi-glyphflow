@@ -66,10 +66,12 @@ store with `highWater` more than twice the live instances stay on the CPU compac
 
 `viewDimension: "2d-array"` plus `arrayLayerCount` allocates a WebGL `TEXTURE_2D_ARRAY` / WebGPU
 array texture. Pixi's `buffer` uploaders still call `texImage2D` / `writeTexture` at `z = 0` for
-one 2D slice. Do not call `source.update()` on atlas arrays. After `getGlSource`, reallocate with
-`texImage3D` and write layers with `texSubImage3D`. After `getGpuSource`, write `origin.z = layer`.
-WebGL rejects `UNPACK_FLIP_Y_WEBGL` and `UNPACK_PREMULTIPLY_ALPHA_WEBGL` on 3D / array uploads
-(`INVALID_OPERATION`); clear both around the write. GLSL ES 3.00 needs
+one 2D slice. Set `uploadMethodId` to something else so `getGlSource` uses `texImage3D` (empty
+array) and `getGpuSource` skips the 2D buffer write. Do not call `source.update()` on atlas
+arrays. Write layers with `texSubImage3D` / `writeTexture` at `origin.z = layer`. WebGPU
+`writeTexture` rejects a `bytesPerRow` that is not a multiple of 256 — pad narrow glyph rects
+(`packGpuTextureRows`). WebGL rejects `UNPACK_FLIP_Y_WEBGL` and `UNPACK_PREMULTIPLY_ALPHA_WEBGL`
+on 3D / array uploads (`INVALID_OPERATION`); clear both around the write. GLSL ES 3.00 needs
 `precision highp sampler2DArray` or the fragment program fails to compile and draws 0 pixels.
 R8 (sdf/alpha) and RGBA8 (msdf/color) cannot share one array. Do not start leftover #2 with a
 palette SSBO: WebGL 2 has no storage buffers.

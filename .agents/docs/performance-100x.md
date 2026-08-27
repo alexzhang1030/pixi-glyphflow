@@ -123,7 +123,8 @@ writes, and remirroring the store.
   and shared-cluster marks still generate. An empty TinySDF mask skips both EDTs.
 - Atlas pages bind as layers in two texture arrays. `vMode` selects R or RGBA. Compact
   walks split only on blend and z. Growing an array reallocates and recopies layers.
-  Palette SSBO is still not started.
+  Array sources skip Pixi's 2D buffer uploader. WebGPU glyph rects pad `bytesPerRow` to
+  256. Palette SSBO is still not started.
 
 ## Remaining slices, in order
 

@@ -11,6 +11,9 @@ import {
   prototypeTextureLayout,
   unpackF16,
   unpackHalf2x16,
+  GPU_TEXTURE_BYTES_PER_ROW_ALIGNMENT,
+  gpuTextureBytesPerRow,
+  packGpuTextureRows,
   writeDrawInstance,
   writePrototypeGlyphs,
 } from "../src/render/pack";
@@ -35,6 +38,27 @@ describe("packF16", () => {
     expect(unpackF16(packF16(0.5))).toBe(0.5);
     expect(unpackF16(packF16(1))).toBe(1);
     expect(unpackF16(packF16(-1))).toBe(-1);
+  });
+});
+
+describe("packGpuTextureRows", () => {
+  test("keeps 256-aligned rows as the same buffer", () => {
+    const pixels = new Uint8Array(1024 * 2);
+    const packed = packGpuTextureRows(pixels, 1024, 2, 1);
+    expect(packed.bytesPerRow).toBe(1024);
+    expect(packed.data).toBe(pixels);
+    expect(gpuTextureBytesPerRow(20, 1)).toBe(GPU_TEXTURE_BYTES_PER_ROW_ALIGNMENT);
+    expect(gpuTextureBytesPerRow(64, 4)).toBe(GPU_TEXTURE_BYTES_PER_ROW_ALIGNMENT);
+  });
+
+  test("pads a narrow r8 glyph so writeTexture can copy it", () => {
+    const pixels = new Uint8Array([1, 2, 3, 4, 5, 6]);
+    const packed = packGpuTextureRows(pixels, 3, 2, 1);
+    expect(packed.bytesPerRow).toBe(256);
+    expect(packed.data).not.toBe(pixels);
+    expect(packed.data.byteLength).toBe(512);
+    expect([...packed.data.subarray(0, 3)]).toEqual([1, 2, 3]);
+    expect([...packed.data.subarray(256, 259)]).toEqual([4, 5, 6]);
   });
 });
 

@@ -57,6 +57,52 @@ export function premultiplyRgba8(
   return destination;
 }
 
+/** WebGPU `copyTextureToBuffer` / `writeTexture` row stride. */
+export const GPU_TEXTURE_BYTES_PER_ROW_ALIGNMENT: number = 256;
+
+/** Bytes-per-row that `GPUQueue.writeTexture` will accept for a tightly packed image. */
+export function gpuTextureBytesPerRow(width: number, bytesPerPixel: number): number {
+  if (!Number.isSafeInteger(width) || width <= 0) {
+    throw new TypeError("gpuTextureBytesPerRow width must be a positive safe integer");
+  }
+  if (!Number.isSafeInteger(bytesPerPixel) || bytesPerPixel <= 0) {
+    throw new TypeError("gpuTextureBytesPerRow bytesPerPixel must be a positive safe integer");
+  }
+  const stride = width * bytesPerPixel;
+  const align = GPU_TEXTURE_BYTES_PER_ROW_ALIGNMENT;
+  return Math.ceil(stride / align) * align;
+}
+
+/**
+ * Pad tightly packed rows so `writeTexture` can copy them. A 20 px r8 glyph is 20 bytes/row; WebGPU
+ * rejects that (`bytesPerRow` must be a multiple of 256).
+ */
+export function packGpuTextureRows(
+  pixels: Uint8Array,
+  width: number,
+  height: number,
+  bytesPerPixel: number,
+): Readonly<{ data: Uint8Array; bytesPerRow: number }> {
+  if (!Number.isSafeInteger(height) || height <= 0) {
+    throw new TypeError("packGpuTextureRows height must be a positive safe integer");
+  }
+  const sourceStride = width * bytesPerPixel;
+  const expected = sourceStride * height;
+  if (pixels.byteLength < expected) {
+    throw new RangeError("packGpuTextureRows pixels are shorter than width × height × bpp");
+  }
+  const bytesPerRow = gpuTextureBytesPerRow(width, bytesPerPixel);
+  if (bytesPerRow === sourceStride && pixels.byteLength === expected) {
+    return { data: pixels, bytesPerRow };
+  }
+  const data = new Uint8Array(bytesPerRow * height);
+  for (let row = 0; row < height; row += 1) {
+    const sourceOffset = row * sourceStride;
+    data.set(pixels.subarray(sourceOffset, sourceOffset + sourceStride), row * bytesPerRow);
+  }
+  return { data, bytesPerRow };
+}
+
 export function unpackF16(bits: number): number {
   return f16FromBits(bits & 0xffff);
 }

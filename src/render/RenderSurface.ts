@@ -32,6 +32,7 @@ import {
   allocatePrototypePixels,
   FLOAT_TEXEL_BYTES,
   packedFloatTexelView,
+  packGpuTextureRows,
   paletteUploadRects,
   premultiplyRgba8,
   prototypeByteRange,
@@ -958,10 +959,12 @@ function createAtlasArray(
   const format = kind === "r" ? "r8unorm" : "rgba8unorm";
   const bytesPerPixel = kind === "r" ? 1 : 4;
   const source = new BufferImageSource({
-    resource: new Uint8Array(width * height * bytesPerPixel),
+    // Unused: Pixi's buffer uploader is 2D-only. uploadMethodId below skips it.
+    resource: new Uint8Array(bytesPerPixel),
     width,
     height,
     format,
+    dimensions: "2d",
     viewDimension: "2d-array",
     arrayLayerCount: layerCapacity,
     scaleMode: "linear",
@@ -971,6 +974,9 @@ function createAtlasArray(
     alphaMode: "no-premultiply-alpha",
     label: `pixi-glyphflow-atlas-${kind}`,
   });
+  // Not in Pixi's uploader map, so getGlSource uses texImage3D (empty 2d-array) instead of
+  // texImage2D, and getGpuSource allocates without an unaligned writeTexture of this stub.
+  source.uploadMethodId = "glyphflow-atlas-array";
   return {
     kind,
     format,
@@ -1080,11 +1086,12 @@ function uploadAtlasVolume(
   if (isWebGPURenderer(renderer)) {
     const texture = renderer.texture.getGpuSource(page.array.source);
     const bytesPerPixel = glyphBytesPerPixel(page.info.mode);
+    const packed = packGpuTextureRows(pixels, width, height, bytesPerPixel);
     renderer.gpu.device.queue.writeTexture(
       { texture, origin: { x, y, z: layer } },
-      pixels,
+      packed.data,
       {
-        bytesPerRow: width * bytesPerPixel,
+        bytesPerRow: packed.bytesPerRow,
         rowsPerImage: height,
       },
       { width, height, depthOrArrayLayers: 1 },
