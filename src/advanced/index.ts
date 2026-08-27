@@ -18,6 +18,7 @@ export {
   GLYPH_PROTO_TEXTURE_WIDTH,
   GLYPH_TEXTURE_BANK_SIZE,
 } from "../render/types";
+export { atlasArrayKind, GLYPH_ATLAS_ARRAY_LAYERS } from "../atlas/types";
 export {
   TRANSFORM_EFFECT_STRIDE,
   TRANSFORM_PALETTE_STRIDE,

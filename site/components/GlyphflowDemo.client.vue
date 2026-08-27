@@ -797,6 +797,7 @@ async function loadCustomFonts(): Promise<readonly Readonly<LoadedFontAsset>[]> 
     class="demo-shell"
     data-testid="glyphflow-demo"
     :data-demo-state="state"
+    :data-demo-error="state === 'error' ? errorMessage : ''"
     :data-renderer-backend="activeBackend"
     :data-cull-path="cullPath"
     :data-pending-glyphs="pendingGlyphs"

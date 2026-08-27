@@ -69,9 +69,8 @@ same label set through `TextLayer` and draws the coordinator mesh. Rendering fra
 upload bytes, and GPU completion. This evidence connects logical counters to a real GPU submission
 path.
 
-Atlas pages share an eight-texture draw bank. Page-alternating multilingual runs retain instance
-order while consuming one PixiJS local-uniform slot per bank, keeping WebGPU submission below its
-uniform-batch capacity.
+Atlas pages live in two texture arrays (R8 and RGBA8). Page-alternating multilingual runs retain
+instance order in one mesh per blend/z, keeping WebGPU submission below its uniform-batch capacity.
 
 ## Known cliffs
 

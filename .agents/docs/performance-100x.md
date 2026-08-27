@@ -124,6 +124,11 @@ writes, and remirroring the store.
 - Optional `charsetSdfPrebuilt` bakes a host charset with the same TinySDF path. The homepage
   demo paints its language samples after `FontFace.load` so those CJK misses are crops. No
   CJK bitmaps ship in the package.
+- Atlas pages bind as layers in two texture arrays. `vMode` selects R or RGBA. Compact
+  walks split only on blend and z. Growing an array reallocates and recopies layers.
+  Array sources skip Pixi's 2D buffer uploader. WebGPU glyph rects pad `bytesPerRow` to
+  256. A mid-commit layer grow must not initialize the destroyed predecessor. Palette
+  SSBO is still not started.
 
 ## Remaining slices, in order
 
@@ -136,8 +141,9 @@ writes, and remirroring the store.
    glyph that has ink. Known ASCII can skip that path when the host imports `uiSdfPrebuilt`.
    Known CJK can skip when the host bakes `charsetSdfPrebuilt`. Unseen ink still generates.
    Do not defer texel uploads for glyphs already instanced.
-2. **Palette storage buffer and atlas texture array.** Wave 3 leftovers. Binding cost, not the
-   zoom hitch. Prototype-fetch opened the shaders; these can share that opening.
+2. **Palette storage buffer.** Wave 3 leftover. Binding cost, not the zoom hitch. Atlas pages
+   are already two `sampler2DArray` / `texture_2d_array` textures (R8 and RGBA8). Do not start
+   this leftover with a palette SSBO: WebGL 2 has no storage buffers.
 3. **Default baked pages.** The optional side export landed. Shipping those pages in the core
    gzip is still rejected. The core graph stays empty of alphabet pages.
 

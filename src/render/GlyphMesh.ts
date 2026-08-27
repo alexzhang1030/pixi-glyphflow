@@ -7,26 +7,25 @@ import {
   Mesh,
   Shader,
   ShaderStage,
+  TextureStyle,
   type Texture,
 } from "pixi.js";
 
 import { GLYPH_FRAGMENT_GLSL, GLYPH_SHADER_WGSL, GLYPH_VERTEX_GLSL } from "./shaders";
 import { GLYPH_DRAW_STRIDE, GLYPH_PROTO_TEXTURE_WIDTH, GLYPH_TEXTURE_BANK_SIZE } from "./types";
 
-type TextureBank = readonly [
-  Texture,
-  Texture,
-  Texture,
-  Texture,
-  Texture,
-  Texture,
-  Texture,
-  Texture,
-];
+/** Owned sampler. Do not bind `source.style` — destroying that source nulls it. */
+const ATLAS_SAMPLER_STYLE = new TextureStyle({
+  addressMode: "clamp-to-edge",
+  scaleMode: "linear",
+});
 
 export interface GlyphMeshOptions {
   readonly texture: Texture;
-  /** Consecutive atlas pages available to this draw, starting with `texture`. */
+  /**
+   * Atlas arrays bound to this draw: `[atlasR, atlasRGBA]`. `texture` must be the R array. A single
+   * texture is bound to both arrays (tests and empty placeholders).
+   */
   readonly textures?: readonly Texture[];
   readonly paletteTexture: Texture;
   readonly paletteWidth: number;
@@ -53,7 +52,7 @@ export class GlyphMesh extends Mesh<Geometry, Shader> {
     if (!Number.isSafeInteger(prototypeWidth) || prototypeWidth <= 0) {
       throw new TypeError("prototypeWidth must be a positive safe integer");
     }
-    const textures = normalizeTextureBank(options.texture, options.textures);
+    const [atlasR, atlasRGBA] = normalizeAtlasArrays(options.texture, options.textures);
     const vertexBuffer = new Buffer({
       data: new Float32Array([0, 0, 1, 0, 1, 1, 0, 1]),
       usage: BufferUsage.VERTEX,
@@ -119,50 +118,20 @@ export class GlyphMesh extends Mesh<Geometry, Shader> {
               {
                 binding: 0,
                 visibility: ShaderStage.FRAGMENT,
-                texture: { sampleType: "float", viewDimension: "2d", multisampled: false },
+                texture: { sampleType: "float", viewDimension: "2d-array", multisampled: false },
               },
               {
                 binding: 1,
                 visibility: ShaderStage.FRAGMENT,
-                texture: { sampleType: "float", viewDimension: "2d", multisampled: false },
+                texture: { sampleType: "float", viewDimension: "2d-array", multisampled: false },
               },
               {
                 binding: 2,
                 visibility: ShaderStage.FRAGMENT,
-                texture: { sampleType: "float", viewDimension: "2d", multisampled: false },
-              },
-              {
-                binding: 3,
-                visibility: ShaderStage.FRAGMENT,
-                texture: { sampleType: "float", viewDimension: "2d", multisampled: false },
-              },
-              {
-                binding: 4,
-                visibility: ShaderStage.FRAGMENT,
-                texture: { sampleType: "float", viewDimension: "2d", multisampled: false },
-              },
-              {
-                binding: 5,
-                visibility: ShaderStage.FRAGMENT,
-                texture: { sampleType: "float", viewDimension: "2d", multisampled: false },
-              },
-              {
-                binding: 6,
-                visibility: ShaderStage.FRAGMENT,
-                texture: { sampleType: "float", viewDimension: "2d", multisampled: false },
-              },
-              {
-                binding: 7,
-                visibility: ShaderStage.FRAGMENT,
-                texture: { sampleType: "float", viewDimension: "2d", multisampled: false },
-              },
-              {
-                binding: 8,
-                visibility: ShaderStage.FRAGMENT,
                 sampler: { type: "filtering" },
               },
               {
-                binding: 9,
+                binding: 3,
                 visibility: ShaderStage.VERTEX,
                 texture: {
                   sampleType: "unfilterable-float",
@@ -171,12 +140,12 @@ export class GlyphMesh extends Mesh<Geometry, Shader> {
                 },
               },
               {
-                binding: 10,
+                binding: 4,
                 visibility: ShaderStage.VERTEX,
                 buffer: { type: "uniform" },
               },
               {
-                binding: 11,
+                binding: 5,
                 visibility: ShaderStage.VERTEX,
                 texture: {
                   sampleType: "unfilterable-float",
@@ -188,15 +157,9 @@ export class GlyphMesh extends Mesh<Geometry, Shader> {
           ],
         }),
         resources: {
-          uTexture0: textures[0].source,
-          uTexture1: textures[1].source,
-          uTexture2: textures[2].source,
-          uTexture3: textures[3].source,
-          uTexture4: textures[4].source,
-          uTexture5: textures[5].source,
-          uTexture6: textures[6].source,
-          uTexture7: textures[7].source,
-          uSampler: textures[0].source.style,
+          uAtlasR: atlasR.source,
+          uAtlasRGBA: atlasRGBA.source,
+          uSampler: ATLAS_SAMPLER_STYLE,
           uTransformTexture: options.paletteTexture.source,
           uPrototype: options.prototypeTexture.source,
           glyphUniforms: {
@@ -233,17 +196,11 @@ export class GlyphMesh extends Mesh<Geometry, Shader> {
   }
 
   setTextures(textures: readonly Texture[]): void {
-    const bank = normalizeTextureBank(textures[0], textures);
-    this.texture = bank[0];
-    this.#ownedShader.resources.uTexture0 = bank[0].source;
-    this.#ownedShader.resources.uTexture1 = bank[1].source;
-    this.#ownedShader.resources.uTexture2 = bank[2].source;
-    this.#ownedShader.resources.uTexture3 = bank[3].source;
-    this.#ownedShader.resources.uTexture4 = bank[4].source;
-    this.#ownedShader.resources.uTexture5 = bank[5].source;
-    this.#ownedShader.resources.uTexture6 = bank[6].source;
-    this.#ownedShader.resources.uTexture7 = bank[7].source;
-    this.#ownedShader.resources.uSampler = bank[0].source.style;
+    const [atlasR, atlasRGBA] = normalizeAtlasArrays(textures[0], textures);
+    this.texture = atlasR;
+    this.#ownedShader.resources.uAtlasR = atlasR.source;
+    this.#ownedShader.resources.uAtlasRGBA = atlasRGBA.source;
+    this.#ownedShader.resources.uSampler = ATLAS_SAMPLER_STYLE;
   }
 
   setPaletteTexture(texture: Texture, width: number, effectBase = 0): void {
@@ -292,28 +249,19 @@ function validateInstanceData(data: ArrayBuffer, instanceCount: number): void {
   }
 }
 
-function normalizeTextureBank(
+function normalizeAtlasArrays(
   primary: Texture | undefined,
   textures: readonly Texture[] | undefined,
-): TextureBank {
-  if (primary === undefined) throw new TypeError("texture bank must contain at least one texture");
+): readonly [Texture, Texture] {
+  if (primary === undefined) throw new TypeError("atlas arrays must contain at least one texture");
   const supplied = textures ?? [primary];
   if (supplied.length === 0 || supplied.length > GLYPH_TEXTURE_BANK_SIZE) {
     throw new RangeError(
-      `texture bank must contain between 1 and ${String(GLYPH_TEXTURE_BANK_SIZE)} textures`,
+      `atlas arrays must contain between 1 and ${String(GLYPH_TEXTURE_BANK_SIZE)} textures`,
     );
   }
   if (supplied[0] !== primary) {
-    throw new TypeError("texture must be the first texture-bank entry");
+    throw new TypeError("texture must be the first atlas-array entry");
   }
-  return [
-    supplied[0] ?? primary,
-    supplied[1] ?? primary,
-    supplied[2] ?? primary,
-    supplied[3] ?? primary,
-    supplied[4] ?? primary,
-    supplied[5] ?? primary,
-    supplied[6] ?? primary,
-    supplied[7] ?? primary,
-  ];
+  return [supplied[0] ?? primary, supplied[1] ?? primary];
 }

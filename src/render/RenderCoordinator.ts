@@ -1135,7 +1135,7 @@ export class RenderCoordinator {
       this.#batchUvs[outputOffset + 2] = entry.u1;
       this.#batchUvs[outputOffset + 3] = entry.v1;
       this.#batchPalette[write] = slot;
-      this.#batchPages[write] = entry.page;
+      this.#batchPages[write] = entry.layer;
       this.#batchModes[write] = modeCode(entry.mode);
       this.#batchScales[write] = rasterScale;
       write += 1;

@@ -8,8 +8,9 @@ export const GLYPH_INSTANCE_STRIDE_CEILING = 32;
 export const GLYPH_PROTO_TEXELS_PER_GLYPH = 2;
 /** Default prototype texture width. Grow only when height would exceed the device max. */
 export const GLYPH_PROTO_TEXTURE_WIDTH = 1024;
-/** Atlas textures bound per glyph draw. Fits WebGL 2's minimum texture-unit budget. */
-export const GLYPH_TEXTURE_BANK_SIZE = 8;
+/** Atlas array textures bound per glyph draw: R8 (sdf/alpha) and RGBA8 (msdf/color). */
+export const GLYPH_TEXTURE_BANK_SIZE = 2;
+export { GLYPH_ATLAS_ARRAY_LAYERS } from "../atlas/types";
 
 export interface DirtyByteRange {
   readonly offset: number;
@@ -22,6 +23,7 @@ export interface GlyphInstanceBatch {
   /** Packed normalized u0, v0, u1, and v1 values. */
   readonly uvs: Float32Array;
   readonly paletteIndices: Uint32Array;
+  /** Atlas array layer (same-format page index), packed into instance metadata. */
   readonly pages: Uint16Array;
   /** 0=MSDF, 1=SDF, 2=alpha, 3=color. */
   readonly modes: Uint8Array;

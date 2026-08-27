@@ -170,6 +170,11 @@ LRU, 52-bit keys, the 48 MiB store (test-pinned, 44.9 MiB measured), the sparse 
     on later calls. `mergePrebuilt` concatenates family pages. No CJK bitmaps ship in the
     core gzip graph. The homepage demo bakes its language samples after `FontFace.load`.
     Unseen ink still generates.
+21. **Atlas texture array — LANDED.** Two `sampler2DArray` / `texture_2d_array` textures hold
+    R8 (sdf/alpha) and RGBA8 (msdf/color) pages as layers. Instance metadata low bits are
+    the same-format layer. Compact walks no longer split on `floor(page/8)`. Pixi buffer
+    uploaders stay 2D; the surface allocates the array and writes `texSubImage3D` /
+    `writeTexture` at `z = layer`. Palette SSBO is still not started.
 
 **Regressions and traps the audits confirmed:**
 
@@ -377,8 +382,8 @@ WebGL 2 keeps the Wave 1 CPU grid. WebGPU gains a second adapter that does not w
 - Prefix sums and stable scatter preserve z-index and insertion order without atomic append order.
 - WebGL, missing WebGPU devices, `computeCull: false`, and multi-segment compact meshes keep the
   tight CPU grid.
-- Moving the transform palette to a storage buffer and combining atlas pages into a texture array
-  remain follow-up work.
+- Combining atlas pages into a texture array landed (two format arrays). Moving the transform
+  palette to a storage buffer remains follow-up work. Do not start with a palette SSBO.
 - Optional LOD: `culling.lod` drops labels whose projected font height is below one pixel. Default off, because it changes pixels.
 
 Primary targets: camera-only CPU ≤ 1.00 ms p95 at 1,000,000 residents / 50,000 visible; WebGPU `viewport-drag` and `viewport-zoom` at or below the Wave 1 CPU-grid numbers; WebGL 2 unchanged within variance.

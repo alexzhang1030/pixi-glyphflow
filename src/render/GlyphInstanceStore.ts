@@ -398,7 +398,7 @@ export class GlyphInstanceStore {
     }
   }
 
-  /** Returns whether any metadata word (page and flag bits) changed, for segment caching. */
+  /** Returns whether any metadata word (layer and flag bits) changed, for segment caching. */
   #write(offset: number, batch: GlyphInstanceBatch): boolean {
     const uint16 = this.#uint16;
     const uint32 = this.#uint32;
