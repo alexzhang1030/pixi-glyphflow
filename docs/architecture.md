@@ -115,13 +115,11 @@ or budgeted WebGPU queue writes.
 
 ## Rendering
 
-`RenderSurface` binds consecutive atlas pages in banks of eight. Visible instances split by texture
-bank, z order, and blend mode, so page changes within a bank stay in one ordered instanced draw.
-Equal-z labels retain insertion order. `GlyphMesh` selects the correct page per instance through
-paired GLSL and WGSL shaders for MSDF, SDF, alpha, color, fill, stroke, shadow, anchor, rotation,
-scale, and alpha behavior. Eight fragment textures plus the vertex transform palette and the
-prototype texture fit the WebGL 2 minimum texture-unit budget and the WebGPU minimum sampled-texture
-limit.
+`RenderSurface` binds two `sampler2DArray` / `texture_2d_array` textures: R8 for sdf/alpha and
+RGBA8 for msdf/color. Each atlas page is a layer among same-format pages. Visible instances split
+by z order and blend mode only. Equal-z labels retain insertion order. `GlyphMesh` selects the
+array from `vMode` and the layer from instance metadata. Two array textures plus the vertex
+transform palette and the prototype texture stay inside the WebGL 2 minimum texture-unit budget.
 
 ## Culling and camera integration
 

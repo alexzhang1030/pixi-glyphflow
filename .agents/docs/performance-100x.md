@@ -121,6 +121,9 @@ writes, and remirroring the store.
 - Empty-ink scalars (White_Space except Ogham U+1680, plus default ignorables) skip
   raster and instance quads. Layout advance and label AABBs stay. Trusted runs, ligatures,
   and shared-cluster marks still generate. An empty TinySDF mask skips both EDTs.
+- Atlas pages bind as layers in two texture arrays. `vMode` selects R or RGBA. Compact
+  walks split only on blend and z. Growing an array reallocates and recopies layers.
+  Palette SSBO is still not started.
 
 ## Remaining slices, in order
 
@@ -133,8 +136,9 @@ writes, and remirroring the store.
    glyph that has ink. Known ASCII can skip that path when the host imports `uiSdfPrebuilt`.
    CJK and unseen ink still generate. Do not defer texel uploads for glyphs already
    instanced.
-2. **Palette storage buffer and atlas texture array.** Wave 3 leftovers. Binding cost, not the
-   zoom hitch. Prototype-fetch opened the shaders; these can share that opening.
+2. **Palette storage buffer.** Wave 3 leftover. Binding cost, not the zoom hitch. Atlas pages
+   are already two `sampler2DArray` / `texture_2d_array` textures (R8 and RGBA8). Do not start
+   this leftover with a palette SSBO: WebGL 2 has no storage buffers.
 3. **Default baked pages.** The optional side export landed. Shipping those pages in the core
    gzip is still rejected. The core graph stays empty of alphabet pages.
 

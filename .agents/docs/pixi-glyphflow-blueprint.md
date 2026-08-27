@@ -237,7 +237,7 @@ Storage rules:
 
 ## Rendering
 
-One instanced quad geometry serves every glyph. Stable segments group glyphs by an eight-texture atlas page bank, blend mode, mask, and effect state while preserving application order. Page changes inside one bank remain in the same instanced draw.
+One instanced quad geometry serves every glyph. Stable segments group glyphs by blend mode, mask, and effect state while preserving application order. Atlas pages are layers in two texture arrays (R8 and RGBA8), so page changes stay in the same instanced draw.
 
 The WebGL adapter uses offset-aware buffer updates and instanced indexed draws. The WebGPU adapter uses a bounded mapped staging ring and copy submissions before rendering. Both consume identical logical instance data and shader semantics.
 

@@ -282,6 +282,11 @@
   - Verify: bun run test:browser -- glyph-rendering && bun run test:browser -- viewport-integration
   - Files: src/TextLayer.ts, src/types.ts, src/render/ComputeCullPass.ts, src/render/RenderSurface.ts, src/culling/computeCull.ts, src/culling/computeCull.wgsl.ts
 
+- [x] Task 12.6c: Atlas texture arrays (Wave 3 leftover).
+  - Acceptance: Two `sampler2DArray` / `texture_2d_array` textures hold R8 (sdf/alpha) and RGBA8 (msdf/color) pages as layers. Instance metadata low bits are the same-format layer. Compact walks split only on blend and z. Pixi buffer uploaders stay 2D; the surface writes `texSubImage3D` / `writeTexture` at `z = layer`. Palette SSBO is not started. Published budgets stay.
+  - Verify: bun test tests/GlyphMesh.test.ts tests/GlyphAtlas.test.ts
+  - Files: src/render/shaders.ts, src/render/GlyphMesh.ts, src/render/RenderSurface.ts, src/atlas/GlyphAtlas.ts, src/atlas/types.ts
+
 - [x] Task 12.7a: Four-channel atlas sub-rect uploads (Wave 4 leftover).
   - Acceptance: MSDF/color pages premultiply RGB on the CPU, use `no-premultiply-alpha`, and upload staged rectangles unless the rects exceed half the page. Single-channel rect uploads stay.
   - Verify: bun test tests/pack.test.ts tests/DirtyRanges.test.ts tests/glyph-providers.test.ts

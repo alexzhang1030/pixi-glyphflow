@@ -2,6 +2,14 @@ import type { TextStyleFontWeight } from "pixi.js";
 
 export type GlyphMode = "msdf" | "sdf" | "alpha" | "color";
 
+/** Max layers per same-format atlas array. WebGL 2 guarantees at least 256. */
+export const GLYPH_ATLAS_ARRAY_LAYERS: number = 256;
+
+/** R8 pages (sdf/alpha) and RGBA pages (msdf/color) cannot share one texture array. */
+export function atlasArrayKind(mode: GlyphMode): "r" | "rgba" {
+  return mode === "alpha" || mode === "sdf" ? "r" : "rgba";
+}
+
 /** Atlas cache identity. Live-path keys are packed integers; strings remain valid. */
 export type GlyphCacheKey = string | number;
 
@@ -31,6 +39,8 @@ export interface AtlasEntry {
   readonly key: GlyphCacheKey;
   readonly generation: number;
   readonly page: number;
+  /** Layer among same-format pages. Packed into instance metadata for the array shader. */
+  readonly layer: number;
   readonly mode: GlyphMode;
   readonly x: number;
   readonly y: number;
@@ -51,6 +61,7 @@ export interface AtlasUpload {
 export interface AtlasPageInfo {
   readonly id: number;
   readonly mode: GlyphMode;
+  readonly layer: number;
   readonly width: number;
   readonly height: number;
   readonly bytes: number;

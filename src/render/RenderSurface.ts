@@ -8,7 +8,14 @@ import {
   type WebGPURenderer,
 } from "pixi.js";
 
-import type { AtlasCommit, AtlasPageInfo, AtlasUpload, GlyphMode } from "../atlas/types";
+import {
+  atlasArrayKind,
+  GLYPH_ATLAS_ARRAY_LAYERS,
+  type AtlasCommit,
+  type AtlasPageInfo,
+  type AtlasUpload,
+  type GlyphMode,
+} from "../atlas/types";
 import {
   aabbVisible,
   CULL_RECORD_STRIDE,
@@ -37,27 +44,35 @@ import {
   GLYPH_DRAW_STRIDE,
   GLYPH_INSTANCE_STRIDE,
   GLYPH_PROTO_TEXTURE_WIDTH,
-  GLYPH_TEXTURE_BANK_SIZE,
   type DirtyByteRange,
 } from "./types";
 
 const ACTIVE_BIT = 0x8000_0000;
-const PAGE_MASK = 0x0000_ffff;
 function emptySegmentWalk(): SegmentWalk {
   return { segments: [], naturalOrder: true, count: 0, lastSourceIndex: -1 };
+}
+
+interface AtlasArray {
+  kind: "r" | "rgba";
+  format: "r8unorm" | "rgba8unorm";
+  width: number;
+  height: number;
+  layerCapacity: number;
+  layerCount: number;
+  source: BufferImageSource;
+  texture: Texture;
+  initialized: boolean;
+  dummy: boolean;
 }
 
 interface AtlasTexturePage {
   readonly info: Readonly<AtlasPageInfo>;
   readonly pixels: Uint8Array;
-  readonly source: BufferImageSource;
-  readonly texture: Texture;
-  initialized: boolean;
+  array: AtlasArray;
 }
 
 interface SurfaceMesh {
-  bank: number;
-  textureCount: number;
+  atlasGeneration: number;
   blendMode: BLEND_MODES;
   readonly mesh: GlyphMesh;
   data: ArrayBuffer;
@@ -85,7 +100,6 @@ interface DrawSegmentCache extends SegmentWalk {
 }
 
 interface DrawSegment {
-  readonly bank: number;
   readonly zIndex: number;
   readonly blendMode: BLEND_MODES;
   readonly spans: DrawSpan[];
@@ -120,6 +134,9 @@ export class RenderSurface {
   readonly #owner: Container;
   readonly #coordinator: RenderCoordinator;
   readonly #pages = new Map<number, AtlasTexturePage>();
+  #rArray: AtlasArray;
+  #rgbaArray: AtlasArray;
+  #atlasGeneration = 0;
   readonly #meshes = new Map<number, SurfaceMesh>();
   #paletteSource: BufferImageSource;
   #paletteTexture: Texture;
@@ -165,6 +182,8 @@ export class RenderSurface {
     this.#protoPixels = allocatePrototypePixels(GLYPH_PROTO_TEXTURE_WIDTH, 1);
     this.#protoSource = createPrototypeSource(this.#protoPixels, GLYPH_PROTO_TEXTURE_WIDTH, 1);
     this.#protoTexture = new Texture({ source: this.#protoSource });
+    this.#rArray = createAtlasArray("r", 1, 1, 1, true);
+    this.#rgbaArray = createAtlasArray("rgba", 1, 1, 1, true);
   }
 
   prepareCullPath(): CullPath {
@@ -291,7 +310,8 @@ export class RenderSurface {
       surface.mesh.destroy();
     }
     this.#meshes.clear();
-    for (const page of this.#pages.values()) page.texture.destroy(true);
+    this.#rArray.texture.destroy(true);
+    this.#rgbaArray.texture.destroy(true);
     this.#pages.clear();
     this.#cullPass?.destroy();
     this.#cullPass = undefined;
@@ -307,6 +327,8 @@ export class RenderSurface {
 
   #applyAtlasCommit(commit: Readonly<AtlasCommit>): void {
     const dirtyPages = new Map<number, Readonly<AtlasUpload>[]>();
+    const dirtyArrays = new Set<AtlasArray>();
+    const fullUploaded = new Set<AtlasArray>();
     for (const upload of commit.uploads) {
       const page = this.#ensureAtlasPage(upload.entry.page);
       const pixels = fourChannelMode(page.info.mode)
@@ -325,19 +347,26 @@ export class RenderSurface {
       const uploads = dirtyPages.get(upload.entry.page);
       if (uploads === undefined) dirtyPages.set(upload.entry.page, [staged]);
       else uploads.push(staged);
+      dirtyArrays.add(page.array);
+    }
+    for (const array of dirtyArrays) {
+      if (!array.initialized) {
+        initializeAtlasArray(this.#renderer, array);
+        array.initialized = true;
+        fullUploaded.add(array);
+        for (const page of this.#pages.values()) {
+          if (page.array !== array) continue;
+          uploadAtlasLayer(this.#renderer, page);
+          this.#atlasUploadBytes += page.pixels.byteLength;
+        }
+      }
     }
     for (const [pageId, uploads] of dirtyPages) {
       const page = this.#pages.get(pageId);
-      if (page === undefined) continue;
-      if (!page.initialized) {
-        initializeTexture(this.#renderer, page.source);
-        page.initialized = true;
-        this.#atlasUploadBytes += page.pixels.byteLength;
-        continue;
-      }
+      if (page === undefined || fullUploaded.has(page.array)) continue;
       const rectBytes = uploads.reduce((sum, upload) => sum + upload.pixels.byteLength, 0);
       if (rectBytes * 2 > page.pixels.byteLength) {
-        page.source.update();
+        uploadAtlasLayer(this.#renderer, page);
         this.#atlasUploadBytes += page.pixels.byteLength;
         continue;
       }
@@ -351,31 +380,38 @@ export class RenderSurface {
     if (existing !== undefined) return existing;
     const info = this.#coordinator.atlas.getPage(pageId);
     if (info === undefined) throw new Error(`Atlas page ${String(pageId)} is unavailable`);
-    const pixels = new Uint8Array(info.bytes);
-    const source = new BufferImageSource({
-      resource: pixels,
-      width: info.width,
-      height: info.height,
-      format: textureFormat(info.mode),
-      scaleMode: "linear",
-      autoGenerateMipmaps: false,
-      // Four-channel pages are premultiplied in copyAtlasUpload so a raw sub-rect
-      // write matches a full-page update. Single-channel fields have no RGB step.
-      alphaMode: fourChannelMode(info.mode)
-        ? "no-premultiply-alpha"
-        : "premultiply-alpha-on-upload",
-      label: `pixi-glyphflow-atlas-${String(pageId)}`,
-    });
+    const kind = atlasArrayKind(info.mode);
+    const array = this.#adoptAtlasArray(kind, info);
     const page: AtlasTexturePage = {
       info,
-      pixels,
-      source,
-      texture: new Texture({ source }),
-      initialized: false,
+      pixels: new Uint8Array(info.bytes),
+      array,
     };
     this.#pages.set(pageId, page);
+    array.layerCount = Math.max(array.layerCount, info.layer + 1);
 
     return page;
+  }
+
+  #adoptAtlasArray(kind: "r" | "rgba", info: Readonly<AtlasPageInfo>): AtlasArray {
+    const current = kind === "r" ? this.#rArray : this.#rgbaArray;
+    const needsReplace =
+      current.dummy ||
+      current.width !== info.width ||
+      current.height !== info.height ||
+      info.layer >= current.layerCapacity;
+    if (!needsReplace) return current;
+    const minLayers = Math.max(info.layer + 1, current.dummy ? 1 : current.layerCount);
+    const next = createAtlasArray(kind, info.width, info.height, minLayers, false);
+    current.texture.destroy(true);
+    if (kind === "r") this.#rArray = next;
+    else this.#rgbaArray = next;
+    for (const page of this.#pages.values()) {
+      if (atlasArrayKind(page.info.mode) === kind) page.array = next;
+    }
+    this.#atlasGeneration += 1;
+    this.#pageRebuilds += 1;
+    return next;
   }
 
   #syncPalette(ranges: readonly Readonly<DirtyByteRange>[]): void {
@@ -415,10 +451,19 @@ export class RenderSurface {
 
   #bindMeshSources(): void {
     const stats = this.#coordinator.transforms.stats;
+    const textures = this.#atlasTextures();
     for (const surface of this.#meshes.values()) {
       surface.mesh.setPaletteTexture(this.#paletteTexture, stats.textureWidth, stats.effectBase);
       surface.mesh.setPrototypeTexture(this.#protoTexture, this.#protoWidth);
+      if (surface.atlasGeneration !== this.#atlasGeneration) {
+        surface.atlasGeneration = this.#atlasGeneration;
+        surface.mesh.setTextures(textures);
+      }
     }
+  }
+
+  #atlasTextures(): readonly [Texture, Texture] {
+    return [this.#rArray.texture, this.#rgbaArray.texture];
   }
 
   /** Rewrite the live store into the existing proto texture. See `.agents/docs/gotchas.md`. */
@@ -514,7 +559,7 @@ export class RenderSurface {
     if (this.#computeEligible && computeCull !== undefined) {
       const segment = draw.segments[0];
       if (segment === undefined) throw new Error("Active glyph segment is unavailable");
-      this.#syncComputeMesh(segment.bank, segment.blendMode);
+      this.#syncComputeMesh(segment.blendMode);
       this.#submittedGlyphs = storeStats.activeInstances;
       this.#markDrawSynced();
       return;
@@ -607,17 +652,13 @@ export class RenderSurface {
         }
         if (sourceIndex <= walk.lastSourceIndex) walk.naturalOrder = false;
         walk.lastSourceIndex = sourceIndex;
-        const page = metadata & PAGE_MASK;
-        const bank = Math.floor(page / GLYPH_TEXTURE_BANK_SIZE);
         let segment = segments[segments.length - 1];
         if (
           segment === undefined ||
-          segment.bank !== bank ||
           segment.zIndex !== state.zIndex ||
           segment.blendMode !== state.blendMode
         ) {
           segment = {
-            bank,
             zIndex: state.zIndex,
             blendMode: state.blendMode,
             spans: [],
@@ -667,7 +708,7 @@ export class RenderSurface {
     return included;
   }
 
-  #syncComputeMesh(bank: number, blendMode: BLEND_MODES): void {
+  #syncComputeMesh(blendMode: BLEND_MODES): void {
     for (const [key, surface] of this.#meshes) {
       if (key !== 0) this.#destroyMesh(key, surface);
     }
@@ -677,12 +718,12 @@ export class RenderSurface {
         ? surface.data
         : new ArrayBuffer(GLYPH_DRAW_STRIDE);
     if (surface === undefined) {
-      surface = this.#createMesh(0, bank, blendMode, dummy, 1, false);
+      surface = this.#createMesh(0, blendMode, dummy, 1, false);
       // Indirect draw binds the compute pass compact buffer. Leave the dummy unread.
       surface.initialized = false;
       return;
     }
-    this.#configureMesh(surface, bank, blendMode, 0);
+    this.#configureMesh(surface, blendMode, 0);
     surface.compact = false;
     if (surface.data !== dummy) {
       surface.data = dummy;
@@ -718,16 +759,9 @@ export class RenderSurface {
       }
       let surface = current;
       if (surface === undefined) {
-        surface = this.#createMesh(
-          key,
-          segment.bank,
-          segment.blendMode,
-          buffer,
-          segment.count,
-          true,
-        );
+        surface = this.#createMesh(key, segment.blendMode, buffer, segment.count, true);
       } else {
-        this.#configureMesh(surface, segment.bank, segment.blendMode, key);
+        this.#configureMesh(surface, segment.blendMode, key);
         this.#cullPass?.untrackGeometry(surface.mesh.geometry);
         surface.data = buffer;
         surface.compact = true;
@@ -751,20 +785,15 @@ export class RenderSurface {
 
   #createMesh(
     key: number,
-    bank: number,
     blendMode: BLEND_MODES,
     data: ArrayBuffer,
     count: number,
     compact: boolean,
   ): SurfaceMesh {
-    const textures = this.#getTextureBank(bank);
-    const primaryTexture = textures[0];
-    if (primaryTexture === undefined) {
-      throw new Error(`Atlas texture bank ${String(bank)} is unavailable`);
-    }
+    const textures = this.#atlasTextures();
     const paletteStats = this.#coordinator.transforms.stats;
     const mesh = new GlyphMesh({
-      texture: primaryTexture,
+      texture: textures[0],
       textures,
       paletteTexture: this.#paletteTexture,
       paletteWidth: paletteStats.textureWidth,
@@ -774,12 +803,11 @@ export class RenderSurface {
       instanceData: data,
       instanceCount: count,
     });
-    mesh.label = `pixi-glyphflow-segment-${String(key)}-bank-${String(bank)}`;
+    mesh.label = `pixi-glyphflow-segment-${String(key)}`;
     mesh.blendMode = blendMode;
     this.#owner.addChild(mesh);
     const surface: SurfaceMesh = {
-      bank,
-      textureCount: textures.length,
+      atlasGeneration: this.#atlasGeneration,
       blendMode,
       mesh,
       data,
@@ -791,30 +819,17 @@ export class RenderSurface {
     return surface;
   }
 
-  #configureMesh(surface: SurfaceMesh, bank: number, blendMode: BLEND_MODES, key: number): void {
-    const textures = this.#getTextureBank(bank);
-    if (surface.bank !== bank || surface.textureCount !== textures.length) {
-      surface.bank = bank;
-      surface.textureCount = textures.length;
-      surface.mesh.setTextures(textures);
+  #configureMesh(surface: SurfaceMesh, blendMode: BLEND_MODES, key: number): void {
+    if (surface.atlasGeneration !== this.#atlasGeneration) {
+      surface.atlasGeneration = this.#atlasGeneration;
+      surface.mesh.setTextures(this.#atlasTextures());
     }
     if (surface.blendMode !== blendMode) {
       surface.blendMode = blendMode;
       surface.mesh.blendMode = blendMode;
     }
-    surface.mesh.label = `pixi-glyphflow-segment-${String(key)}-bank-${String(bank)}`;
+    surface.mesh.label = `pixi-glyphflow-segment-${String(key)}`;
     this.#owner.addChild(surface.mesh);
-  }
-
-  #getTextureBank(bank: number): readonly Texture[] {
-    const textures: Texture[] = [];
-    const firstPage = bank * GLYPH_TEXTURE_BANK_SIZE;
-    for (let slot = 0; slot < GLYPH_TEXTURE_BANK_SIZE; slot += 1) {
-      const page = this.#pages.get(firstPage + slot);
-      if (page === undefined) break;
-      textures.push(page.texture);
-    }
-    return textures;
   }
 
   #destroyMesh(key: number, surface: SurfaceMesh): void {
@@ -932,54 +947,153 @@ function copyAtlasUpload(
   }
 }
 
-/** One new glyph must not re-upload its whole page; write the staged rectangles instead. */
+function createAtlasArray(
+  kind: "r" | "rgba",
+  width: number,
+  height: number,
+  minLayers: number,
+  dummy: boolean,
+): AtlasArray {
+  const layerCapacity = nextLayerCapacity(minLayers);
+  const format = kind === "r" ? "r8unorm" : "rgba8unorm";
+  const bytesPerPixel = kind === "r" ? 1 : 4;
+  const source = new BufferImageSource({
+    resource: new Uint8Array(width * height * bytesPerPixel),
+    width,
+    height,
+    format,
+    viewDimension: "2d-array",
+    arrayLayerCount: layerCapacity,
+    scaleMode: "linear",
+    autoGenerateMipmaps: false,
+    // Four-channel pages are premultiplied in copyAtlasUpload so a raw sub-rect
+    // write matches a full-layer update. Single-channel fields have no RGB step.
+    alphaMode: kind === "rgba" ? "no-premultiply-alpha" : "premultiply-alpha-on-upload",
+    label: `pixi-glyphflow-atlas-${kind}`,
+  });
+  return {
+    kind,
+    format,
+    width,
+    height,
+    layerCapacity,
+    layerCount: 0,
+    source,
+    texture: new Texture({ source }),
+    initialized: false,
+    dummy,
+  };
+}
+
+function nextLayerCapacity(needed: number): number {
+  let capacity = 1;
+  while (capacity < needed) capacity *= 2;
+  return Math.min(capacity, GLYPH_ATLAS_ARRAY_LAYERS);
+}
+
+/**
+ * Pixi's BufferImageSource uploaders are 2D-only. Allocate the array ourselves, then write layers
+ * with texSubImage3D / writeTexture. Do not call source.update() on these arrays.
+ */
+function initializeAtlasArray(renderer: Renderer, array: AtlasArray): void {
+  if (isWebGLRenderer(renderer)) {
+    const gl = renderer.gl;
+    const resource = renderer.texture.getGlSource(array.source);
+    gl.bindTexture(gl.TEXTURE_2D_ARRAY, resource.texture);
+    gl.pixelStorei(gl.UNPACK_ALIGNMENT, 1);
+    gl.texImage3D(
+      gl.TEXTURE_2D_ARRAY,
+      0,
+      resource.internalFormat,
+      array.width,
+      array.height,
+      array.layerCapacity,
+      0,
+      resource.format,
+      resource.type,
+      null,
+    );
+    return;
+  }
+  if (isWebGPURenderer(renderer)) {
+    renderer.texture.getGpuSource(array.source);
+    return;
+  }
+  array.source.update();
+}
+
+function uploadAtlasLayer(renderer: Renderer, page: AtlasTexturePage): void {
+  uploadAtlasVolume(renderer, page, 0, 0, page.info.width, page.info.height, page.pixels);
+}
+
+/** One new glyph must not re-upload its whole layer; write the staged rectangles instead. */
 function uploadAtlasRects(
   renderer: Renderer,
   page: AtlasTexturePage,
   uploads: readonly Readonly<AtlasUpload>[],
 ): void {
+  for (const upload of uploads) {
+    uploadAtlasVolume(
+      renderer,
+      page,
+      upload.entry.x,
+      upload.entry.y,
+      upload.entry.width,
+      upload.entry.height,
+      upload.pixels,
+    );
+  }
+}
+
+function uploadAtlasVolume(
+  renderer: Renderer,
+  page: AtlasTexturePage,
+  x: number,
+  y: number,
+  width: number,
+  height: number,
+  pixels: Uint8Array,
+): void {
+  const layer = page.info.layer;
   if (isWebGLRenderer(renderer)) {
     const gl = renderer.gl;
-    const resource = renderer.texture.getGlSource(page.source);
+    const resource = renderer.texture.getGlSource(page.array.source);
     const previousAlignment = gl.getParameter(gl.UNPACK_ALIGNMENT) as number;
-    gl.bindTexture(resource.target, resource.texture);
+    gl.bindTexture(gl.TEXTURE_2D_ARRAY, resource.texture);
     gl.pixelStorei(gl.UNPACK_ALIGNMENT, 1);
     try {
-      for (const upload of uploads) {
-        gl.texSubImage2D(
-          resource.target,
-          0,
-          upload.entry.x,
-          upload.entry.y,
-          upload.entry.width,
-          upload.entry.height,
-          resource.format,
-          resource.type,
-          upload.pixels,
-        );
-      }
+      gl.texSubImage3D(
+        gl.TEXTURE_2D_ARRAY,
+        0,
+        x,
+        y,
+        layer,
+        width,
+        height,
+        1,
+        resource.format,
+        resource.type,
+        pixels,
+      );
     } finally {
       gl.pixelStorei(gl.UNPACK_ALIGNMENT, previousAlignment);
     }
     return;
   }
   if (isWebGPURenderer(renderer)) {
-    const texture = renderer.texture.getGpuSource(page.source);
-    for (const upload of uploads) {
-      const bytesPerPixel = glyphBytesPerPixel(page.info.mode);
-      renderer.gpu.device.queue.writeTexture(
-        { texture, origin: { x: upload.entry.x, y: upload.entry.y } },
-        upload.pixels,
-        {
-          bytesPerRow: upload.entry.width * bytesPerPixel,
-          rowsPerImage: upload.entry.height,
-        },
-        { width: upload.entry.width, height: upload.entry.height },
-      );
-    }
+    const texture = renderer.texture.getGpuSource(page.array.source);
+    const bytesPerPixel = glyphBytesPerPixel(page.info.mode);
+    renderer.gpu.device.queue.writeTexture(
+      { texture, origin: { x, y, z: layer } },
+      pixels,
+      {
+        bytesPerRow: width * bytesPerPixel,
+        rowsPerImage: height,
+      },
+      { width, height, depthOrArrayLayers: 1 },
+    );
     return;
   }
-  page.source.update();
 }
 
 function initializeTexture(renderer: Renderer, source: BufferImageSource): void {
@@ -1053,10 +1167,6 @@ function uploadFloatTextureRanges(
   }
 
   return { bytes, writes };
-}
-
-function textureFormat(mode: GlyphMode): "r8unorm" | "rgba8unorm" {
-  return mode === "alpha" || mode === "sdf" ? "r8unorm" : "rgba8unorm";
 }
 
 function glyphBytesPerPixel(mode: GlyphMode): number {

@@ -146,11 +146,14 @@ The advanced entry exposes `SpatialIndex`, `GlyphAtlas`, `PrebuiltGlyphProvider`
 diagnostic types.
 
 These primitives support custom renderer pipelines that preserve the package storage and shader
-contracts. `GLYPH_TEXTURE_BANK_SIZE` is `8`; `GlyphMeshOptions.textures` accepts consecutive atlas
-pages beginning with `texture`, and `setTextures()` updates that bank while retaining the primary
-texture used by PixiJS blend-state selection. Draw instances use `GLYPH_DRAW_STRIDE` (8 bytes);
-`prototypeTexture` holds the unique 24-byte store records. `GlyphAtlas` keys are `string | number`; the live
-coordinator path packs numeric identities and still accepts diagnostic strings.
+contracts. `GLYPH_TEXTURE_BANK_SIZE` is `2` (R8 and RGBA8 arrays). `GLYPH_ATLAS_ARRAY_LAYERS` is
+`256`. `GlyphMeshOptions.textures` accepts `[atlasR, atlasRGBA]` beginning with `texture`, and
+`setTextures()` updates those arrays while retaining the primary texture used by PixiJS blend-state
+selection. Draw instances use `GLYPH_DRAW_STRIDE` (8 bytes); `prototypeTexture` holds the unique
+24-byte store records. Instance metadata low bits are the same-format atlas layer, not a page-bank
+slot. `GlyphAtlas` keys are `string | number`; the live
+coordinator path packs numeric identities and still accepts diagnostic strings. `AtlasEntry.layer`
+is the array layer among sdf/alpha or msdf/color pages.
 
 `TextLayerOptions.rendering.rasterizerOptions` configures the default `RasterGlyphProvider`.
 `generatorConcurrency` controls the lazy MSDF worker pool. `distanceFieldMinFontSize` controls the

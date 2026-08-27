@@ -58,9 +58,18 @@ as reserved. Use `src` / `dst`. Do not name locals `from` or `to`.
 ## A compact mesh is not a permanent compute-cull veto
 
 Late glyph allocation leaves instance ranges out of draw order, so the CPU path builds compact
-meshes. Do not read that shape as `cpu-grid` forever. A single atlas bank keeps one `GlyphMesh`;
-GPU scatter writes 8-byte draw-state-order refs. Multi-segment scenes and a store with `highWater`
-more than twice the live instances stay on the CPU compact path.
+meshes. Do not read that shape as `cpu-grid` forever. One blend/z group keeps one `GlyphMesh`
+(two array textures). GPU scatter writes 8-byte draw-state-order refs. Multi-segment scenes and a
+store with `highWater` more than twice the live instances stay on the CPU compact path.
+
+## Pixi BufferImageSource cannot upload 2d-array layers
+
+`viewDimension: "2d-array"` plus `arrayLayerCount` allocates a WebGL `TEXTURE_2D_ARRAY` / WebGPU
+array texture. Pixi's `buffer` uploaders still call `texImage2D` / `writeTexture` at `z = 0` for
+one 2D slice. Do not call `source.update()` on atlas arrays. After `getGlSource`, reallocate with
+`texImage3D` and write layers with `texSubImage3D`. After `getGpuSource`, write `origin.z = layer`.
+R8 (sdf/alpha) and RGBA8 (msdf/color) cannot share one array. Do not start leftover #2 with a
+palette SSBO: WebGL 2 has no storage buffers.
 
 ## Compute culling needs a larger CPU working set than its draw set
 

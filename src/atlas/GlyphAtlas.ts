@@ -1,20 +1,23 @@
 import { Packer, type PackedRectangle } from "./Packer";
-import type {
-  AtlasCommit,
-  AtlasEntry,
-  AtlasPageInfo,
-  AtlasUpload,
-  GlyphAtlasOptions,
-  GlyphAtlasStats,
-  GlyphCacheKey,
-  GlyphMode,
-  GlyphRaster,
-  GlyphRequest,
+import {
+  atlasArrayKind,
+  GLYPH_ATLAS_ARRAY_LAYERS,
+  type AtlasCommit,
+  type AtlasEntry,
+  type AtlasPageInfo,
+  type AtlasUpload,
+  type GlyphAtlasOptions,
+  type GlyphAtlasStats,
+  type GlyphCacheKey,
+  type GlyphMode,
+  type GlyphRaster,
+  type GlyphRequest,
 } from "./types";
 
 interface AtlasPage {
   readonly id: number;
   readonly mode: GlyphMode;
+  readonly layer: number;
   readonly width: number;
   readonly height: number;
   readonly bytes: number;
@@ -114,6 +117,7 @@ export class GlyphAtlas {
       key: request.key,
       generation: request.generation,
       page: page.id,
+      layer: page.layer,
       mode: raster.mode,
       x: rectangle.x,
       y: rectangle.y,
@@ -180,6 +184,7 @@ export class GlyphAtlas {
     return Object.freeze({
       id: value.id,
       mode: value.mode,
+      layer: value.layer,
       width: value.width,
       height: value.height,
       bytes: value.bytes,
@@ -295,9 +300,18 @@ export class GlyphAtlas {
     if (this.#allocatedBytes + bytes > this.#maxBytes) {
       return undefined;
     }
+    const kind = atlasArrayKind(mode);
+    let layer = 0;
+    for (const page of this.#pages) {
+      if (atlasArrayKind(page.mode) === kind) layer += 1;
+    }
+    if (layer >= GLYPH_ATLAS_ARRAY_LAYERS) {
+      return undefined;
+    }
     const page: AtlasPage = {
       id: this.#pages.length,
       mode,
+      layer,
       width: this.#pageWidth,
       height: this.#pageHeight,
       bytes,

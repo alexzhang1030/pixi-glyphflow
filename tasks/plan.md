@@ -208,8 +208,8 @@ The 1.1.0 suite already meets the formal million-label frame budgets. The next p
   fill-only GPU transforms, packed CPU store columns, and 24-byte live instances are in
   source. Published instance, transform, and store ceilings stay until new artifacts exist.
 - Wave 3: stable WebGPU compute compaction and indirect draw are in source for the direct
-  natural-order mesh. WebGL 2 and multi-segment meshes keep the CPU grid. Transform storage buffers
-  and atlas texture arrays remain follow-up work.
+  natural-order mesh. WebGL 2 and multi-segment meshes keep the CPU grid. Atlas pages bind as
+  two texture arrays. Transform storage buffers remain follow-up work.
 - Wave 4: TinySDF / prebake / four-channel rect uploads, duplicate-string layout intern,
   shared prototype instance ranges, the first-seen admit lane, the broadcast content lane,
   spatial `placeMany`, the prototype-fetch instance mesh, compute-cull ring-only unique

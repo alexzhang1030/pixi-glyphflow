@@ -10,6 +10,9 @@
 
 ### Performance
 
+- Atlas pages bind as layers in two texture arrays (R8 sdf/alpha, RGBA8 msdf/color). Shaders
+  sample `uAtlasR` / `uAtlasRGBA` by mode and layer. Compact walks split only on blend and z.
+  `GLYPH_TEXTURE_BANK_SIZE` is now `2`. Palette storage buffers are still not started.
 - Empty-ink scalars (White_Space except Ogham U+1680, plus default ignorables) skip raster
   and instance quads. Layout advance and label AABBs stay. Trusted runs, ligatures, and
   shared-cluster marks still generate. An empty TinySDF mask skips both EDTs.

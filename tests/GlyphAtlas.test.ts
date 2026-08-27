@@ -19,12 +19,14 @@ describe("GlyphAtlas", () => {
       key: "font:1:A",
       generation: 2,
       page: 0,
+      layer: 0,
       x: 0,
       y: 0,
       width: 4,
       height: 4,
       mode: "alpha",
     });
+    expect(atlas.getPage(0)).toMatchObject({ id: 0, mode: "alpha", layer: 0 });
     expect(atlas.stats).toMatchObject({ staleResults: 1, entries: 1, pages: 1 });
 
     atlas.destroy();
@@ -115,6 +117,33 @@ describe("GlyphAtlas", () => {
     expect(atlas.stats.capacityFailures).toBe(1);
     atlas.unpin("A");
     expect(atlas.stage(atlas.request("B"), raster(4, 4, 2))).toBe(true);
+
+    atlas.destroy();
+  });
+
+  test("assigns array layers per format so sdf/alpha share R and msdf/color share RGBA", () => {
+    const atlas = new GlyphAtlas({ pageWidth: 8, pageHeight: 8, maxBytes: 1_024 });
+    stageAndCommit(atlas, "alpha-0", raster(8, 8, 1));
+    stageAndCommit(atlas, "sdf-1", { ...raster(8, 8, 2), mode: "sdf" });
+    stageAndCommit(atlas, "msdf-0", {
+      mode: "msdf",
+      width: 4,
+      height: 4,
+      pixels: new Uint8Array(4 * 4 * 4).fill(3),
+    });
+    stageAndCommit(atlas, "color-1", {
+      mode: "color",
+      width: 4,
+      height: 4,
+      pixels: new Uint8Array(4 * 4 * 4).fill(4),
+    });
+
+    expect(atlas.get("alpha-0")).toMatchObject({ page: 0, layer: 0, mode: "alpha" });
+    expect(atlas.get("sdf-1")).toMatchObject({ page: 1, layer: 1, mode: "sdf" });
+    expect(atlas.get("msdf-0")).toMatchObject({ page: 2, layer: 0, mode: "msdf" });
+    expect(atlas.get("color-1")).toMatchObject({ page: 3, layer: 1, mode: "color" });
+    expect(atlas.getPage(1)).toMatchObject({ layer: 1, mode: "sdf" });
+    expect(atlas.getPage(2)).toMatchObject({ layer: 0, mode: "msdf" });
 
     atlas.destroy();
   });
