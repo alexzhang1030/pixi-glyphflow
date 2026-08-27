@@ -336,6 +336,13 @@
   - Verify: bun test tests/RenderCoordinator.test.ts tests/GlyphInstanceStore.test.ts tests/TextLayer.commit.test.ts tests/TextStore.test.ts tests/culling.test.ts
   - Files: src/render/RenderCoordinator.ts, src/render/GlyphInstanceStore.ts, src/store/TextStore.ts, src/TextLayer.ts
 
+- [x] Task 12.20: Merge unique admit `writeFills` by fill identity.
+  - Acceptance: Unique first-seen groups that share `style.fill` call `writeFills` once.
+    Distinct fills stay separate. Instance writes and draw-state inserts stay per string.
+    On-screen unique still finishes in that commit. Published budgets stay.
+  - Verify: bun test tests/RenderCoordinator.test.ts tests/TransformPalette.test.ts tests/TextLayer.commit.test.ts
+  - Files: src/render/RenderCoordinator.ts
+
 - [x] Task 12.19: Columnar spatial translate for position storms.
   - Acceptance: `translateMany` slides occupied AABBs from packed deltas without rewriting
     z or visibility. Size class stays; only a cell-boundary crossing rebuckets.

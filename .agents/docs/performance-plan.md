@@ -143,6 +143,11 @@ LRU, 52-bit keys, the 48 MiB store (test-pinned, 44.9 MiB measured), the sparse 
     re-enter a cell. `updatePositions` and same-text `updateTextPositions` collect one delta
     column. Do not rewrite z or visibility. Wave 1's ≤ 8 ms `dynamic-counters` target still
     needs a reference M1 Pro artifact before anyone claims the number.
+16. **Admit fill merge — LANDED.** Unique first-seen groups that share a `style.fill`
+    identity concatenate slots/xy and call `writeFills` once. Instance columns and
+    draw-state inserts stay per (text, style). Distinct fill identities stay separate.
+    Do not merge by resolved paint when the fill objects differ. On-screen unique still
+    finishes in that commit.
 
 **Regressions and traps the audits confirmed:**
 

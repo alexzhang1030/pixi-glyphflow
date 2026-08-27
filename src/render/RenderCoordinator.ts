@@ -99,6 +99,12 @@ export interface ContentLaneInput {
   readonly style: Readonly<TextStyleOptions>;
 }
 
+interface PreparedAdmitColumn {
+  readonly group: AdmitLaneGroup;
+  readonly run: Readonly<PositionedRun>;
+  readonly snapshot: Readonly<RenderLabelSnapshot>;
+}
+
 /** First-seen fill-only column: one layout, share, full palette write, draw-state insert. */
 export interface AdmitLaneGroup {
   readonly slots: Uint32Array;
@@ -165,6 +171,8 @@ export class RenderCoordinator {
   #batchPages = new Uint16Array(0);
   #batchModes = new Uint8Array(0);
   #batchScales = new Float32Array(0);
+  #admitFillSlots = new Uint32Array(0);
+  #admitFillXy = new Float32Array(0);
   readonly #seenAtlasKeys = new Set<GlyphCacheKey>();
   #ticket = 0;
   #revisions = 0;
@@ -451,11 +459,7 @@ export class RenderCoordinator {
         ),
       ),
     );
-    const prepared: Array<{
-      readonly group: AdmitLaneGroup;
-      readonly run: Readonly<PositionedRun>;
-      readonly snapshot: Readonly<RenderLabelSnapshot>;
-    }> = [];
+    const prepared: PreparedAdmitColumn[] = [];
     for (const item of columns) {
       if (item.column === undefined) {
         this.#lastLayoutMs = performance.now() - prepareStart;
@@ -472,15 +476,10 @@ export class RenderCoordinator {
     let drawOrderChanged = false;
     for (const item of prepared) {
       this.#writeInstanceColumn(item.group.slots, item.group.count, item.run, item.snapshot);
-      this.transforms.writeFills(
-        item.group.slots,
-        item.group.count,
-        item.group.xy,
-        item.group.style.fill,
-      );
       if (this.#admitDrawStates(item.group)) drawOrderChanged = true;
       applied += item.group.count;
     }
+    this.#writeAdmitFills(prepared);
     this.#lastInstanceWriteMs = performance.now() - writeStart;
     this.#shapedLabels += applied;
     this.#appliedLabels += applied;
@@ -808,6 +807,57 @@ export class RenderCoordinator {
       this.#drawStatesDirty = true;
     }
     return changed;
+  }
+
+  /**
+   * Unique admit groups still write instances per string. Palette rows that share a fill identity
+   * (interned style.fill) become one writeFills. Distinct fills stay separate.
+   */
+  #writeAdmitFills(prepared: readonly PreparedAdmitColumn[]): void {
+    if (prepared.length === 0) return;
+    if (prepared.length === 1) {
+      const group = prepared[0]?.group;
+      if (group === undefined) return;
+      this.transforms.writeFills(group.slots, group.count, group.xy, group.style.fill);
+      return;
+    }
+    const buckets = new Map<unknown, PreparedAdmitColumn[]>();
+    for (const item of prepared) {
+      const fill = item.group.style.fill;
+      let bucket = buckets.get(fill);
+      if (bucket === undefined) {
+        bucket = [];
+        buckets.set(fill, bucket);
+      }
+      bucket.push(item);
+    }
+    for (const [fill, bucket] of buckets) {
+      if (bucket.length === 1) {
+        const group = bucket[0]?.group;
+        if (group === undefined) continue;
+        this.transforms.writeFills(group.slots, group.count, group.xy, fill);
+        continue;
+      }
+      let count = 0;
+      for (const item of bucket) count += item.group.count;
+      this.#ensureAdmitFillCapacity(count);
+      let offset = 0;
+      for (const item of bucket) {
+        const group = item.group;
+        this.#admitFillSlots.set(group.slots.subarray(0, group.count), offset);
+        this.#admitFillXy.set(group.xy.subarray(0, group.count * 2), offset * 2);
+        offset += group.count;
+      }
+      this.transforms.writeFills(this.#admitFillSlots, count, this.#admitFillXy, fill);
+    }
+  }
+
+  #ensureAdmitFillCapacity(count: number): void {
+    if (this.#admitFillSlots.length >= count) return;
+    let capacity = this.#admitFillSlots.length === 0 ? 16 : this.#admitFillSlots.length;
+    while (capacity < count) capacity *= 2;
+    this.#admitFillSlots = new Uint32Array(capacity);
+    this.#admitFillXy = new Float32Array(capacity * 2);
   }
 
   /**

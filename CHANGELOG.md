@@ -4,6 +4,8 @@
 
 ### Performance
 
+- Unique admit groups that share a `style.fill` identity write one `writeFills` column.
+  Instance ranges and draw-state inserts stay per string.
 - Position storms slide spatial AABBs through `translateMany`. Size is unchanged, so the
   hash-grid size class stays and only a cell-boundary crossing rebuckets. `updatePositions`
   and same-text `updateTextPositions` no longer call `translate` per label.
