@@ -214,8 +214,9 @@ The 1.1.0 suite already meets the formal million-label frame budgets. The next p
   shared prototype instance ranges, the first-seen admit lane, the broadcast content lane,
   spatial `placeMany`, the prototype-fetch instance mesh, compute-cull ring-only unique
   deferral, parallel admit-group prepare, and TinySDF same-size miss batch plus FontFace intern
-  are in source. Tight-view unique raster (layout count per unseen string, EDT still per glyph)
-  and a remaining upload budget stay open.
+  are in source. Position storms slide AABBs through `translateMany` (size class stays).
+  Tight-view unique raster (layout count per unseen string, EDT still per glyph) and a
+  remaining upload budget stay open.
 - Wave 5: optional Slug outline mode, collision, SIMD, SharedArrayBuffer ring.
 
 ### Checkpoint

@@ -139,6 +139,11 @@ describe("TextLayer culling and hit bounds", () => {
     expect(layer.hitTest({ x: 1, y: 1 })).toBe(ids[0]);
     expect(layer.hitTest({ x: 101, y: 101 })).toBeUndefined();
 
+    // Cross a 64-wide hash cell so translateMany must rebucket, not only slide AABB.
+    expect(layer.updatePositions(ids, new Float32Array([200, 0, 280, 0]))).toBe(2);
+    expect(layer.hitTest({ x: 201, y: 1 })).toBe(ids[0]);
+    expect(layer.hitTest({ x: 1, y: 1 })).toBeUndefined();
+
     layer.destroy();
   });
 

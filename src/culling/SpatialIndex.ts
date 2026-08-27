@@ -186,22 +186,52 @@ export class SpatialIndex {
     return placed;
   }
 
+  /**
+   * Slide occupied AABBs by packed per-slot deltas. Size is unchanged, so the size class stays;
+   * only a cell-boundary crossing rebuckets. Keeps z-index and visibility. @internal
+   */
+  translateMany(slots: Uint32Array, count: number, deltas: Float32Array): number {
+    this.#assertActive();
+    if (count <= 0) return 0;
+    if (slots.length < count) {
+      throw new TypeError("Spatial translateMany slot list is shorter than count");
+    }
+    if (deltas.length < count * 2) {
+      throw new TypeError("Spatial translateMany deltas must contain one packed pair per slot");
+    }
+    for (let index = 0; index < count; index += 1) {
+      const slot = slots[index];
+      if (slot === undefined) {
+        throw new Error("Spatial translateMany slot list is incomplete");
+      }
+      const deltaX = deltas[index * 2];
+      const deltaY = deltas[index * 2 + 1];
+      if (
+        deltaX === undefined ||
+        deltaY === undefined ||
+        !Number.isFinite(deltaX) ||
+        !Number.isFinite(deltaY)
+      ) {
+        throw new TypeError("translation must contain finite deltaX/deltaY values");
+      }
+    }
+    let translated = 0;
+    for (let index = 0; index < count; index += 1) {
+      const slot = slots[index] ?? 0;
+      const deltaX = deltas[index * 2] ?? 0;
+      const deltaY = deltas[index * 2 + 1] ?? 0;
+      if (this.#shift(slot, deltaX, deltaY)) translated += 1;
+    }
+    return translated;
+  }
+
   translate(slot: number, deltaX: number, deltaY: number): boolean {
     this.#assertActive();
     assertSlot(slot);
     if (!Number.isFinite(deltaX) || !Number.isFinite(deltaY)) {
       throw new TypeError("translation must contain finite deltaX/deltaY values");
     }
-    if (slot >= this.#highWater || this.#occupied[slot] !== 1) {
-      return false;
-    }
-    this.#minimumX[slot] = (this.#minimumX[slot] ?? 0) + deltaX;
-    this.#minimumY[slot] = (this.#minimumY[slot] ?? 0) + deltaY;
-    this.#maximumX[slot] = (this.#maximumX[slot] ?? 0) + deltaX;
-    this.#maximumY[slot] = (this.#maximumY[slot] ?? 0) + deltaY;
-    this.#rehash(slot);
-
-    return true;
+    return this.#shift(slot, deltaX, deltaY);
   }
 
   remove(slot: number): boolean {
@@ -497,11 +527,51 @@ export class SpatialIndex {
     for (const slot of this.#spill) visit(slot);
   }
 
+  #shift(slot: number, deltaX: number, deltaY: number): boolean {
+    if (slot >= this.#highWater || this.#occupied[slot] !== 1) {
+      return false;
+    }
+    this.#minimumX[slot] = (this.#minimumX[slot] ?? 0) + deltaX;
+    this.#minimumY[slot] = (this.#minimumY[slot] ?? 0) + deltaY;
+    this.#maximumX[slot] = (this.#maximumX[slot] ?? 0) + deltaX;
+    this.#maximumY[slot] = (this.#maximumY[slot] ?? 0) + deltaY;
+    this.#rehashPreservingLevel(slot);
+    return true;
+  }
+
   #rehash(slot: number): void {
     const next = this.#cellFor(slot);
     const current = this.#cellKey[slot] ?? 0;
     if (current === next && (this.#cellIndex[slot] ?? -1) >= 0) return;
     this.#unhash(slot);
+    this.#insertHash(slot, next);
+  }
+
+  /**
+   * Translate does not change AABB size, so the size class stays. Spill (oversize or unhashed)
+   * still goes through `#cellFor` in case a coord overflow can re-enter a cell.
+   */
+  #rehashPreservingLevel(slot: number): void {
+    const current = this.#cellKey[slot] ?? 0;
+    if ((this.#cellIndex[slot] ?? -1) < 0 || current === 0) {
+      this.#rehash(slot);
+      return;
+    }
+    const level = Math.floor(current / LEVEL_SHIFT) - 1;
+    if (level < 0 || level >= CELL_SIZES.length) {
+      this.#rehash(slot);
+      return;
+    }
+    const cell = CELL_SIZES[level] ?? 64;
+    const centerX = ((this.#minimumX[slot] ?? 0) + (this.#maximumX[slot] ?? 0)) * 0.5;
+    const centerY = ((this.#minimumY[slot] ?? 0) + (this.#maximumY[slot] ?? 0)) * 0.5;
+    const next = packCell(level, Math.floor(centerX / cell), Math.floor(centerY / cell)) ?? 0;
+    if (next === current) return;
+    this.#unhash(slot);
+    this.#insertHash(slot, next);
+  }
+
+  #insertHash(slot: number, next: number): void {
     if (next === 0) {
       this.#cellIndex[slot] = this.#spill.length;
       this.#spill.push(slot);

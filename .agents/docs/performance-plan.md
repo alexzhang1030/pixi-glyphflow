@@ -137,6 +137,12 @@ LRU, 52-bit keys, the 48 MiB store (test-pinned, 44.9 MiB measured), the sparse 
     FontFace wait and serialize canvas plus EDT after that wait. EDT stays per glyph. Neighbors
     on one sheet would corrupt distances. Concurrent `#ensureDocumentFont` for one family shares
     one `FontFace.load()`. Do not ship default baked pages in the core gzip graph.
+15. **Columnar spatial translate — LANDED.** `translateMany` slides occupied AABBs from packed
+    deltas. Translate does not change size, so the size class stays and only a cell-boundary
+    crossing rebuckets. Spill still goes through `#cellFor` in case a coord overflow can
+    re-enter a cell. `updatePositions` and same-text `updateTextPositions` collect one delta
+    column. Do not rewrite z or visibility. Wave 1's ≤ 8 ms `dynamic-counters` target still
+    needs a reference M1 Pro artifact before anyone claims the number.
 
 **Regressions and traps the audits confirmed:**
 

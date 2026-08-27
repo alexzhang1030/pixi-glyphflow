@@ -4,6 +4,9 @@
 
 ### Performance
 
+- Position storms slide spatial AABBs through `translateMany`. Size is unchanged, so the
+  hash-grid size class stays and only a cell-boundary crossing rebuckets. `updatePositions`
+  and same-text `updateTextPositions` no longer call `translate` per label.
 - Same-size TinySDF misses share one FontFace wait and serialize canvas plus EDT. A miss
   burst does not start N `FontFace.load()` calls for one family. EDT stays per glyph.
 - First-seen admit groups prepare unique strings in parallel. Layout count stays one per
