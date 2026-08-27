@@ -109,14 +109,17 @@ writes, and remirroring the store.
 - Position storms slide spatial AABBs through `translateMany`. Size is unchanged, so the
   size class stays. Only a cell-boundary crossing rebuckets. `updatePositions` and
   same-text `updateTextPositions` collect packed deltas and call it once.
+- Unique admit groups that share a `style.fill` identity write one `writeFills` column.
+  Instance writes stay per string. Distinct fills stay separate writes.
 
 ## Remaining slices, in order
 
 1. **Tight-view unique raster.** A pan onto fresh unique text that is already on screen still
    layouts and rasters those glyphs in that commit. Admit groups no longer wait on each other
-   during prepare. Layout count is still one per unseen string. TinySDF no longer starts one
-   canvas plus FontFace load per glyph across a miss burst; EDT is still per glyph. Do not
-   defer texel uploads for glyphs already instanced.
+   during prepare. Shared-fill unique groups write one palette column. Layout count is still
+   one per unseen string. TinySDF no longer starts one canvas plus FontFace load per glyph
+   across a miss burst; EDT is still per glyph. Do not defer texel uploads for glyphs
+   already instanced.
 2. **Palette storage buffer and atlas texture array.** Wave 3 leftovers. Binding cost, not the
    zoom hitch. Prototype-fetch opened the shaders; these can share that opening.
 3. **Default baked pages.** Known UI alphabets still miss on the first session if no page is

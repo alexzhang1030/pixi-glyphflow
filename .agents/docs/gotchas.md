@@ -259,6 +259,9 @@ would admit the same slot twice. Scale, rotation, anchors, z-index, and effects 
 object path so `writeFills` does not lie about the fill record. Unique groups prepare together.
 Do not `await` `#prepareSharedColumn` per group; that made a tight-view wave the sum of each
 string. `atlas.commitFrame` and the instance/palette writes stay after that wave.
+Unique groups that share a `style.fill` identity concatenate into one `writeFills`. Do not
+merge instance columns or draw-state inserts across strings. Different fill objects that
+happen to resolve to the same color stay two writes.
 
 ## Palette row uploads must stay 256-byte aligned when taller than one row
 

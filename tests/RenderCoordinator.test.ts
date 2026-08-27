@@ -605,6 +605,95 @@ describe("RenderCoordinator", () => {
     registry.destroy();
   });
 
+  test("writes one fill column for unique admit groups that share a fill", async () => {
+    const registry = new FontRegistry();
+    await registry.register({ family: "Fixture" });
+    const coordinator = new RenderCoordinator({
+      registry,
+      layoutEngine: {
+        layout(_slot, _revision, input) {
+          return run(input.text);
+        },
+        destroy() {},
+      },
+      glyphProvider: {
+        async rasterize(): Promise<GlyphRaster> {
+          return {
+            mode: "alpha",
+            width: 4,
+            height: 6,
+            pixels: new Uint8Array(24).fill(255),
+            metrics: { bearingX: 0, bearingY: 5, advance: 4 },
+          };
+        },
+        destroy() {},
+      },
+      atlasOptions: { pageWidth: 64, pageHeight: 64, maxBytes: 4_096 },
+      instanceOptions: { initialCapacity: 16 },
+      transformOptions: { initialCapacity: 8, textureWidth: 8 },
+    });
+    let fillWrites = 0;
+    const writeFills = coordinator.transforms.writeFills.bind(coordinator.transforms);
+    coordinator.transforms.writeFills = (slots, count, xy, fill) => {
+      fillWrites += 1;
+      return writeFills(slots, count, xy, fill);
+    };
+
+    expect(
+      await coordinator.applyAdmitLane([
+        {
+          slots: new Uint32Array([0]),
+          count: 1,
+          xy: new Float32Array([0, 0]),
+          orders: new Uint32Array([0]),
+          text: "AB",
+          style: { fontFamily: "Fixture", fontSize: 16, fill: 0xffffff },
+        },
+        {
+          slots: new Uint32Array([1]),
+          count: 1,
+          xy: new Float32Array([12, 4]),
+          orders: new Uint32Array([1]),
+          text: "CD",
+          style: { fontFamily: "Fixture", fontSize: 16, fill: 0xffffff },
+        },
+      ]),
+    ).toMatchObject({ stale: false, appliedLabels: 2 });
+    expect(fillWrites).toBe(1);
+    expect(Array.from(coordinator.transforms.data.subarray(0, 2))).toEqual([0, 0]);
+    expect(Array.from(coordinator.transforms.data.subarray(8, 10))).toEqual([12, 4]);
+    expect(coordinator.transforms.data[6]).toBe(0xffffff);
+    expect(coordinator.transforms.data[14]).toBe(0xffffff);
+
+    fillWrites = 0;
+    expect(
+      await coordinator.applyAdmitLane([
+        {
+          slots: new Uint32Array([2]),
+          count: 1,
+          xy: new Float32Array([24, 0]),
+          orders: new Uint32Array([2]),
+          text: "EF",
+          style: { fontFamily: "Fixture", fontSize: 16, fill: 0xff0000 },
+        },
+        {
+          slots: new Uint32Array([3]),
+          count: 1,
+          xy: new Float32Array([36, 0]),
+          orders: new Uint32Array([3]),
+          text: "GH",
+          style: { fontFamily: "Fixture", fontSize: 16, fill: 0x00ff00 },
+        },
+      ]),
+    ).toMatchObject({ stale: false, appliedLabels: 2 });
+    expect(fillWrites).toBe(2);
+    expect(coordinator.transforms.data[22]).toBe(0xff0000);
+    expect(coordinator.transforms.data[30]).toBe(0x00ff00);
+
+    coordinator.destroy();
+    registry.destroy();
+  });
+
   test("keeps the draw-list epoch while draw states only append", async () => {
     const registry = new FontRegistry();
     await registry.register({ family: "Fixture" });
