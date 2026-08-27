@@ -336,6 +336,15 @@
   - Verify: bun test tests/RenderCoordinator.test.ts tests/GlyphInstanceStore.test.ts tests/TextLayer.commit.test.ts tests/TextStore.test.ts tests/culling.test.ts
   - Files: src/render/RenderCoordinator.ts, src/render/GlyphInstanceStore.ts, src/store/TextStore.ts, src/TextLayer.ts
 
+- [x] Task 12.21: Optional `pixi-glyphflow/prebuilt` ASCII SDF side export.
+  - Acceptance: `uiSdfPrebuilt` bakes U+0020–U+007E at 16 px as `rasterizerOptions.prebuilt`
+    pages. First call encodes; later calls remap keys. Other sizes throw. A HarfBuzz-style
+    `glyphId` plus a single Unicode scalar crops a `glyphId: 0` page and does not start
+    TinySDF or MSDF. Ligatures stay exact-key only. `src/index.ts` and the core gzip graph
+    do not import the side export. Published budgets stay.
+  - Verify: bun test tests/prebuilt-ui-sdf.test.ts tests/glyph-providers.test.ts && bun run docs:check
+  - Files: src/prebuilt, src/atlas/RasterGlyphProvider.ts, package.json, tsdown.config.ts
+
 - [x] Task 12.20: Merge unique admit `writeFills` by fill identity.
   - Acceptance: Unique first-seen groups that share `style.fill` call `writeFills` once.
     Distinct fills stay separate. Instance writes and draw-state inserts stay per string.

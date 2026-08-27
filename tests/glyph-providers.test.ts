@@ -319,6 +319,121 @@ describe("glyph providers", () => {
     registry.destroy();
   });
 
+  test("retries a single-scalar prebuilt miss with glyphId 0", async () => {
+    const registry = new FontRegistry();
+    const font = await registry.register({ family: "Fixture", source: new Uint8Array([1, 2]) });
+    const pixels = new Uint8Array([11, 12, 13, 255]);
+    const ligaturePixels = new Uint8Array([21, 22, 23, 255]);
+    const pageKey = prebuiltGlyphKey({
+      family: "Fixture",
+      glyphId: 0,
+      glyphText: "A",
+      fontSize: 16,
+      fontWeight: "normal",
+      mode: "msdf",
+    });
+    const ligatureKey = prebuiltGlyphKey({
+      family: "Fixture",
+      glyphId: 0,
+      glyphText: "fi",
+      fontSize: 16,
+      fontWeight: "normal",
+      mode: "msdf",
+    });
+    let generatorStarts = 0;
+    let generatedCharset = "";
+    const provider = new RasterGlyphProvider(registry, {
+      prebuilt: {
+        pages: [
+          { id: "latin", mode: "msdf", width: 1, height: 1, pixels },
+          { id: "liga", mode: "msdf", width: 1, height: 1, pixels: ligaturePixels },
+        ],
+        glyphs: [
+          {
+            key: pageKey,
+            pageId: "latin",
+            x: 0,
+            y: 0,
+            width: 1,
+            height: 1,
+            metrics: { bearingX: 0, bearingY: 1, advance: 2, fieldRange: 4 },
+          },
+          {
+            key: ligatureKey,
+            pageId: "liga",
+            x: 0,
+            y: 0,
+            width: 1,
+            height: 1,
+            metrics: { bearingX: 0, bearingY: 1, advance: 2, fieldRange: 4 },
+          },
+        ],
+      },
+      async createMsdfGenerator() {
+        generatorStarts += 1;
+        return {
+          async generateAtlas(options) {
+            generatedCharset = String(options.charset);
+            return {
+              texture: {
+                width: 1,
+                height: 1,
+                data: new Uint8ClampedArray([10, 20, 30, 255]),
+              },
+              glyphs: [
+                {
+                  char: "fi",
+                  atlasPosition: [0, 0],
+                  atlasSize: [1, 1],
+                  bounds: { left: 0, bottom: 0, right: 1, top: 1 },
+                  advance: 1,
+                },
+              ],
+              fieldRange: 4,
+            };
+          },
+          async dispose() {},
+        };
+      },
+    });
+
+    const raster = await provider.rasterize({
+      family: "Fixture",
+      fontRevision: font.revision,
+      glyphId: 65,
+      glyphText: "A",
+      fontSize: 16,
+      mode: "msdf",
+    });
+    expect(raster.pixels).toEqual(pixels);
+    expect(generatorStarts).toBe(0);
+    expect(provider.stats).toMatchObject({
+      prebuiltHits: 1,
+      distanceFieldRasters: 0,
+      tinySdfRasters: 0,
+    });
+
+    const ligature = await provider.rasterize({
+      family: "Fixture",
+      fontRevision: font.revision,
+      glyphId: 256,
+      glyphText: "fi",
+      fontSize: 16,
+      mode: "msdf",
+    });
+    expect(ligature.mode).toBe("msdf");
+    expect(ligature.pixels).not.toEqual(ligaturePixels);
+    expect(generatedCharset).toBe("fi");
+    expect(generatorStarts).toBe(1);
+    expect(provider.stats).toMatchObject({
+      prebuiltHits: 1,
+      distanceFieldRasters: 1,
+    });
+
+    await provider.destroy();
+    registry.destroy();
+  });
+
   test("builds an SDF from the canvas mask without starting the MSDF generator", async () => {
     const registry = new FontRegistry();
     const font = await registry.register({ family: "System UI" });

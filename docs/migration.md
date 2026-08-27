@@ -6,13 +6,13 @@ and dense culling.
 
 ## Package changes
 
-| 0.0.1 surface                 | 1.0 surface                                                     |
-| ----------------------------- | --------------------------------------------------------------- |
-| `TextLayer` root export       | `TextLayer` and `FontRegistry` root exports                     |
-| `updateLabel(id, patch)`      | `update(id, patch)` plus the retained `updateLabel` alias       |
-| Per-label PixiJS Text backend | Shared atlas, instance, palette, and mesh backend               |
-| Basic lifecycle stats         | CPU, culling, shaping, upload, draw, and atlas diagnostics      |
-| Root-only package             | Focused viewport, accessibility, shaping, and advanced subpaths |
+| 0.0.1 surface                 | 1.0 surface                                                                        |
+| ----------------------------- | ---------------------------------------------------------------------------------- |
+| `TextLayer` root export       | `TextLayer` and `FontRegistry` root exports                                        |
+| `updateLabel(id, patch)`      | `update(id, patch)` plus the retained `updateLabel` alias                          |
+| Per-label PixiJS Text backend | Shared atlas, instance, palette, and mesh backend                                  |
+| Basic lifecycle stats         | CPU, culling, shaping, upload, draw, and atlas diagnostics                         |
+| Root-only package             | Focused viewport, accessibility, shaping, advanced, and optional prebuilt subpaths |
 
 ## Construction
 

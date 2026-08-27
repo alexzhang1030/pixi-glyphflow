@@ -2,7 +2,17 @@
 
 ## Unreleased
 
+### Added
+
+- Optional `pixi-glyphflow/prebuilt` export: `uiSdfPrebuilt` serves a coarse VGA 8×8 SDF of
+  printable ASCII (U+0020–U+007E) as `rasterizerOptions.prebuilt` pages. The first call encodes;
+  later calls remap keys. Size is 16 px only. The pages are not in the core ESM graph.
+
 ### Performance
+
+- Prebuilt lookup retries `glyphId: 0` when `glyphText` is a single Unicode scalar, so a
+  HarfBuzz-shaped ASCII miss can still crop a family page instead of starting TinySDF or MSDF.
+  Ligatures stay on the exact key.
 
 - Unique admit groups that share a `style.fill` identity write one `writeFills` column.
   Instance ranges and draw-state inserts stay per string.

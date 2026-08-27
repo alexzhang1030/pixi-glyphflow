@@ -139,6 +139,13 @@ the work is serialized after fonts are ready.
 family keeps the same page. Do not put `fontRevision` in the bake key. A page baked for different
 bytes under the same family name is a product mistake, not a cache miss.
 
+HarfBuzz `glyphId` values are font-specific. A family page keyed with `glyphId: 0` still hits
+when the request is a single Unicode scalar. Ligatures and multi-scalar `glyphText` stay
+exact-key only. Do not put default pages on `src/index.ts` or `src/advanced/index.ts`.
+`pixi-glyphflow/prebuilt` (`uiSdfPrebuilt`) is a side export: first call encodes a public-domain
+VGA 8×8 set at 16 px only (`rasterScale` cannot be below 1). Later calls remap keys. This is
+not production typography and is not wired into the homepage CJK demo.
+
 ## LOD remirrors only when labels cross one pixel
 
 `culling.lod` uses `fontSize * scaleY * worldScaleY`. Zoom inside a working set does not remirror

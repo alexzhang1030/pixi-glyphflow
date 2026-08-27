@@ -169,7 +169,8 @@ export interface RasterGlyphProviderOptions {
   readonly tinySdf?: boolean;
   /**
    * Serve known glyphs from packed pages before TinySDF or MSDF. Record keys use `prebuiltGlyphKey`
-   * and omit font revision.
+   * and omit font revision. A miss with a non-zero glyph id retries `glyphId: 0` when `glyphText`
+   * is a single Unicode scalar so a family page can ignore HarfBuzz ids.
    */
   readonly prebuilt?: PrebuiltGlyphProviderOptions;
 }

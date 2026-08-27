@@ -171,7 +171,7 @@ export class RasterGlyphProvider {
   }
 
   async #createRaster(request: RasterGlyphRequest): Promise<Readonly<GlyphRaster>> {
-    const baked = this.#prebuilt?.lookup(prebuiltGlyphKey(request));
+    const baked = this.#lookupPrebuilt(request);
     if (baked !== undefined) {
       this.#prebuiltHits += 1;
       return baked;
@@ -433,6 +433,13 @@ export class RasterGlyphProvider {
     return generatorPromise;
   }
 
+  #lookupPrebuilt(request: RasterGlyphRequest): Readonly<GlyphRaster> | undefined {
+    const exact = this.#prebuilt?.lookup(prebuiltGlyphKey(request));
+    if (exact !== undefined) return exact;
+    if (request.glyphId === 0 || !isSingleUnicodeScalar(request.glyphText)) return undefined;
+    return this.#prebuilt?.lookup(prebuiltGlyphKey({ ...request, glyphId: 0 }));
+  }
+
   #assertActive(): void {
     if (this.#destroyed) {
       throw new Error("RasterGlyphProvider has been destroyed");
@@ -604,6 +611,11 @@ function createCanvas(width: number, height: number): CanvasLike {
     return canvas;
   }
   throw new Error("Canvas rasterization requires OffscreenCanvas or a browser document");
+}
+
+/** One Unicode scalar. Ligatures and grapheme clusters stay on the exact prebuilt key. */
+function isSingleUnicodeScalar(text: string): boolean {
+  return [...text].length === 1;
 }
 
 function validateRequest(request: RasterGlyphRequest): void {

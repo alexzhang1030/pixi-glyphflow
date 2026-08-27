@@ -44,6 +44,10 @@
       "types": "./dist/advanced/index.d.ts",
       "import": "./dist/advanced/index.js"
     },
+    "./prebuilt": {
+      "types": "./dist/prebuilt/index.d.ts",
+      "import": "./dist/prebuilt/index.js"
+    },
     "./shaping": {
       "types": "./dist/shaping/index.d.ts",
       "import": "./dist/shaping/index.js"
