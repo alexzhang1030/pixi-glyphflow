@@ -81,8 +81,8 @@ unseen physical glyph that has ink. Empty-ink scalars skip raster and instance q
 sizes that clamp to `distanceFieldMinFontSize` intern one field.
 `rasterizerOptions.prebuilt` serves packed pages first so a known alphabet miss is a crop, not a
 generator start. A single-scalar miss retries `glyphId: 0` so HarfBuzz ids can still crop a
-family page. Optional `pixi-glyphflow/prebuilt` (`uiSdfPrebuilt`) bakes a coarse VGA 8×8 SDF
-outside the core ESM graph. `culling.lod` drops labels whose projected font height is below one pixel.
+family page. Optional `pixi-glyphflow/prebuilt` (`uiSdfPrebuilt`, `charsetSdfPrebuilt`) bakes
+a coarse VGA ASCII page or host-painted charset pages outside the core ESM graph. `culling.lod` drops labels whose projected font height is below one pixel.
 Off-screen residents stay unshaped until the camera reaches them. On-screen text appears in that
 commit. There is no leftover admission wave.
 

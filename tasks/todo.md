@@ -336,6 +336,14 @@
   - Verify: bun test tests/RenderCoordinator.test.ts tests/GlyphInstanceStore.test.ts tests/TextLayer.commit.test.ts tests/TextStore.test.ts tests/culling.test.ts
   - Files: src/render/RenderCoordinator.ts, src/render/GlyphInstanceStore.ts, src/store/TextStore.ts, src/TextLayer.ts
 
+- [x] Task 12.24: Optional charset TinySDF prebake.
+  - Acceptance: `charsetSdfPrebuilt` bakes host text at the physical TinySDF size, skips
+    empty-ink scalars, and remaps keys on later calls. `mergePrebuilt` concatenates family
+    pages. No CJK bitmaps ship in the core gzip graph. The homepage demo bakes its language
+    samples after FontFace load. Published budgets stay.
+  - Verify: bun test tests/prebuilt-charset-sdf.test.ts tests/prebuilt-ui-sdf.test.ts && bun run docs:check
+  - Files: src/prebuilt/charsetSdf.ts, src/prebuilt/index.ts, site/components/GlyphflowDemo.client.vue
+
 - [x] Task 12.23: Skip empty-ink glyph generation.
   - Acceptance: White_Space except Ogham U+1680 and default-ignorable scalars skip
     raster and instance quads. Layout advance and the label AABB stay. Trusted runs,
