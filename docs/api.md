@@ -157,7 +157,9 @@ coordinator path packs numeric identities and still accepts diagnostic strings.
 minimum source resolution for dynamic MSDF/SDF glyphs and defaults to `48`. `tinySdf: true` builds
 those HarfBuzz glyphs as a local SDF from the canvas mask and skips `@zappar/msdf-generator`. That
 changes pixels. `prebuilt` serves packed pages before TinySDF or MSDF. Record keys come from
-`prebuiltGlyphKey` and omit font revision so a re-registered family keeps the same page. The
+`prebuiltGlyphKey` and omit font revision so a re-registered family keeps the same page. A miss
+with a non-zero glyph id retries `glyphId: 0` when `glyphText` is a single Unicode scalar, so a
+family page can ignore HarfBuzz ids. Ligatures stay on the exact key. The
 renderer stores the
 physical-to-logical raster scale so layout, stroke, and shadow dimensions remain stable.
 `createMsdfGenerator` supplies explicit worker and WebAssembly URLs for production bundlers. Each
@@ -166,3 +168,27 @@ worker serializes font loading and atlas generation; separate workers execute in
 `TextLayerStats.cullPath` is either `"compute-cull"` or `"cpu-grid"` and names the path used by the
 latest draw preparation. The root entry exports the `CullPath` type and `requestComputeCullGpu`.
 Compute shader and pass internals are not root exports.
+
+## `pixi-glyphflow/prebuilt`
+
+`uiSdfPrebuilt({ family, fontSize?, fontWeight? })` returns `rasterizerOptions.prebuilt` pages for
+printable ASCII (U+0020–U+007E). The bitmaps are a public-domain VGA 8×8 set scaled to 16 px ink
+and encoded with the same TinySDF radius the dynamic path uses. This is a coarse UI alphabet, not
+production typography. `fontSize` must be `16` (`UI_SDF_FONT_SIZE`); other sizes throw. The first
+call encodes; later calls remap keys only. The pages are not in the core ESM graph — import
+`pixi-glyphflow/prebuilt` and pass the result into `rasterizerOptions.prebuilt` with `tinySdf: true`
+when the host wants known ASCII to be a crop.
+
+```ts
+import { TextLayer } from "pixi-glyphflow";
+import { uiSdfPrebuilt } from "pixi-glyphflow/prebuilt";
+
+const layer = new TextLayer({
+  rendering: {
+    rasterizerOptions: {
+      tinySdf: true,
+      prebuilt: uiSdfPrebuilt({ family: "Inter" }),
+    },
+  },
+});
+```

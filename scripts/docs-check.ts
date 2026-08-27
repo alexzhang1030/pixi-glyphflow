@@ -32,6 +32,7 @@ const requiredApiTerms = [
   "HarfBuzzWorkerShaper",
   "GlyphAtlas",
   "GlyphMesh",
+  "uiSdfPrebuilt",
 ] as const;
 const copiedFeatureName = `${"heat"}${"map"}`;
 const forbiddenSourceTraces = [

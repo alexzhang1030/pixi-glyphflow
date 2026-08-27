@@ -111,6 +111,9 @@ writes, and remirroring the store.
   same-text `updateTextPositions` collect packed deltas and call it once.
 - Unique admit groups that share a `style.fill` identity write one `writeFills` column.
   Instance writes stay per string. Distinct fills stay separate writes.
+- Optional `pixi-glyphflow/prebuilt` (`uiSdfPrebuilt`) bakes a coarse VGA 8×8 SDF of printable
+  ASCII. Hosts pass it as `rasterizerOptions.prebuilt`. A single-scalar miss retries
+  `glyphId: 0` so HarfBuzz ids crop that page. The core gzip graph still has no default pages.
 
 ## Remaining slices, in order
 
@@ -118,12 +121,13 @@ writes, and remirroring the store.
    layouts and rasters those glyphs in that commit. Admit groups no longer wait on each other
    during prepare. Shared-fill unique groups write one palette column. Layout count is still
    one per unseen string. TinySDF no longer starts one canvas plus FontFace load per glyph
-   across a miss burst; EDT is still per glyph. Do not defer texel uploads for glyphs
-   already instanced.
+   across a miss burst; EDT is still per glyph. Known ASCII can skip that path when the host
+   imports `uiSdfPrebuilt`. CJK and unseen strings still generate. Do not defer texel uploads
+   for glyphs already instanced.
 2. **Palette storage buffer and atlas texture array.** Wave 3 leftovers. Binding cost, not the
    zoom hitch. Prototype-fetch opened the shaders; these can share that opening.
-3. **Default baked pages.** Known UI alphabets still miss on the first session if no page is
-   supplied and TinySDF has not run. Shipping those pages in the core gzip is rejected.
+3. **Default baked pages.** The optional side export landed. Shipping those pages in the core
+   gzip is still rejected. The core graph stays empty of alphabet pages.
 
 Reject: drip-feed admission, `queryAll()` for compute-cull, BVH rebuilds on the 100k storm, and
 replacing PixiJS with a compute 2D engine.
