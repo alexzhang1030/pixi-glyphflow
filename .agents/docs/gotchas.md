@@ -248,7 +248,9 @@ First-seen fill-only labels (visible, z 0, normal blend, alpha 1, unit transform
 no stroke or trusted run) group by interned (text, style) and take `applyAdmitLane`. Tight
 first-seen must skip a slot already stamped for this commit, or a create-plus-camera frame
 would admit the same slot twice. Scale, rotation, anchors, z-index, and effects stay on the
-object path so `writeFills` does not lie about the fill record.
+object path so `writeFills` does not lie about the fill record. Unique groups prepare together.
+Do not `await` `#prepareSharedColumn` per group; that made a tight-view wave the sum of each
+string. `atlas.commitFrame` and the instance/palette writes stay after that wave.
 
 ## Palette row uploads must stay 256-byte aligned when taller than one row
 

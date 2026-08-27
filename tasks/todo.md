@@ -336,6 +336,13 @@
   - Verify: bun test tests/RenderCoordinator.test.ts tests/GlyphInstanceStore.test.ts tests/TextLayer.commit.test.ts tests/TextStore.test.ts tests/culling.test.ts
   - Files: src/render/RenderCoordinator.ts, src/render/GlyphInstanceStore.ts, src/store/TextStore.ts, src/TextLayer.ts
 
+- [x] Task 12.17: Prepare unique admit groups in parallel.
+  - Acceptance: `applyAdmitLane` starts every group's layout and raster together. A gated
+    two-string wave records both layouts before either resolves. Writes stay serial. On-screen
+    unique still finishes in that commit. Published budgets stay.
+  - Verify: bun test tests/RenderCoordinator.test.ts tests/TextLayer.commit.test.ts
+  - Files: src/render/RenderCoordinator.ts
+
 - [x] Task 12.16: Gate compute-cull ring-only unique first-seen admission.
   - Acceptance: Tight-view unique still layouts and rasters in the seeing commit. Ring-only
     unique misses stay unshaped until they enter the tight view or an intern hit exists. Same-

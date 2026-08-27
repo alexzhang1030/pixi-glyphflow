@@ -4,6 +4,8 @@
 
 ### Performance
 
+- First-seen admit groups prepare unique strings in parallel. Layout count stays one per
+  (text, style). Instance and palette writes stay serial after that wave.
 - Compute-cull no longer rasters a unique miss that only sits in the 0.25-viewport prepare ring.
   Tight-view unique text still finishes in that commit. Ring intern hits and same-commit copies
   of a tight unique string still admit. There is no leftover rAF wave.
