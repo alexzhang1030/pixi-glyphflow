@@ -539,6 +539,127 @@ describe("glyph providers", () => {
     registry.destroy();
   });
 
+  test("interns one TinySDF field for logical sizes that clamp to the same physical size", async () => {
+    const registry = new FontRegistry();
+    const font = await registry.register({ family: "System UI" });
+    let canvasCalls = 0;
+    const alpha = {
+      mode: "alpha" as const,
+      width: 8,
+      height: 8,
+      pixels: new Uint8Array(64).fill(255),
+      metrics: { bearingX: 3, bearingY: 6, advance: 8 },
+    };
+    const provider = new RasterGlyphProvider(registry, {
+      canvasRasterizer(): Promise<GlyphRaster> {
+        canvasCalls += 1;
+        return Promise.resolve(alpha);
+      },
+      async createMsdfGenerator() {
+        throw new Error("MSDF generator must not start for TinySDF");
+      },
+    });
+    const base = {
+      family: "System UI",
+      fontRevision: font.revision,
+      glyphId: 65,
+      glyphText: "A",
+      mode: "sdf",
+    } as const;
+
+    const sixteen = await provider.rasterize({ ...base, fontSize: 16 });
+    const thirtyTwo = await provider.rasterize({ ...base, fontSize: 32 });
+    const otherId = await provider.rasterize({ ...base, fontSize: 16, glyphId: 99 });
+    const sixtyFour = await provider.rasterize({ ...base, fontSize: 64 });
+    const [bSixteen, bThirtyTwo] = await Promise.all([
+      provider.rasterize({ ...base, glyphId: 66, glyphText: "B", fontSize: 16 }),
+      provider.rasterize({ ...base, glyphId: 66, glyphText: "B", fontSize: 32 }),
+    ]);
+
+    expect(sixteen.pixels).toBe(thirtyTwo.pixels);
+    expect(sixteen.pixels).toBe(otherId.pixels);
+    expect(sixtyFour.pixels).not.toBe(sixteen.pixels);
+    expect(bSixteen.pixels).toBe(bThirtyTwo.pixels);
+    expect(bSixteen.pixels).not.toBe(sixteen.pixels);
+    expect(sixteen.metrics).toMatchObject({
+      bearingX: 1,
+      bearingY: 2,
+      advance: 8 / 3,
+      fieldRange: 8 / 3,
+      rasterScale: 3,
+    });
+    expect(thirtyTwo.metrics).toMatchObject({
+      bearingX: 2,
+      bearingY: 4,
+      advance: 8 / 1.5,
+      fieldRange: 8 / 1.5,
+      rasterScale: 1.5,
+    });
+    expect(canvasCalls).toBe(3);
+    expect(provider.stats).toMatchObject({ tinySdfRasters: 3, canvasRasters: 3 });
+
+    await provider.destroy();
+    registry.destroy();
+  });
+
+  test("interns one MSDF field for logical sizes that clamp to the same physical size", async () => {
+    const registry = new FontRegistry();
+    const font = await registry.register({ family: "Fixture", source: new Uint8Array([1, 2]) });
+    let generatorCalls = 0;
+    const provider = new RasterGlyphProvider(registry, {
+      generatorConcurrency: 1,
+      async createMsdfGenerator() {
+        return {
+          async generateAtlas() {
+            generatorCalls += 1;
+            return {
+              texture: {
+                width: 2,
+                height: 1,
+                data: new Uint8ClampedArray([10, 20, 30, 255, 100, 50, 0, 255]),
+              },
+              glyphs: [
+                {
+                  char: "A",
+                  atlasPosition: [0, 0],
+                  atlasSize: [2, 1],
+                  bounds: { left: 3, bottom: -2, right: 9, top: 12 },
+                  advance: 15,
+                },
+              ],
+              fieldRange: 6,
+            };
+          },
+          async dispose() {},
+        };
+      },
+    });
+    const base = {
+      family: "Fixture",
+      fontRevision: font.revision,
+      glyphId: 65,
+      glyphText: "A",
+      mode: "msdf",
+    } as const;
+
+    const sixteen = await provider.rasterize({ ...base, fontSize: 16 });
+    const thirtyTwo = await provider.rasterize({ ...base, fontSize: 32 });
+
+    expect(sixteen.pixels).toBe(thirtyTwo.pixels);
+    expect(sixteen.metrics).toMatchObject({ rasterScale: 3, bearingX: 1, bearingY: 4, advance: 5 });
+    expect(thirtyTwo.metrics).toMatchObject({
+      rasterScale: 1.5,
+      bearingX: 2,
+      bearingY: 8,
+      advance: 10,
+    });
+    expect(generatorCalls).toBe(1);
+    expect(provider.stats.distanceFieldRasters).toBe(1);
+
+    await provider.destroy();
+    registry.destroy();
+  });
+
   test("keys canvas glyphs by the complete multilingual font stack", async () => {
     const registry = new FontRegistry();
     const font = await registry.register({ family: "System UI" });

@@ -336,6 +336,14 @@
   - Verify: bun test tests/RenderCoordinator.test.ts tests/GlyphInstanceStore.test.ts tests/TextLayer.commit.test.ts tests/TextStore.test.ts tests/culling.test.ts
   - Files: src/render/RenderCoordinator.ts, src/render/GlyphInstanceStore.ts, src/store/TextStore.ts, src/TextLayer.ts
 
+- [x] Task 12.22: Intern physical TinySDF/MSDF fields across logical sizes.
+  - Acceptance: A 16px and 32px miss of the same glyph share one TinySDF canvas+EDT or one
+    MSDF generator pass when both clamp to `distanceFieldMinFontSize`. Metrics keep the
+    per-request `rasterScale`. TinySDF shares across HarfBuzz ids for the same `glyphText`.
+    A 64px miss still generates. Atlas entries stay per size bucket. Published budgets stay.
+  - Verify: bun test tests/glyph-providers.test.ts
+  - Files: src/atlas/RasterGlyphProvider.ts
+
 - [x] Task 12.21: Optional `pixi-glyphflow/prebuilt` ASCII SDF side export.
   - Acceptance: `uiSdfPrebuilt` bakes U+0020–U+007E at 16 px as `rasterizerOptions.prebuilt`
     pages. First call encodes; later calls remap keys. Other sizes throw. A HarfBuzz-style

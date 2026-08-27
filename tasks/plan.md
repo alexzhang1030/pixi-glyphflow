@@ -217,8 +217,9 @@ The 1.1.0 suite already meets the formal million-label frame budgets. The next p
   are in source. Position storms slide AABBs through `translateMany` (size class stays).
   Unique admit groups that share a fill write one palette column. Optional
   `pixi-glyphflow/prebuilt` (`uiSdfPrebuilt`) bakes a coarse ASCII SDF outside the core
-  graph. Tight-view unique raster (layout count per unseen string, EDT still per glyph) and
-  a remaining upload budget stay open.
+  graph. Physical TinySDF/MSDF fields intern at `distanceFieldMinFontSize` so clamped
+  logical sizes share one generate. Tight-view unique raster (layout count per unseen
+  string, EDT still per unseen physical glyph) and a remaining upload budget stay open.
 - Wave 5: optional Slug outline mode, collision, SIMD, SharedArrayBuffer ring.
 
 ### Checkpoint

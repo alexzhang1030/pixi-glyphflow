@@ -158,7 +158,10 @@ export interface RasterGlyphProviderOptions {
   readonly cacheSize?: number;
   /** Parallel lazy MSDF workers. Browser defaults use up to four hardware threads. */
   readonly generatorConcurrency?: number;
-  /** Minimum MSDF/SDF rasterization size. Defaults to 48px for small-glyph detail. */
+  /**
+   * Minimum MSDF/SDF rasterization size. Defaults to 48px for small-glyph detail. Logical sizes
+   * that clamp to the same physical size intern one field and store `rasterScale` per request.
+   */
   readonly distanceFieldMinFontSize?: number;
   readonly canvasRasterizer?: (request: RasterGlyphRequest) => Promise<GlyphRaster>;
   readonly createMsdfGenerator?: () => Promise<MsdfGeneratorLike>;

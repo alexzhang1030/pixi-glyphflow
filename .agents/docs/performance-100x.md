@@ -114,6 +114,10 @@ writes, and remirroring the store.
 - Optional `pixi-glyphflow/prebuilt` (`uiSdfPrebuilt`) bakes a coarse VGA 8×8 SDF of printable
   ASCII. Hosts pass it as `rasterizerOptions.prebuilt`. A single-scalar miss retries
   `glyphId: 0` so HarfBuzz ids crop that page. The core gzip graph still has no default pages.
+- TinySDF and MSDF intern one physical field at `distanceFieldMinFontSize`. Logical sizes
+  that clamp to that size share pixels and keep their own `rasterScale`. TinySDF also shares
+  across HarfBuzz ids for the same `glyphText`. A first unseen CJK at one size still
+  generates once.
 
 ## Remaining slices, in order
 
@@ -121,9 +125,10 @@ writes, and remirroring the store.
    layouts and rasters those glyphs in that commit. Admit groups no longer wait on each other
    during prepare. Shared-fill unique groups write one palette column. Layout count is still
    one per unseen string. TinySDF no longer starts one canvas plus FontFace load per glyph
-   across a miss burst; EDT is still per glyph. Known ASCII can skip that path when the host
-   imports `uiSdfPrebuilt`. CJK and unseen strings still generate. Do not defer texel uploads
-   for glyphs already instanced.
+   across a miss burst. Same-glyph logical sizes that clamp to `distanceFieldMinFontSize`
+   share one field. EDT is still per unseen physical glyph. Known ASCII can skip that path
+   when the host imports `uiSdfPrebuilt`. CJK and unseen strings still generate. Do not
+   defer texel uploads for glyphs already instanced.
 2. **Palette storage buffer and atlas texture array.** Wave 3 leftovers. Binding cost, not the
    zoom hitch. Prototype-fetch opened the shaders; these can share that opening.
 3. **Default baked pages.** The optional side export landed. Shipping those pages in the core
