@@ -524,6 +524,18 @@ describe("RenderCoordinator", () => {
     expect(coordinator.transforms.data[30]).toBe(0x336699);
     expect(coordinator.getDrawStates()).toHaveLength(8);
     expect(coordinator.getDrawStates()[3]).toMatchObject({ slot: 3, zIndex: 0, order: 3 });
+    expect(
+      coordinator.hasInternedLayout({
+        text: "AB",
+        style: { fontFamily: "Fixture", fontSize: 16, fill: 0x336699 },
+      }),
+    ).toBe(true);
+    expect(
+      coordinator.hasInternedLayout({
+        text: "ZZ",
+        style: { fontFamily: "Fixture", fontSize: 16, fill: 0x336699 },
+      }),
+    ).toBe(false);
 
     coordinator.destroy();
     registry.destroy();

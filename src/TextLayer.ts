@@ -12,6 +12,7 @@ import {
   expandPrepareRing,
   expandWorkingSet,
   CULL_RECORD_STRIDE,
+  shouldAdmitOffscreenGroup,
   shouldDropSubpixelLod,
   shouldInstanceUnshaped,
   shouldRefreshResidency,
@@ -831,15 +832,14 @@ export class TextLayer extends Container {
           contentText = dirty.contentText;
           contentStyle = dirty.contentStyle;
         }
-        if (
-          cameraMoved &&
-          cullPath === "compute-cull" &&
-          drawViewport !== undefined &&
-          (this.#preparedRing === undefined ||
-            !workingSetContains(this.#preparedRing, drawViewport))
-        ) {
-          changes.push(...this.#buildTightFirstSeen(admit));
+        if (cameraMoved && cullPath === "compute-cull" && drawViewport !== undefined) {
+          const ringEscaped =
+            this.#preparedRing === undefined ||
+            !workingSetContains(this.#preparedRing, drawViewport);
+          const query = ringEscaped ? expandPrepareRing(drawViewport) : drawViewport;
+          changes.push(...this.#buildUnshapedFirstSeen(admit, query));
         }
+        this.#finalizeAdmitDrafts(admit, cullPath, drawViewport, this.#renderEpoch);
       }
     }
     const admitGroups = this.#publishAdmitGroups(admit.drafts);
@@ -1523,6 +1523,8 @@ export class TextLayer extends Container {
     let contentText: string | undefined;
     let contentStyle: Readonly<TextStyleOptions> | undefined;
     let contentMixed = false;
+    const objectRing: number[] = [];
+    const objectTightPairs = new WeakMap<Readonly<TextStyleOptions>, Set<string>>();
     const epoch = this.#renderEpoch;
     if (epoch === 0) {
       return { changes, laneCount, contentCount, contentText, contentStyle };
@@ -1553,10 +1555,12 @@ export class TextLayer extends Container {
         const admission = this.#unrenderedAdmission(slot, cullPath, ring, draw);
         if (admission.inResidency) this.#adoptVisibleSlot(slot);
         if (this.#positionOnly[slot] === 1 || !admission.shouldDraw) continue;
-        if (this.#collectAdmit(slot, admit)) {
-          this.#renderedEpochs[slot] = epoch;
+        if (this.#collectAdmit(slot, admit)) continue;
+        if (!this.#slotIntersectsTight(slot, draw)) {
+          objectRing.push(slot);
           continue;
         }
+        this.#rememberContentPair(objectTightPairs, slot);
         const change = this.#renderChangeForSlot(
           slot,
           false,
@@ -1596,6 +1600,7 @@ export class TextLayer extends Container {
       const change = this.#renderChangeForSlot(slot, true);
       if (change !== undefined) changes.push(change);
     }
+    this.#admitObjectRing(objectRing, objectTightPairs, epoch, changes);
     if (contentMixed && contentCount > 0) {
       for (let index = 0; index < contentCount; index += 1) {
         const slot = this.#contentSlots[index];
@@ -1622,6 +1627,7 @@ export class TextLayer extends Container {
   }
 
   #collectAdmit(slot: number, admit: AdmitCollector): boolean {
+    if (admit.collected.has(slot)) return true;
     if (!this.#isAdmitLaneCandidate(slot)) return false;
     const text = this.#store.textAt(slot);
     const style = this.#store.styleAt(slot);
@@ -1637,6 +1643,7 @@ export class TextLayer extends Container {
       byText.set(text, draft);
       admit.drafts.push(draft);
     }
+    admit.collected.add(slot);
     draft.slots.push(slot);
     return true;
   }
@@ -1680,31 +1687,38 @@ export class TextLayer extends Container {
     return !this.#layouts.has(id) && !this.#shaping.has(id) && !this.#trustedRuns.has(id);
   }
 
-  #buildTightFirstSeen(admit: AdmitCollector): LayerRenderChange[] {
+  #buildUnshapedFirstSeen(
+    admit: AdmitCollector,
+    query: CullViewport,
+  ): LayerRenderChange[] {
     const draw = this.#drawViewport();
     if (draw === undefined) return [];
-    const ring = expandPrepareRing(draw);
-    this.#preparedRing = ring;
+    this.#preparedRing = expandPrepareRing(draw);
     this.#ensureScratchCapacity();
-    const count = this.#spatial.query(ring, this.#bulkSlots, 0);
+    const count = this.#spatial.query(query, this.#bulkSlots, 0);
     const coordinator = this.#renderCoordinator;
     const epoch = this.#renderEpoch;
     const changes: LayerRenderChange[] = [];
+    const objectRing: number[] = [];
+    const objectTightPairs = new WeakMap<Readonly<TextStyleOptions>, Set<string>>();
     for (let index = 0; index < count; index += 1) {
       const slot = this.#bulkSlots[index];
       if (slot === undefined) throw new Error("Tight first-seen slot list is incomplete");
       if (this.#shouldDropLod(slot)) continue;
       if (epoch !== 0 && this.#renderedEpochs[slot] === epoch) continue;
       if (coordinator?.getRun(slot) !== undefined) continue;
-      if (this.#collectAdmit(slot, admit)) {
-        if (epoch !== 0) this.#renderedEpochs[slot] = epoch;
+      if (this.#collectAdmit(slot, admit)) continue;
+      if (!this.#slotIntersectsTight(slot, draw)) {
+        objectRing.push(slot);
         continue;
       }
       const change = this.#renderChangeForSlot(slot, false, false);
       if (change === undefined) continue;
+      this.#rememberContentPair(objectTightPairs, slot);
       if (epoch !== 0) this.#renderedEpochs[slot] = epoch;
       changes.push(change);
     }
+    this.#admitObjectRing(objectRing, objectTightPairs, epoch, changes);
     return changes;
   }
 
@@ -1723,6 +1737,8 @@ export class TextLayer extends Container {
     const changes: LayerRenderChange[] = [];
     const ring = draw === undefined ? undefined : expandPrepareRing(draw);
     this.#preparedRing = cullPath === "compute-cull" ? ring : undefined;
+    const objectRing: number[] = [];
+    const objectTightPairs = new WeakMap<Readonly<TextStyleOptions>, Set<string>>();
     for (let index = 0; index < this.#visibleCount; index += 1) {
       const slot = this.#visibleSlots[index];
       if (slot === undefined) throw new Error("Visible slot list is incomplete");
@@ -1731,13 +1747,20 @@ export class TextLayer extends Container {
       const hasRun = coordinator?.getRun(slot) !== undefined;
       if (this.#shouldDropLod(slot)) continue;
       if (!hasRun && !this.#unshapedVisible(slot, cullPath, ring)) continue;
+      if (!hasRun && this.#collectAdmit(slot, admit)) continue;
+      if (!hasRun && !this.#slotIntersectsTight(slot, draw)) {
+        objectRing.push(slot);
+        continue;
+      }
       this.#renderedEpochs[slot] = nextEpoch;
+      if (!hasRun) this.#rememberContentPair(objectTightPairs, slot);
       if (wasRendered && dirtyMask === TextDirty.None) continue;
-      if (!wasRendered && this.#collectAdmit(slot, admit)) continue;
       const change = this.#renderChangeForSlot(slot, wasRendered, hasRun);
       if (change === undefined) throw new Error("Visible label snapshot is unavailable");
       changes.push(change);
     }
+    this.#finalizeAdmitDrafts(admit, cullPath, draw, nextEpoch);
+    this.#admitObjectRing(objectRing, objectTightPairs, nextEpoch, changes);
     for (const state of coordinator?.getDrawStates() ?? []) {
       if (this.#renderedEpochs[state.slot] === nextEpoch) continue;
       const gone = !this.#store.occupiedAt(state.slot);
@@ -1816,6 +1839,127 @@ export class TextLayer extends Container {
       minY: box.y,
       maxX: box.x + box.width,
       maxY: box.y + box.height,
+    });
+  }
+
+  #slotIntersectsTight(slot: number, draw: CullViewport | undefined): boolean {
+    if (draw === undefined) return true;
+    const box = this.#spatial.get(slot, this.#boundsScratch);
+    if (box === undefined) return false;
+    return aabbVisible(box.x, box.y, box.x + box.width, box.y + box.height, draw);
+  }
+
+  #internedAt(slot: number): boolean {
+    const coordinator = this.#renderCoordinator;
+    if (coordinator === undefined) return false;
+    const text = this.#store.textAt(slot);
+    const style = this.#store.styleAt(slot);
+    if (text === undefined || style === undefined) return false;
+    const id = this.#store.idAt(slot);
+    const layout = id === undefined ? undefined : this.#layouts.get(id);
+    const shaping = id === undefined ? undefined : this.#shaping.get(id);
+    return coordinator.hasInternedLayout({
+      text,
+      style,
+      ...(layout === undefined ? {} : { layout }),
+      ...(shaping === undefined ? {} : { shaping }),
+    });
+  }
+
+  #rememberContentPair(
+    pairs: WeakMap<Readonly<TextStyleOptions>, Set<string>>,
+    slot: number,
+  ): void {
+    const text = this.#store.textAt(slot);
+    const style = this.#store.styleAt(slot);
+    if (text === undefined || style === undefined) return;
+    let texts = pairs.get(style);
+    if (texts === undefined) {
+      texts = new Set();
+      pairs.set(style, texts);
+    }
+    texts.add(text);
+  }
+
+  #objectRingAdmits(
+    slot: number,
+    pairs: WeakMap<Readonly<TextStyleOptions>, Set<string>>,
+  ): boolean {
+    if (this.#internedAt(slot)) return true;
+    const text = this.#store.textAt(slot);
+    const style = this.#store.styleAt(slot);
+    if (text === undefined || style === undefined) return false;
+    return pairs.get(style)?.has(text) === true;
+  }
+
+  #admitObjectRing(
+    slots: readonly number[],
+    pairs: WeakMap<Readonly<TextStyleOptions>, Set<string>>,
+    epoch: number,
+    changes: LayerRenderChange[],
+  ): void {
+    for (const slot of slots) {
+      if (!this.#objectRingAdmits(slot, pairs)) continue;
+      const change = this.#renderChangeForSlot(slot, false, false);
+      if (change === undefined) continue;
+      if (epoch !== 0) this.#renderedEpochs[slot] = epoch;
+      changes.push(change);
+    }
+  }
+
+  #finalizeAdmitDrafts(
+    admit: AdmitCollector,
+    cullPath: CullPath,
+    draw: CullViewport | undefined,
+    epoch: number,
+  ): void {
+    if (admit.drafts.length === 0) return;
+    const kept: AdmitDraft[] = [];
+    for (const draft of admit.drafts) {
+      if (this.#admitDraftSurvives(draft, cullPath, draw)) {
+        kept.push(draft);
+        if (epoch !== 0) {
+          for (const slot of draft.slots) this.#renderedEpochs[slot] = epoch;
+        }
+        continue;
+      }
+      admit.byStyle.get(draft.style)?.delete(draft.text);
+      for (const slot of draft.slots) admit.collected.delete(slot);
+    }
+    admit.drafts.length = 0;
+    for (const draft of kept) admit.drafts.push(draft);
+  }
+
+  #admitDraftSurvives(
+    draft: AdmitDraft,
+    cullPath: CullPath,
+    draw: CullViewport | undefined,
+  ): boolean {
+    const boxes: Array<{
+      readonly minX: number;
+      readonly minY: number;
+      readonly maxX: number;
+      readonly maxY: number;
+    }> = [];
+    for (const slot of draft.slots) {
+      const box = this.#spatial.get(slot, this.#boundsScratch);
+      if (box === undefined) continue;
+      boxes.push({
+        minX: box.x,
+        minY: box.y,
+        maxX: box.x + box.width,
+        maxY: box.y + box.height,
+      });
+    }
+    return shouldAdmitOffscreenGroup({
+      cullPath,
+      draw,
+      interned:
+        this.#renderCoordinator?.hasInternedLayout({
+          text: draft.text,
+          style: draft.style,
+        }) ?? false,
+      boxes,
     });
   }
 
@@ -1971,10 +2115,11 @@ interface AdmitDraft {
 interface AdmitCollector {
   drafts: AdmitDraft[];
   byStyle: WeakMap<Readonly<TextStyleOptions>, Map<string, AdmitDraft>>;
+  collected: Set<number>;
 }
 
 function createAdmitCollector(): AdmitCollector {
-  return { drafts: [], byStyle: new WeakMap() };
+  return { drafts: [], byStyle: new WeakMap(), collected: new Set() };
 }
 
 function mergeRenderResults(

@@ -336,6 +336,14 @@
   - Verify: bun test tests/RenderCoordinator.test.ts tests/GlyphInstanceStore.test.ts tests/TextLayer.commit.test.ts tests/TextStore.test.ts tests/culling.test.ts
   - Files: src/render/RenderCoordinator.ts, src/render/GlyphInstanceStore.ts, src/store/TextStore.ts, src/TextLayer.ts
 
+- [x] Task 12.16: Gate compute-cull ring-only unique first-seen admission.
+  - Acceptance: Tight-view unique still layouts and rasters in the seeing commit. Ring-only
+    unique misses stay unshaped until they enter the tight view or an intern hit exists. Same-
+    commit ring copies of a tight unique string still admit. No leftover rAF. Published budgets
+    stay.
+  - Verify: bun test tests/computeCull.test.ts tests/RenderCoordinator.test.ts tests/TextLayer.commit.test.ts tests/culling.test.ts
+  - Files: src/culling/computeCull.ts, src/render/RenderCoordinator.ts, src/TextLayer.ts
+
 - [ ] Task 12.7: Add hybrid glyph generation and upload budgets (Wave 4).
   - Acceptance: Local TinySDF or prebaked pages serve the common set; dynamic MSDF remains the long tail; a per-frame budget gates off-screen label admission, not texel uploads for already-instanced glyphs, without growing the core gzip entry.
   - Verify: bun test tests/glyph-providers.test.ts tests/GlyphAtlas.test.ts && bun run benchmark -- --workload atlas-pressure,multilingual-stream

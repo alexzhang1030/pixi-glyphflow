@@ -487,6 +487,25 @@ export class RenderCoordinator {
     return this.#runs.get(slot);
   }
 
+  /**
+   * True when this (text, style) already has a layout intern, including an in-flight promise.
+   * Compute-cull uses it to admit ring-only copies without rastering a unique miss.
+   */
+  hasInternedLayout(input: {
+    readonly text: string;
+    readonly style: Readonly<TextStyleOptions>;
+    readonly layout?: Readonly<TextLayoutOptions>;
+    readonly shaping?: Readonly<TextShapingOptions>;
+  }): boolean {
+    this.#assertActive();
+    const snapshot: RenderLabelSnapshot = {
+      ...contentLaneSnapshot(input.text, input.style),
+      ...(input.layout === undefined ? {} : { layout: input.layout }),
+      ...(input.shaping === undefined ? {} : { shaping: input.shaping }),
+    };
+    return this.#lookupIntern(snapshot) !== undefined;
+  }
+
   getDrawStates(): readonly Readonly<RenderDrawState>[] {
     this.#assertActive();
     if (!this.#drawStatesDirty && !this.#needsDrawSort) return this.#drawStateList;
