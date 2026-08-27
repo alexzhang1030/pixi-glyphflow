@@ -60,8 +60,9 @@ writes, and remirroring the store.
 - New draw states no longer force a full re-sort. Zero-z ascending inserts append in sorted order;
   the sort now triggers only on out-of-order inserts, z/order changes, or once any nonzero z-index
   exists. The old `previousDrawState?.zIndex !== 0` check treated every insert as a sort.
-- Camera frames skip the first-seen ring query while the draw viewport (plus padding) stays inside
-  the last prepared ring. Ring escape re-queries before the labels reach the tight view.
+- Camera frames skip the first-seen **ring** query while the draw viewport stays inside the last
+  prepared ring. They still query the tight view so a deferred unique miss is admitted the
+  frame it crosses on screen. Ring escape re-queries the pad for intern hits.
 - HarfBuzz glyphs with ids skip `resolveGlyphText` on identity paths (it sliced the remaining
   code points per glyph, O(N²) per label); the real character is derived only on an atlas miss.
   Duplicate-string labels ensure glyphs once per (run, size, weight) per commit.
@@ -98,14 +99,15 @@ writes, and remirroring the store.
   Palette growth rewrites the existing proto texture so Pixi's first-upload snapshot cannot drop
   dirty glyphs after texel 0. Replacing that `Texture` leaves vertex fetches empty. One
   `GlyphMesh`, insertion order and z stay. One mesh per unique string is still rejected.
+- Compute-cull ring-only unique misses stay unshaped. Tight-view unique still layouts and
+  rasters in the seeing commit. Ring intern hits and same-commit copies of a tight unique
+  string still finish that turn. No leftover admission wave.
 
 ## Remaining slices, in order
 
-1. **Admission-side first-seen budget.** A large pan onto fresh **unique** text can still hitch
-   on layout and raster in one commit. Any budget must finish on-screen labels in that commit
-   and only cap off-screen working-set prep. Do not defer texel uploads for glyphs already
-   instanced. Duplicate-string intern and the admit lane remove the per-label layout and
-   snapshot tax; unique glyphs still raster in the seeing commit.
+1. **Tight-view unique raster.** A pan onto fresh unique text that is already on screen still
+   layouts and rasters those glyphs in that commit. The off-screen ring no longer speculative-
+   rasters a unique miss. Do not defer texel uploads for glyphs already instanced.
 2. **Palette storage buffer and atlas texture array.** Wave 3 leftovers. Binding cost, not the
    zoom hitch. Prototype-fetch opened the shaders; these can share that opening.
 3. **Default baked pages.** Known UI alphabets still miss on the first session if no page is

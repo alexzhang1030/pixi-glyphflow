@@ -12,6 +12,8 @@ import {
   planComputeCullStorageBytes,
   resolveCullPath,
   projectedFontHeightPx,
+  shouldAdmitOffscreenGroup,
+  shouldAdmitUnshaped,
   shouldDropSubpixelLod,
   shouldInstanceUnshaped,
   shouldRefreshResidency,
@@ -363,6 +365,83 @@ describe("compute cull host reference", () => {
         maxY: 10,
       }),
     ).toBe(false);
+  });
+
+  test("admits compute-cull unshaped labels in the tight view or on an intern hit", () => {
+    const draw = { x: 0, y: 0, width: 100, height: 100, padding: 0 };
+    const ring = expandPrepareRing(draw);
+    const tight = { minX: 10, minY: 10, maxX: 18, maxY: 20 };
+    const pad = { minX: 110, minY: 10, maxX: 118, maxY: 20 };
+    const far = { minX: 400, minY: 0, maxX: 408, maxY: 10 };
+    expect(
+      shouldAdmitUnshaped({
+        cullPath: "cpu-grid",
+        ring: undefined,
+        draw,
+        interned: false,
+        ...far,
+      }),
+    ).toBe(true);
+    expect(
+      shouldAdmitUnshaped({
+        cullPath: "compute-cull",
+        ring,
+        draw,
+        interned: false,
+        ...tight,
+      }),
+    ).toBe(true);
+    expect(
+      shouldAdmitUnshaped({
+        cullPath: "compute-cull",
+        ring,
+        draw,
+        interned: false,
+        ...pad,
+      }),
+    ).toBe(false);
+    expect(
+      shouldAdmitUnshaped({
+        cullPath: "compute-cull",
+        ring,
+        draw,
+        interned: true,
+        ...pad,
+      }),
+    ).toBe(true);
+    expect(
+      shouldAdmitUnshaped({
+        cullPath: "compute-cull",
+        ring,
+        draw,
+        interned: true,
+        ...far,
+      }),
+    ).toBe(false);
+    expect(
+      shouldAdmitOffscreenGroup({
+        cullPath: "compute-cull",
+        draw,
+        interned: false,
+        boxes: [pad],
+      }),
+    ).toBe(false);
+    expect(
+      shouldAdmitOffscreenGroup({
+        cullPath: "compute-cull",
+        draw,
+        interned: false,
+        boxes: [pad, tight],
+      }),
+    ).toBe(true);
+    expect(
+      shouldAdmitOffscreenGroup({
+        cullPath: "compute-cull",
+        draw,
+        interned: true,
+        boxes: [pad],
+      }),
+    ).toBe(true);
   });
 
   test("rewrites one packed record in place, including a relocated instance range", () => {

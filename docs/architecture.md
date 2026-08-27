@@ -71,7 +71,9 @@ ownership and revision stamps.
 hits stay on the same turn. Duplicate strings share one prototype instance range. Draw instances
 are an 8-byte `(prototypeGlyph, paletteIndex)` pair; shaders fetch the unique rect, UV, and
 metadata. Compute-cull still instances an expanded working set for camera slack, but it only
-layouts and rasters first-seen labels that intersect the tight draw view plus a 0.25-viewport ring.
+layouts and rasters first-seen labels that intersect the tight draw view. The 0.25-viewport ring
+still admits intern hits and same-commit copies of a tight unique string. Ring-only unique misses
+stay unshaped.
 `tinySdf: true` builds those HarfBuzz glyphs as a local SDF from the canvas mask.
 `rasterizerOptions.prebuilt` serves packed pages first so a known alphabet miss is a crop, not a
 generator start. `culling.lod` drops labels whose projected font height is below one pixel.
@@ -125,7 +127,8 @@ WebGPU compute culling keeps two sets. The CPU grid shapes and instances labels 
 working viewport. A stable prefix sum and scatter compact those resident glyphs against the tight
 padded draw viewport. Camera motion inside the working viewport does not query the grid or write the
 instance store, and it skips the first-seen ring query while the draw viewport stays inside the last
-prepared ring. Crossing the working-set edge refreshes residency. GPU mirrors sync incrementally:
+prepared ring. It still queries the tight view so a deferred unique miss is admitted when it
+crosses on screen. Crossing the working-set edge refreshes residency. GPU mirrors sync incrementally:
 commits upload dirty prototype texels and changed or appended cull records, keyed by a
 draw-list epoch that appends preserve; re-sorts, removals, and cull-path fallbacks force a full
 repack or resync. Scatter writes 8-byte draw records and does not read the store.

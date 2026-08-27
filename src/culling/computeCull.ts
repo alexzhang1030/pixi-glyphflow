@@ -127,6 +127,64 @@ export function shouldInstanceUnshaped(input: {
   }
 }
 
+/**
+ * After {@link shouldInstanceUnshaped}: the tight draw view always admits, including a unique miss.
+ * Ring-only unique waits for an intern hit. Cache hits stay on the same turn. cpu-grid visible
+ * slots are already the tight set.
+ */
+export function shouldAdmitUnshaped(input: {
+  readonly cullPath: CullPath;
+  readonly ring: CullViewport | undefined;
+  readonly draw: CullViewport | undefined;
+  readonly interned: boolean;
+  readonly minX: number;
+  readonly minY: number;
+  readonly maxX: number;
+  readonly maxY: number;
+}): boolean {
+  if (!shouldInstanceUnshaped(input)) return false;
+  switch (input.cullPath) {
+    case "cpu-grid":
+      return true;
+    case "compute-cull":
+      if (input.draw === undefined) return true;
+      if (aabbVisible(input.minX, input.minY, input.maxX, input.maxY, input.draw)) return true;
+      return input.interned;
+    default: {
+      const _exhaustive: never = input.cullPath;
+      return _exhaustive;
+    }
+  }
+}
+
+/** One (text, style) first-seen group: keep it if interned or any member hits the tight view. */
+export function shouldAdmitOffscreenGroup(input: {
+  readonly cullPath: CullPath;
+  readonly draw: CullViewport | undefined;
+  readonly interned: boolean;
+  readonly boxes: readonly {
+    readonly minX: number;
+    readonly minY: number;
+    readonly maxX: number;
+    readonly maxY: number;
+  }[];
+}): boolean {
+  switch (input.cullPath) {
+    case "cpu-grid":
+      return true;
+    case "compute-cull":
+      if (input.interned || input.draw === undefined) return true;
+      for (const box of input.boxes) {
+        if (aabbVisible(box.minX, box.minY, box.maxX, box.maxY, input.draw)) return true;
+      }
+      return false;
+    default: {
+      const _exhaustive: never = input.cullPath;
+      return _exhaustive;
+    }
+  }
+}
+
 export function expandPrepareRing(draw: CullViewport): CullViewport {
   return expandWorkingSet(draw, Math.max(draw.width, draw.height) * PREPARE_RING_SLACK);
 }

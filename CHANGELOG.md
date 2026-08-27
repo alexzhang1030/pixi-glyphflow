@@ -4,6 +4,9 @@
 
 ### Performance
 
+- Compute-cull no longer rasters a unique miss that only sits in the 0.25-viewport prepare ring.
+  Tight-view unique text still finishes in that commit. Ring intern hits and same-commit copies
+  of a tight unique string still admit. There is no leftover rAF wave.
 - Draw instances are 8 bytes (`prototypeGlyph`, `paletteIndex`). Shaders fetch unique rect, UV, and
   metadata from an RGBA32F prototype texture. UV is rewritten as f16 pairs and metadata as two
   16-bit integer floats so RGBA32F cannot canonicalize NaN. Prototype width comes from

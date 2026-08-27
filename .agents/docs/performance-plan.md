@@ -124,6 +124,11 @@ LRU, 52-bit keys, the 48 MiB store (test-pinned, 44.9 MiB measured), the sparse 
     Palette growth rewrites the existing proto texture so Pixi's first-upload snapshot cannot
     drop dirty glyphs after texel 0. Replacing the proto `Texture` leaves vertex fetches empty.
     One mesh per unique string stays rejected.
+12. **Off-screen unique admit — LANDED.** Compute-cull still instances the 0.25-viewport ring.
+    Tight-view unique layout and raster stay in the seeing commit. Ring-only unique misses stay
+    unshaped until they enter the tight view or an intern hit exists. A ring copy of a tight
+    unique string this commit stays in that group. No leftover rAF, no `prepareBudgetMs`.
+    Unique glyphs that are on screen still raster in that commit.
 
 **Regressions and traps the audits confirmed:**
 
@@ -346,7 +351,7 @@ The packer is no longer the limiter; generation and upload are.
 - TinySDF is in tree behind `rasterizerOptions.tinySdf`. It builds an SDF from the canvas mask so `@zappar/msdf-generator` is not on the first miss. Binary families install through `FontFace`. Exact HarfBuzz glyph IDs still go through MSDF when the flag is off.
 - `rasterizerOptions.prebuilt` is the hybrid page lookup (TMP / Mapbox PBF model). Dynamic TinySDF or MSDF handles the long tail. Default alphabet pages stay out of the core bundle.
 - `culling.lod` drops labels whose projected font height is below one pixel. Default is off.
-- Budget atlas uploads per frame and resume across frames. A 20,000-glyph first miss must not hitch a single commit. First-seen layout runs in the seeing commit for the tight draw view plus a 0.25-viewport ring. Do not drip-feed on-screen labels.
+- Budget atlas uploads per frame and resume across frames. A 20,000-glyph first miss must not hitch a single commit. First-seen layout runs in the seeing commit for the tight draw view. The 0.25-viewport ring still admits intern hits and same-commit copies of a tight unique string. Ring-only unique misses stay unshaped. Do not drip-feed on-screen labels.
 - Optional persistent cache is a product decision (IndexedDB, as in Mapbox local glyphs). Do not add it without a human license and privacy pass.
 - Pin the visible set and a small predictive ring around the current viewport/zoom, so zoom does not evict the glyphs it will need on the next wheel tick.
 
