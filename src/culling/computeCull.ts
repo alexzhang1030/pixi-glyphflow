@@ -128,9 +128,9 @@ export function shouldInstanceUnshaped(input: {
 }
 
 /**
- * After {@link shouldInstanceUnshaped}: the tight draw view always admits, including a unique
- * miss. Ring-only unique waits for an intern hit. Cache hits stay on the same turn. cpu-grid
- * visible slots are already the tight set.
+ * After {@link shouldInstanceUnshaped}: the tight draw view always admits, including a unique miss.
+ * Ring-only unique waits for an intern hit. Cache hits stay on the same turn. cpu-grid visible
+ * slots are already the tight set.
  */
 export function shouldAdmitUnshaped(input: {
   readonly cullPath: CullPath;

@@ -1687,10 +1687,7 @@ export class TextLayer extends Container {
     return !this.#layouts.has(id) && !this.#shaping.has(id) && !this.#trustedRuns.has(id);
   }
 
-  #buildUnshapedFirstSeen(
-    admit: AdmitCollector,
-    query: CullViewport,
-  ): LayerRenderChange[] {
+  #buildUnshapedFirstSeen(admit: AdmitCollector, query: CullViewport): LayerRenderChange[] {
     const draw = this.#drawViewport();
     if (draw === undefined) return [];
     this.#preparedRing = expandPrepareRing(draw);
