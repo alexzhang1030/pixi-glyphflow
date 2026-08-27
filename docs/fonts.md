@@ -183,7 +183,8 @@ Prebuilt MSDF/SDF pages provide deterministic startup and stable cache contents.
 Keys are `prebuiltGlyphKey` identities and omit font revision. A request whose `glyphText` is one
 Unicode scalar also matches a page keyed with `glyphId: 0`, so HarfBuzz ids do not miss a
 family-wide alphabet. Ligatures stay exact-key only. `pixi-glyphflow/prebuilt` exports
-`uiSdfPrebuilt` for a coarse VGA 8×8 SDF of printable ASCII at 16 px. Import that side entry; do
+`uiSdfPrebuilt` for a coarse VGA 8×8 SDF of printable ASCII at 16 px, and `charsetSdfPrebuilt`
+for host-painted TinySDF pages of any charset (including CJK). Import that side entry; do
 not put those pages on the core `pixi-glyphflow` graph. Dynamic providers cover the long
 tail: alpha and color glyphs plus binary-font outlines that are not on a page. `GlyphAtlas`
 publishes staged entries at frame boundaries, pins visible entries, evicts least-recently-used
@@ -196,6 +197,6 @@ unpinned entries, and keeps allocation within its configured byte ceiling.
 - Set `language` and `script` for CJKV regional forms and product-critical complex text.
 - Reuse text, style, and shaping values to maximize cross-label shape-cache hits.
 - Package production fonts with explicit redistribution rights.
-- Use prebuilt distance fields for large, stable icon or CJK sets. For a coarse ASCII HUD
-  alphabet, import `uiSdfPrebuilt` from `pixi-glyphflow/prebuilt` instead of shipping pages in
-  the core bundle.
+- Use prebuilt distance fields for large, stable icon or CJK sets. Import `charsetSdfPrebuilt`
+  from `pixi-glyphflow/prebuilt` and paint after `FontFace.load`. For a coarse ASCII HUD
+  alphabet, import `uiSdfPrebuilt` instead of shipping pages in the core bundle.

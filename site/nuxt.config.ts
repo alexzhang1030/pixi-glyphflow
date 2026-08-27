@@ -6,6 +6,7 @@ export default defineNuxtConfig({
   ssr: true,
   alias: {
     "pixi-glyphflow/viewport": fileURLToPath(new URL("../dist/viewport/index.js", import.meta.url)),
+    "pixi-glyphflow/prebuilt": fileURLToPath(new URL("../dist/prebuilt/index.js", import.meta.url)),
     "pixi-glyphflow": fileURLToPath(new URL("../dist/index.js", import.meta.url)),
   },
   future: {

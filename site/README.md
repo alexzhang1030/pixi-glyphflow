@@ -30,6 +30,7 @@ points through exact aliases to `dist/`.
 - 1,000,000 resident labels and viewport culling;
 - 100,000 packed position updates every 100 milliseconds;
 - five registered Noto subsets covering CJKV, Arabic, Devanagari, Hebrew, and Thai;
+- `charsetSdfPrebuilt` pages for those language samples after `FontFace.load`;
 - Greek, Cyrillic, Vietnamese, emoji, language/script overrides, and system fallback samples;
 - explicitly bundled MSDF worker and WebAssembly assets for deterministic production startup;
 - pixi-viewport drag, deceleration, wheel, pinch, zoom, and rotation;
