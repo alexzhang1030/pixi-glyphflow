@@ -76,6 +76,8 @@ still admits intern hits and same-commit copies of a tight unique string. Ring-o
 stay unshaped. Unique admit groups prepare in parallel so a tight-view wave is not the sum of
 each string's layout and raster.
 `tinySdf: true` builds those HarfBuzz glyphs as a local SDF from the canvas mask.
+Same-size TinySDF misses share one FontFace wait and serialize canvas plus EDT. EDT stays per
+glyph.
 `rasterizerOptions.prebuilt` serves packed pages first so a known alphabet miss is a crop, not a
 generator start. `culling.lod` drops labels whose projected font height is below one pixel.
 Off-screen residents stay unshaped until the camera reaches them. On-screen text appears in that

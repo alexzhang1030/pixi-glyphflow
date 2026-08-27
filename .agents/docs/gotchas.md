@@ -127,6 +127,12 @@ through `FontFace` from the registered bytes. Without `FontFace` (or a document 
 canvas would paint a fallback family. Keep `@zappar/msdf-generator` for `mode: "msdf"` and for
 hosts that cannot install a face.
 
+Intern `#ensureDocumentFont` / `#installDocumentFont` on family. A tight-view miss burst must
+not start N `FontFace.load()` calls for one family. Same-size misses share a microtask batch
+so they wait on that load once, then serialize canvas plus EDT. Do not run EDT on a
+multi-glyph sheet. Neighbors corrupt distances. Do not reuse one canvas across awaits unless
+the work is serialized after fonts are ready.
+
 ## Prebuilt glyph keys omit font revision
 
 `prebuiltGlyphKey` is family, glyph id, glyph text, rounded size, weight, and mode. A re-registered

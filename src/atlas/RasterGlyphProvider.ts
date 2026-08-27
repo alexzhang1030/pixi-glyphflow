@@ -51,9 +51,12 @@ export class RasterGlyphProvider {
   #prebuiltHits = 0;
   #generatorStarts = 0;
   readonly #faces = new Map<string, FontFace>();
+  readonly #faceLoads = new Map<string, Promise<void>>();
   readonly #prebuilt: PrebuiltGlyphProvider | undefined;
   readonly #msdfBatches = new Map<string, MsdfBatch>();
+  readonly #tinySdfBatches = new Map<string, TinySdfBatch>();
   #msdfFlushScheduled = false;
+  #tinySdfFlushScheduled = false;
   #destroyed = false;
 
   constructor(registry: FontRegistry, options: RasterGlyphProviderOptions = {}) {
@@ -178,7 +181,7 @@ export class RasterGlyphProvider {
       return this.#canvasRasterizer(request);
     }
     if (request.mode === "sdf") {
-      return this.#tinySdfRaster(request);
+      return this.#queueTinySdf(request);
     }
 
     this.#distanceFieldRasters += 1;
@@ -281,15 +284,73 @@ export class RasterGlyphProvider {
     }
   }
 
-  async #tinySdfRaster(request: RasterGlyphRequest): Promise<Readonly<GlyphRaster>> {
+  #queueTinySdf(request: RasterGlyphRequest): Promise<Readonly<GlyphRaster>> {
+    const rasterFontSize = Math.max(request.fontSize, this.#distanceFieldMinFontSize);
+    const key = [
+      request.family,
+      request.fontFamilies?.join("\u0001") ?? "",
+      String(request.fontRevision),
+      String(rasterFontSize),
+      String(request.fontWeight ?? "normal"),
+    ].join("\u0000");
+    return new Promise((resolve, reject) => {
+      let batch = this.#tinySdfBatches.get(key);
+      if (batch === undefined) {
+        batch = { family: request.family, rasterFontSize, members: [] };
+        this.#tinySdfBatches.set(key, batch);
+      }
+      batch.members.push({ request, rasterFontSize, resolve, reject });
+      if (!this.#tinySdfFlushScheduled) {
+        this.#tinySdfFlushScheduled = true;
+        queueMicrotask(() => {
+          this.#tinySdfFlushScheduled = false;
+          this.#flushTinySdfBatches();
+        });
+      }
+    });
+  }
+
+  #flushTinySdfBatches(): void {
+    const batches = [...this.#tinySdfBatches.values()];
+    this.#tinySdfBatches.clear();
+    for (const batch of batches) {
+      void this.#rasterizeTinySdfBatch(batch);
+    }
+  }
+
+  async #rasterizeTinySdfBatch(batch: Readonly<TinySdfBatch>): Promise<void> {
+    if (this.#destroyed) {
+      const error = new Error("RasterGlyphProvider was destroyed before TinySDF ran");
+      for (const member of batch.members) member.reject(error);
+      return;
+    }
+    try {
+      // Neighbors on one sheet corrupt EDT. One FontFace wait, then one mask+EDT per glyph.
+      await this.#ensureDocumentFont(batch.family);
+    } catch (error: unknown) {
+      for (const member of batch.members) member.reject(error);
+      return;
+    }
+    for (const member of batch.members) {
+      if (this.#destroyed) {
+        member.reject(new Error("RasterGlyphProvider was destroyed before TinySDF ran"));
+        continue;
+      }
+      try {
+        member.resolve(await this.#tinySdfMember(member));
+      } catch (error: unknown) {
+        member.reject(error);
+      }
+    }
+  }
+
+  async #tinySdfMember(member: Readonly<TinySdfBatchMember>): Promise<Readonly<GlyphRaster>> {
     this.#tinySdfRasters += 1;
     this.#canvasRasters += 1;
-    await this.#ensureDocumentFont(request.family);
-    const rasterFontSize = Math.max(request.fontSize, this.#distanceFieldMinFontSize);
-    const rasterScale = rasterFontSize / request.fontSize;
+    const rasterScale = member.rasterFontSize / member.request.fontSize;
     const alpha = await this.#canvasRasterizer({
-      ...request,
-      fontSize: rasterFontSize,
+      ...member.request,
+      fontSize: member.rasterFontSize,
       mode: "alpha",
     });
     if (alpha.mode !== "alpha") {
@@ -318,6 +379,18 @@ export class RasterGlyphProvider {
 
   async #ensureDocumentFont(family: string): Promise<void> {
     if (this.#faces.has(family)) return;
+    const existing = this.#faceLoads.get(family);
+    if (existing !== undefined) return existing;
+    const pending = this.#installDocumentFont(family);
+    this.#faceLoads.set(family, pending);
+    try {
+      await pending;
+    } finally {
+      if (this.#faceLoads.get(family) === pending) this.#faceLoads.delete(family);
+    }
+  }
+
+  async #installDocumentFont(family: string): Promise<void> {
     const bytes = this.#registry.getBinaryData(family);
     if (bytes === undefined) return;
     if (typeof FontFace === "undefined") return;
@@ -325,6 +398,8 @@ export class RasterGlyphProvider {
     copy.set(bytes);
     const face = new FontFace(family, copy);
     await face.load();
+    if (this.#destroyed) return;
+    if (this.#faces.has(family)) return;
     globalThis.document?.fonts.add(face);
     this.#faces.set(family, face);
   }
@@ -433,6 +508,19 @@ interface MsdfBatch {
   readonly bytes: Uint8Array;
   readonly rasterFontSize: number;
   readonly members: MsdfBatchMember[];
+}
+
+interface TinySdfBatchMember {
+  readonly request: RasterGlyphRequest;
+  readonly rasterFontSize: number;
+  readonly resolve: (raster: Readonly<GlyphRaster>) => void;
+  readonly reject: (error: unknown) => void;
+}
+
+interface TinySdfBatch {
+  readonly family: string;
+  readonly rasterFontSize: number;
+  readonly members: TinySdfBatchMember[];
 }
 
 /** Distance-field metrics scale together or the shader's screen-space math drifts. */

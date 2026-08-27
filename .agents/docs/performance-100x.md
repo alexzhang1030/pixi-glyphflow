@@ -104,13 +104,16 @@ writes, and remirroring the store.
   string still finish that turn. No leftover admission wave.
 - Unique admit groups prepare in parallel. A tight-view wave of distinct strings is not the
   sum of each string's layout and raster. Writes stay serial after that wave.
+- Same-size TinySDF misses share one FontFace wait and serialize canvas plus EDT. EDT stays
+  per glyph. A miss burst does not start N `FontFace.load()` calls for one family.
 
 ## Remaining slices, in order
 
 1. **Tight-view unique raster.** A pan onto fresh unique text that is already on screen still
    layouts and rasters those glyphs in that commit. Admit groups no longer wait on each other
-   during prepare. Layout count is still one per unseen string; TinySDF still rasters one
-   glyph at a time. Do not defer texel uploads for glyphs already instanced.
+   during prepare. Layout count is still one per unseen string. TinySDF no longer starts one
+   canvas plus FontFace load per glyph across a miss burst; EDT is still per glyph. Do not
+   defer texel uploads for glyphs already instanced.
 2. **Palette storage buffer and atlas texture array.** Wave 3 leftovers. Binding cost, not the
    zoom hitch. Prototype-fetch opened the shaders; these can share that opening.
 3. **Default baked pages.** Known UI alphabets still miss on the first session if no page is

@@ -4,6 +4,8 @@
 
 ### Performance
 
+- Same-size TinySDF misses share one FontFace wait and serialize canvas plus EDT. A miss
+  burst does not start N `FontFace.load()` calls for one family. EDT stays per glyph.
 - First-seen admit groups prepare unique strings in parallel. Layout count stays one per
   (text, style). Instance and palette writes stay serial after that wave.
 - Compute-cull no longer rasters a unique miss that only sits in the 0.25-viewport prepare ring.
