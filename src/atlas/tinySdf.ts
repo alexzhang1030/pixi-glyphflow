@@ -33,6 +33,16 @@ export function encodeTinySdf(
   }
 
   const area = width * height;
+  let anyFilled = false;
+  for (let index = 0; index < alpha.length; index += 1) {
+    if ((alpha[index] ?? 0) >= 128) {
+      anyFilled = true;
+      break;
+    }
+  }
+  // An empty mask is everywhere outside the 0.5 contour (encoded 0). Skip both EDTs.
+  if (!anyFilled) return new Uint8Array(area);
+
   if (outsideScratch.length < area) {
     outsideScratch = new Float64Array(area);
     insideScratch = new Float64Array(area);

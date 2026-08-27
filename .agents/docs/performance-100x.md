@@ -118,6 +118,9 @@ writes, and remirroring the store.
   that clamp to that size share pixels and keep their own `rasterScale`. TinySDF also shares
   across HarfBuzz ids for the same `glyphText`. A first unseen CJK at one size still
   generates once.
+- Empty-ink scalars (White_Space except Ogham U+1680, plus default ignorables) skip
+  raster and instance quads. Layout advance and label AABBs stay. Trusted runs, ligatures,
+  and shared-cluster marks still generate. An empty TinySDF mask skips both EDTs.
 
 ## Remaining slices, in order
 
@@ -126,9 +129,10 @@ writes, and remirroring the store.
    during prepare. Shared-fill unique groups write one palette column. Layout count is still
    one per unseen string. TinySDF no longer starts one canvas plus FontFace load per glyph
    across a miss burst. Same-glyph logical sizes that clamp to `distanceFieldMinFontSize`
-   share one field. EDT is still per unseen physical glyph. Known ASCII can skip that path
-   when the host imports `uiSdfPrebuilt`. CJK and unseen strings still generate. Do not
-   defer texel uploads for glyphs already instanced.
+   share one field. Empty-ink scalars skip generation. EDT is still per unseen physical
+   glyph that has ink. Known ASCII can skip that path when the host imports `uiSdfPrebuilt`.
+   CJK and unseen ink still generate. Do not defer texel uploads for glyphs already
+   instanced.
 2. **Palette storage buffer and atlas texture array.** Wave 3 leftovers. Binding cost, not the
    zoom hitch. Prototype-fetch opened the shaders; these can share that opening.
 3. **Default baked pages.** The optional side export landed. Shipping those pages in the core

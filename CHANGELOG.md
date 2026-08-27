@@ -10,6 +10,9 @@
 
 ### Performance
 
+- Empty-ink scalars (White_Space except Ogham U+1680, plus default ignorables) skip raster
+  and instance quads. Layout advance and label AABBs stay. Trusted runs, ligatures, and
+  shared-cluster marks still generate. An empty TinySDF mask skips both EDTs.
 - TinySDF and MSDF intern one physical field at `distanceFieldMinFontSize`. Logical sizes
   that clamp to that size share pixels and keep their own `rasterScale`. TinySDF also shares
   across HarfBuzz ids for the same `glyphText`. Sizes above the minimum still generate.

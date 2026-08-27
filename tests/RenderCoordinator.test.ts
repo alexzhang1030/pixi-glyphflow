@@ -877,6 +877,170 @@ describe("RenderCoordinator", () => {
     coordinator.destroy();
     registry.destroy();
   });
+
+  test("skips empty-ink scalars so spaces do not raster or instance", async () => {
+    const registry = new FontRegistry();
+    await registry.register({ family: "Fixture" });
+    const rasterTexts: string[] = [];
+    const coordinator = new RenderCoordinator({
+      registry,
+      layoutEngine: {
+        layout(_slot, _revision, input) {
+          return runChars(input.text);
+        },
+        destroy() {},
+      },
+      glyphProvider: {
+        async rasterize(request: RasterGlyphRequest): Promise<GlyphRaster> {
+          rasterTexts.push(request.glyphText);
+          return {
+            mode: "alpha",
+            width: 4,
+            height: 6,
+            pixels: new Uint8Array(24).fill(255),
+            metrics: { bearingX: 0, bearingY: 5, advance: 4 },
+          };
+        },
+        destroy() {},
+      },
+      atlasOptions: { pageWidth: 16, pageHeight: 16, maxBytes: 1_024 },
+      instanceOptions: { initialCapacity: 8 },
+      transformOptions: { initialCapacity: 4, textureWidth: 4 },
+    });
+
+    const spaced = await coordinator.commit(1, [
+      { slot: 0, mask: CONTENT | TRANSFORM | STYLE, snapshot: label(1, 0, 0, "A B") },
+    ]);
+    expect(rasterTexts).toEqual(["A", "B"]);
+    expect(spaced).toMatchObject({ stale: false, appliedLabels: 1, glyphs: 2 });
+    expect(coordinator.instances.getRange(0)).toEqual({ offset: 0, count: 2, capacity: 2 });
+    expect(coordinator.instances.stats.highWater).toBe(2);
+
+    rasterTexts.length = 0;
+    await coordinator.commit(2, [
+      { slot: 1, mask: CONTENT | TRANSFORM | STYLE, snapshot: label(1, 8, 0, "C\u3000D\u200b") },
+    ]);
+    expect(rasterTexts).toEqual(["C", "D"]);
+
+    rasterTexts.length = 0;
+    await coordinator.commit(3, [
+      { slot: 2, mask: CONTENT | TRANSFORM | STYLE, snapshot: label(1, 16, 0, "E · F") },
+    ]);
+    expect(rasterTexts).toEqual(["E", "·", "F"]);
+
+    rasterTexts.length = 0;
+    await coordinator.commit(4, [
+      { slot: 3, mask: CONTENT | TRANSFORM | STYLE, snapshot: label(1, 24, 0, "G\u1680H") },
+    ]);
+    expect(rasterTexts).toEqual(["G", "\u1680", "H"]);
+
+    rasterTexts.length = 0;
+    await coordinator.commit(5, [
+      { slot: 4, mask: CONTENT | TRANSFORM | STYLE, snapshot: label(1, 32, 0, "   ") },
+    ]);
+    expect(rasterTexts).toEqual([]);
+    expect(coordinator.instances.getRange(4)).toBeUndefined();
+
+    coordinator.destroy();
+    registry.destroy();
+  });
+
+  test("skips a HarfBuzz space in RTL cluster order without resolving every suffix", async () => {
+    const registry = new FontRegistry();
+    await registry.register({ family: "Fixture" });
+    const rasterTexts: string[] = [];
+    const coordinator = new RenderCoordinator({
+      registry,
+      layoutEngine: {
+        layout() {
+          return runRtlClusters("A B");
+        },
+        destroy() {},
+      },
+      glyphProvider: {
+        async rasterize(request: RasterGlyphRequest): Promise<GlyphRaster> {
+          rasterTexts.push(request.glyphText);
+          return {
+            mode: "msdf",
+            width: 4,
+            height: 6,
+            pixels: new Uint8Array(96).fill(255),
+            metrics: { bearingX: 0, bearingY: 5, advance: 4, fieldRange: 4 },
+          };
+        },
+        destroy() {},
+      },
+      atlasOptions: { pageWidth: 16, pageHeight: 16, maxBytes: 1_024 },
+      instanceOptions: { initialCapacity: 8 },
+      transformOptions: { initialCapacity: 4, textureWidth: 4 },
+    });
+
+    await coordinator.commit(1, [
+      { slot: 0, mask: CONTENT | TRANSFORM | STYLE, snapshot: label(1, 0, 0, "A B") },
+    ]);
+    expect(rasterTexts).toEqual(["B", "A"]);
+    expect(coordinator.instances.getRange(0)?.count).toBe(2);
+
+    coordinator.destroy();
+    registry.destroy();
+  });
+
+  test("still rasters trusted empty-ink glyphs, ligatures, and shared-cluster marks", async () => {
+    const registry = new FontRegistry();
+    await registry.register({ family: "Fixture" });
+    const rasterTexts: string[] = [];
+    const coordinator = new RenderCoordinator({
+      registry,
+      layoutEngine: {
+        layout(_slot, _revision, input) {
+          if (input.text === "A B") {
+            return Object.freeze({ ...runChars("A B"), source: "trusted" as const });
+          }
+          if (input.text === "fi") return runLigature("fi");
+          return runSharedCluster(" \u0301");
+        },
+        destroy() {},
+      },
+      glyphProvider: {
+        async rasterize(request: RasterGlyphRequest): Promise<GlyphRaster> {
+          rasterTexts.push(request.glyphText);
+          return {
+            mode: "alpha",
+            width: 4,
+            height: 6,
+            pixels: new Uint8Array(24).fill(255),
+            metrics: { bearingX: 0, bearingY: 5, advance: 4 },
+          };
+        },
+        destroy() {},
+      },
+      atlasOptions: { pageWidth: 16, pageHeight: 16, maxBytes: 1_024 },
+      instanceOptions: { initialCapacity: 8 },
+      transformOptions: { initialCapacity: 4, textureWidth: 4 },
+    });
+
+    await coordinator.commit(1, [
+      { slot: 0, mask: CONTENT | TRANSFORM | STYLE, snapshot: label(1, 0, 0, "A B") },
+    ]);
+    expect(rasterTexts).toEqual(["A", " ", "B"]);
+    expect(coordinator.instances.getRange(0)?.count).toBe(3);
+
+    rasterTexts.length = 0;
+    await coordinator.commit(2, [
+      { slot: 1, mask: CONTENT | TRANSFORM | STYLE, snapshot: label(1, 8, 0, "fi") },
+    ]);
+    expect(rasterTexts).toEqual(["fi"]);
+
+    rasterTexts.length = 0;
+    await coordinator.commit(3, [
+      { slot: 2, mask: CONTENT | TRANSFORM | STYLE, snapshot: label(1, 16, 0, " \u0301") },
+    ]);
+    expect(rasterTexts).toHaveLength(2);
+    expect(coordinator.instances.getRange(2)?.count).toBe(2);
+
+    coordinator.destroy();
+    registry.destroy();
+  });
 });
 
 function label(
@@ -922,6 +1086,114 @@ function run(text: string): Readonly<PositionedRun> {
     lineIndices: new Uint32Array([0, 0]),
     glyphKeys: Object.freeze(["A", "B"]),
     bounds: Object.freeze({ x: 0, y: -5, width: 10, height: 6 }),
+  });
+}
+
+function runChars(
+  text: string,
+  source: PositionedRun["source"] = "bitmap",
+): Readonly<PositionedRun> {
+  const chars = [...text];
+  const glyphCount = chars.length;
+  const glyphIds = new Uint32Array(glyphCount);
+  const clusters = new Uint32Array(glyphCount);
+  const x = new Float32Array(glyphCount);
+  const xAdvance = new Float32Array(glyphCount);
+  const glyphKeys: string[] = [];
+  let cursor = 0;
+  let pen = 0;
+  for (let index = 0; index < glyphCount; index += 1) {
+    const glyph = chars[index] ?? "";
+    glyphIds[index] = glyph.codePointAt(0) ?? 0;
+    clusters[index] = cursor;
+    x[index] = pen;
+    xAdvance[index] = 5;
+    glyphKeys.push(glyph);
+    cursor += glyph.length;
+    pen += 5;
+  }
+  return Object.freeze({
+    source,
+    text,
+    fontFamily: "Fixture",
+    fontFamilies: Object.freeze(["Fixture", "sans-serif"]),
+    fontRevision: 1,
+    glyphCount,
+    direction: "ltr",
+    glyphIds,
+    clusters,
+    x,
+    y: new Float32Array(glyphCount),
+    xAdvance,
+    yAdvance: new Float32Array(glyphCount),
+    lineIndices: new Uint32Array(glyphCount),
+    glyphKeys: Object.freeze(glyphKeys),
+    bounds: Object.freeze({ x: 0, y: -5, width: pen, height: 6 }),
+  });
+}
+
+/** Visual RTL order: last char, space, first char. No glyphKeys, like HarfBuzz. */
+function runRtlClusters(text: string): Readonly<PositionedRun> {
+  const chars = [...text];
+  if (chars.length !== 3 || chars[1] !== " ") {
+    throw new Error("runRtlClusters expects a single space between two scalars");
+  }
+  const first = chars[0] ?? "";
+  const last = chars[2] ?? "";
+  return Object.freeze({
+    source: "harfbuzz" as const,
+    text,
+    fontFamily: "Fixture",
+    fontRevision: 1,
+    glyphCount: 3,
+    direction: "rtl" as const,
+    glyphIds: new Uint32Array([last.codePointAt(0) ?? 0, 32, first.codePointAt(0) ?? 0]),
+    clusters: new Uint32Array([first.length + 1, first.length, 0]),
+    x: new Float32Array([0, 5, 10]),
+    y: new Float32Array(3),
+    xAdvance: new Float32Array([5, 5, 5]),
+    yAdvance: new Float32Array(3),
+    lineIndices: new Uint32Array(3),
+    bounds: Object.freeze({ x: 0, y: -5, width: 15, height: 6 }),
+  });
+}
+
+function runLigature(text: string): Readonly<PositionedRun> {
+  return Object.freeze({
+    source: "bitmap" as const,
+    text,
+    fontFamily: "Fixture",
+    fontRevision: 1,
+    glyphCount: 1,
+    direction: "ltr" as const,
+    glyphIds: new Uint32Array([1]),
+    clusters: new Uint32Array([0]),
+    x: new Float32Array([0]),
+    y: new Float32Array([0]),
+    xAdvance: new Float32Array([8]),
+    yAdvance: new Float32Array([0]),
+    lineIndices: new Uint32Array([0]),
+    glyphKeys: Object.freeze([text]),
+    bounds: Object.freeze({ x: 0, y: -5, width: 8, height: 6 }),
+  });
+}
+
+function runSharedCluster(text: string): Readonly<PositionedRun> {
+  return Object.freeze({
+    source: "harfbuzz" as const,
+    text,
+    fontFamily: "Fixture",
+    fontRevision: 1,
+    glyphCount: 2,
+    direction: "ltr" as const,
+    glyphIds: new Uint32Array([32, 1]),
+    clusters: new Uint32Array([0, 0]),
+    x: new Float32Array([0, 0]),
+    y: new Float32Array(2),
+    xAdvance: new Float32Array([5, 0]),
+    yAdvance: new Float32Array(2),
+    lineIndices: new Uint32Array(2),
+    bounds: Object.freeze({ x: 0, y: -5, width: 5, height: 6 }),
   });
 }
 

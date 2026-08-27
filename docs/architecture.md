@@ -77,7 +77,8 @@ stay unshaped. Unique admit groups prepare in parallel so a tight-view wave is n
 each string's layout and raster.
 `tinySdf: true` builds those HarfBuzz glyphs as a local SDF from the canvas mask.
 Same-size TinySDF misses share one FontFace wait and serialize canvas plus EDT. EDT stays per
-unseen physical glyph. Logical sizes that clamp to `distanceFieldMinFontSize` intern one field.
+unseen physical glyph that has ink. Empty-ink scalars skip raster and instance quads. Logical
+sizes that clamp to `distanceFieldMinFontSize` intern one field.
 `rasterizerOptions.prebuilt` serves packed pages first so a known alphabet miss is a crop, not a
 generator start. A single-scalar miss retries `glyphId: 0` so HarfBuzz ids can still crop a
 family page. Optional `pixi-glyphflow/prebuilt` (`uiSdfPrebuilt`) bakes a coarse VGA 8×8 SDF

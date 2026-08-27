@@ -155,7 +155,8 @@ coordinator path packs numeric identities and still accepts diagnostic strings.
 `TextLayerOptions.rendering.rasterizerOptions` configures the default `RasterGlyphProvider`.
 `generatorConcurrency` controls the lazy MSDF worker pool. `distanceFieldMinFontSize` controls the
 minimum source resolution for dynamic MSDF/SDF glyphs and defaults to `48`. Logical sizes that
-clamp to that minimum intern one physical field and keep a per-request raster scale. `tinySdf: true` builds
+clamp to that minimum intern one physical field and keep a per-request raster scale. Empty-ink
+scalars skip raster and instance quads; layout advance stays. `tinySdf: true` builds
 those HarfBuzz glyphs as a local SDF from the canvas mask and skips `@zappar/msdf-generator`. That
 changes pixels. `prebuilt` serves packed pages before TinySDF or MSDF. Record keys come from
 `prebuiltGlyphKey` and omit font revision so a re-registered family keeps the same page. A miss
