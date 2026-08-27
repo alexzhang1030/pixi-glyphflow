@@ -10,6 +10,9 @@
 
 ### Performance
 
+- TinySDF and MSDF intern one physical field at `distanceFieldMinFontSize`. Logical sizes
+  that clamp to that size share pixels and keep their own `rasterScale`. TinySDF also shares
+  across HarfBuzz ids for the same `glyphText`. Sizes above the minimum still generate.
 - Prebuilt lookup retries `glyphId: 0` when `glyphText` is a single Unicode scalar, so a
   HarfBuzz-shaped ASCII miss can still crop a family page instead of starting TinySDF or MSDF.
   Ligatures stay on the exact key.

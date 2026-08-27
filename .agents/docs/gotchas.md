@@ -133,6 +133,12 @@ so they wait on that load once, then serialize canvas plus EDT. Do not run EDT o
 multi-glyph sheet. Neighbors corrupt distances. Do not reuse one canvas across awaits unless
 the work is serialized after fonts are ready.
 
+Intern the physical field at `max(fontSize, distanceFieldMinFontSize)`. A 16px and 32px
+request of the same glyph must not run EDT or MSDF twice. TinySDF keys omit `glyphId`
+because canvas paints `glyphText`; ligatures stay distinct texts. Sizes above the minimum
+are separate physical rasters. Atlas entries stay per size bucket so instance
+`rasterScale` stays honest. Do not put logical `fontSize` in the physical key.
+
 ## Prebuilt glyph keys omit font revision
 
 `prebuiltGlyphKey` is family, glyph id, glyph text, rounded size, weight, and mode. A re-registered

@@ -40,6 +40,8 @@ export class RasterGlyphProvider {
   readonly #createMsdfGenerator: () => Promise<MsdfGeneratorLike>;
   readonly #cache = new Map<string, Readonly<GlyphRaster>>();
   readonly #pending = new Map<string, Promise<Readonly<GlyphRaster>>>();
+  readonly #physical = new Map<string, Readonly<PhysicalRaster>>();
+  readonly #physicalPending = new Map<string, Promise<Readonly<PhysicalRaster>>>();
   readonly #generatorPromises: Array<Promise<MsdfGeneratorLike> | undefined>;
   readonly #generatorTails: Array<Promise<void> | undefined>;
   #nextGenerator = 0;
@@ -158,6 +160,8 @@ export class RasterGlyphProvider {
     this.#destroyed = true;
     this.#cache.clear();
     this.#pending.clear();
+    this.#physical.clear();
+    this.#physicalPending.clear();
     this.#prebuilt?.destroy();
     for (const face of this.#faces.values()) {
       globalThis.document?.fonts.delete(face);
@@ -181,21 +185,69 @@ export class RasterGlyphProvider {
       return this.#canvasRasterizer(request);
     }
     if (request.mode === "sdf") {
-      return this.#queueTinySdf(request);
+      const rasterFontSize = Math.max(request.fontSize, this.#distanceFieldMinFontSize);
+      return this.#internPhysical(
+        physicalTinySdfKey(request, rasterFontSize),
+        rasterFontSize,
+        request,
+        () => this.#queueTinySdf(request),
+      );
     }
 
+    const rasterFontSize = Math.max(request.fontSize, this.#distanceFieldMinFontSize);
+    return this.#internPhysical(
+      physicalMsdfKey(request, rasterFontSize),
+      rasterFontSize,
+      request,
+      () => this.#generateMsdfPhysical(request, rasterFontSize),
+    );
+  }
+
+  async #internPhysical(
+    physicalKey: string,
+    rasterFontSize: number,
+    request: RasterGlyphRequest,
+    generate: () => Promise<Readonly<PhysicalRaster>>,
+  ): Promise<Readonly<GlyphRaster>> {
+    const cached = this.#physical.get(physicalKey);
+    if (cached !== undefined) return applyPhysicalScale(cached, rasterFontSize / request.fontSize);
+    const pending = this.#physicalPending.get(physicalKey);
+    if (pending !== undefined) {
+      return applyPhysicalScale(await pending, rasterFontSize / request.fontSize);
+    }
+
+    const promise = generate().then((physical) => {
+      this.#assertActive();
+      this.#physical.set(physicalKey, physical);
+      while (this.#physical.size > this.#cacheSize) {
+        const oldest = this.#physical.keys().next().value as string | undefined;
+        if (oldest === undefined) break;
+        this.#physical.delete(oldest);
+      }
+      return physical;
+    });
+    this.#physicalPending.set(physicalKey, promise);
+    try {
+      return applyPhysicalScale(await promise, rasterFontSize / request.fontSize);
+    } finally {
+      this.#physicalPending.delete(physicalKey);
+    }
+  }
+
+  #generateMsdfPhysical(
+    request: RasterGlyphRequest,
+    rasterFontSize: number,
+  ): Promise<Readonly<PhysicalRaster>> {
     this.#distanceFieldRasters += 1;
     const bytes = this.#registry.getBinaryData(request.family);
     if (bytes === undefined) {
-      throw new RangeError(`Binary font data is unavailable: ${request.family}`);
+      return Promise.reject(new RangeError(`Binary font data is unavailable: ${request.family}`));
     }
     const prepared = prepareGlyphFont(bytes, request.glyphId, request.glyphText);
-    const rasterFontSize = Math.max(request.fontSize, this.#distanceFieldMinFontSize);
-    const rasterScale = rasterFontSize / request.fontSize;
     if (prepared.bytes !== bytes) {
       // A patched cmap font is unique to this glyph; it cannot share a generator pass.
       const textureSize = nextPowerOfTwo(Math.max(32, Math.ceil(rasterFontSize * 2)));
-      const atlas = await this.#generateAtlas({
+      return this.#generateAtlas({
         font: prepared.bytes,
         charset: prepared.glyphText,
         fontSize: rasterFontSize,
@@ -203,12 +255,11 @@ export class RasterGlyphProvider {
         fieldRange: 4,
         padding: 2,
         fixOverlaps: true,
-      });
-      return extractDistanceField(request, atlas, prepared.glyphText, rasterScale);
+      }).then((atlas) => extractPhysicalDistanceField(request, atlas, prepared.glyphText));
     }
 
     // The generator re-parses the posted font on every call, so a commit's misses for one
-    // (family, revision, size) share a single pass: one parse plus N crops instead of N parses.
+    // (family, revision, physical size) share a single pass: one parse plus N crops.
     return new Promise((resolve, reject) => {
       const key = `${request.family}\u0000${String(request.fontRevision)}\u0000${String(rasterFontSize)}`;
       let batch = this.#msdfBatches.get(key);
@@ -219,7 +270,6 @@ export class RasterGlyphProvider {
       batch.members.push({
         request,
         glyphText: prepared.glyphText,
-        rasterScale,
         resolve,
         reject,
       });
@@ -272,9 +322,7 @@ export class RasterGlyphProvider {
       });
       for (const member of chunk) {
         try {
-          member.resolve(
-            extractDistanceField(member.request, atlas, member.glyphText, member.rasterScale),
-          );
+          member.resolve(extractPhysicalDistanceField(member.request, atlas, member.glyphText));
         } catch (error: unknown) {
           member.reject(error);
         }
@@ -284,7 +332,7 @@ export class RasterGlyphProvider {
     }
   }
 
-  #queueTinySdf(request: RasterGlyphRequest): Promise<Readonly<GlyphRaster>> {
+  #queueTinySdf(request: RasterGlyphRequest): Promise<Readonly<PhysicalRaster>> {
     const rasterFontSize = Math.max(request.fontSize, this.#distanceFieldMinFontSize);
     const key = [
       request.family,
@@ -344,10 +392,9 @@ export class RasterGlyphProvider {
     }
   }
 
-  async #tinySdfMember(member: Readonly<TinySdfBatchMember>): Promise<Readonly<GlyphRaster>> {
+  async #tinySdfMember(member: Readonly<TinySdfBatchMember>): Promise<Readonly<PhysicalRaster>> {
     this.#tinySdfRasters += 1;
     this.#canvasRasters += 1;
-    const rasterScale = member.rasterFontSize / member.request.fontSize;
     const alpha = await this.#canvasRasterizer({
       ...member.request,
       fontSize: member.rasterFontSize,
@@ -363,16 +410,13 @@ export class RasterGlyphProvider {
       width: alpha.width,
       height: alpha.height,
       pixels,
+      fieldRange: TINY_SDF_RADIUS,
       ...(metrics === undefined
         ? {}
         : {
-            metrics: scaledFieldMetrics(
-              metrics.bearingX,
-              metrics.bearingY,
-              metrics.advance,
-              TINY_SDF_RADIUS,
-              rasterScale,
-            ),
+            bearingX: metrics.bearingX,
+            bearingY: metrics.bearingY,
+            advance: metrics.advance,
           }),
     };
   }
@@ -447,12 +491,11 @@ export class RasterGlyphProvider {
   }
 }
 
-function extractDistanceField(
+function extractPhysicalDistanceField(
   request: RasterGlyphRequest,
   atlas: MsdfAtlasLike,
   generatedGlyphText: string,
-  rasterScale: number,
-): Readonly<GlyphRaster> {
+): Readonly<PhysicalRaster> {
   // Batched atlases carry many glyphs; falling back to glyphs[0] would crop a stranger.
   const glyph =
     atlas.glyphs.find((candidate) => candidate.char === generatedGlyphText) ??
@@ -481,15 +524,16 @@ function extractDistanceField(
     const sourceStart = ((y + row) * atlas.texture.width + x) * 4;
     rgba.set(atlas.texture.data.subarray(sourceStart, sourceStart + width * 4), row * width * 4);
   }
-  const metrics = scaledFieldMetrics(
-    glyph.bounds.left,
-    glyph.bounds.top,
-    glyph.advance,
-    atlas.fieldRange,
-    rasterScale,
-  );
+  const physical = {
+    width,
+    height,
+    bearingX: glyph.bounds.left,
+    bearingY: glyph.bounds.top,
+    advance: glyph.advance,
+    fieldRange: atlas.fieldRange,
+  };
   if (request.mode === "msdf") {
-    return Object.freeze({ mode: "msdf", width, height, pixels: rgba, metrics });
+    return Object.freeze({ mode: "msdf", pixels: rgba, ...physical });
   }
 
   const pixels = new Uint8Array(width * height);
@@ -498,7 +542,7 @@ function extractDistanceField(
     pixels[index] = median(rgba[offset] ?? 0, rgba[offset + 1] ?? 0, rgba[offset + 2] ?? 0);
   }
 
-  return Object.freeze({ mode: "sdf", width, height, pixels, metrics });
+  return Object.freeze({ mode: "sdf", pixels, ...physical });
 }
 
 const MSDF_BATCH_LIMIT = 64;
@@ -506,8 +550,7 @@ const MSDF_BATCH_LIMIT = 64;
 interface MsdfBatchMember {
   readonly request: RasterGlyphRequest;
   readonly glyphText: string;
-  readonly rasterScale: number;
-  readonly resolve: (raster: Readonly<GlyphRaster>) => void;
+  readonly resolve: (raster: Readonly<PhysicalRaster>) => void;
   readonly reject: (error: unknown) => void;
 }
 
@@ -520,7 +563,7 @@ interface MsdfBatch {
 interface TinySdfBatchMember {
   readonly request: RasterGlyphRequest;
   readonly rasterFontSize: number;
-  readonly resolve: (raster: Readonly<GlyphRaster>) => void;
+  readonly resolve: (raster: Readonly<PhysicalRaster>) => void;
   readonly reject: (error: unknown) => void;
 }
 
@@ -528,6 +571,67 @@ interface TinySdfBatch {
   readonly family: string;
   readonly rasterFontSize: number;
   readonly members: TinySdfBatchMember[];
+}
+
+interface PhysicalRaster {
+  readonly mode: GlyphMode;
+  readonly width: number;
+  readonly height: number;
+  readonly pixels: Uint8Array;
+  readonly bearingX?: number;
+  readonly bearingY?: number;
+  readonly advance?: number;
+  readonly fieldRange?: number;
+}
+
+/** TinySDF paints `glyphText`. Logical size and HarfBuzz id do not change the field. */
+function physicalTinySdfKey(request: RasterGlyphRequest, rasterFontSize: number): string {
+  return [
+    "sdf",
+    request.family,
+    request.fontFamilies?.join("\u0001") ?? "",
+    String(request.fontRevision),
+    request.glyphText,
+    request.fontWeight ?? "normal",
+    String(rasterFontSize),
+  ].join("\u0000");
+}
+
+/** MSDF crops a cmap-aware outline. Logical size does not change the field. */
+function physicalMsdfKey(request: RasterGlyphRequest, rasterFontSize: number): string {
+  return [
+    "msdf",
+    request.family,
+    String(request.fontRevision),
+    String(request.glyphId),
+    request.glyphText,
+    String(rasterFontSize),
+  ].join("\u0000");
+}
+
+function applyPhysicalScale(
+  physical: Readonly<PhysicalRaster>,
+  rasterScale: number,
+): Readonly<GlyphRaster> {
+  return {
+    mode: physical.mode,
+    width: physical.width,
+    height: physical.height,
+    pixels: physical.pixels,
+    ...(physical.bearingX === undefined ||
+    physical.bearingY === undefined ||
+    physical.advance === undefined
+      ? {}
+      : {
+          metrics: scaledFieldMetrics(
+            physical.bearingX,
+            physical.bearingY,
+            physical.advance,
+            physical.fieldRange ?? 0,
+            rasterScale,
+          ),
+        }),
+  };
 }
 
 /** Distance-field metrics scale together or the shader's screen-space math drifts. */

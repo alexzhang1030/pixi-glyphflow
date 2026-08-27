@@ -153,6 +153,12 @@ LRU, 52-bit keys, the 48 MiB store (test-pinned, 44.9 MiB measured), the sparse 
     `RasterGlyphProvider` retries a miss with `glyphId: 0` when `glyphText` is one Unicode
     scalar so HarfBuzz ids crop that page. Ligatures stay exact-key only. Default pages stay
     out of `src/index.ts` and the core gzip graph. This is not production typography.
+18. **Physical distance-field intern — LANDED.** TinySDF and MSDF intern the field at
+    `max(fontSize, distanceFieldMinFontSize)`. A 16px and 32px miss of the same glyph share
+    one canvas+EDT or one generator pass and keep per-request `rasterScale`. TinySDF keys
+    omit HarfBuzz id because canvas paints `glyphText`. Sizes above the minimum stay unique
+    physical rasters. Atlas entries stay per size bucket. A first unseen CJK at one size
+    still generates once.
 
 **Regressions and traps the audits confirmed:**
 
@@ -372,7 +378,7 @@ Verify: `bun run test:browser -- glyph-rendering` and both-adapter site/browser 
 
 The packer is no longer the limiter; generation and upload are.
 
-- TinySDF is in tree behind `rasterizerOptions.tinySdf`. It builds an SDF from the canvas mask so `@zappar/msdf-generator` is not on the first miss. Binary families install through `FontFace`, interned per family so a miss burst does not start N loads. Same-size misses share a microtask batch; EDT stays per glyph. Exact HarfBuzz glyph IDs still go through MSDF when the flag is off.
+- TinySDF is in tree behind `rasterizerOptions.tinySdf`. It builds an SDF from the canvas mask so `@zappar/msdf-generator` is not on the first miss. Binary families install through `FontFace`, interned per family so a miss burst does not start N loads. Same-size misses share a microtask batch; EDT stays per unseen physical glyph. Logical sizes that clamp to `distanceFieldMinFontSize` intern one field. Exact HarfBuzz glyph IDs still go through MSDF when the flag is off.
 - `rasterizerOptions.prebuilt` is the hybrid page lookup (TMP / Mapbox PBF model). Dynamic TinySDF or MSDF handles the long tail. Default alphabet pages stay out of the core bundle. Optional `pixi-glyphflow/prebuilt` (`uiSdfPrebuilt`) is the side export for a coarse ASCII page.
 - `culling.lod` drops labels whose projected font height is below one pixel. Default is off.
 - Budget atlas uploads per frame and resume across frames. A 20,000-glyph first miss must not hitch a single commit. First-seen layout runs in the seeing commit for the tight draw view. The 0.25-viewport ring still admits intern hits and same-commit copies of a tight unique string. Ring-only unique misses stay unshaped. Do not drip-feed on-screen labels.
