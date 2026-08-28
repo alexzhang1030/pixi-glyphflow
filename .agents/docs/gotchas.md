@@ -28,11 +28,14 @@ straight to `texSubImage2D`.
 A position storm's first dirty palette write is the first GPU rewrite after
 `initializeTexture` (full `texImage2D`). Sixteen sparse movers publish eight 624-byte bands.
 `texSubImage2D` of those bands blanks the canvas while CPU slots stay live — including a packed
-1024-wide row at `x = 0` with `UNPACK_*` reset and `glError` 0. WebGL `rgba32float` palette
-dirties must `texImage2D` the existing texture from the CPU buffer. Do not use `texSubImage2D`.
-Do not call `source.update()` here: Pixi's buffer uploader takes `texSubImage2D` when the GL
-size already matches. Do not create a new `BufferImageSource` / `Texture`. WebGPU keeps dirty
-rectangles. Proto dirty rects still go through `uploadFloatTextureRanges`.
+1024-wide row at `x = 0` with `UNPACK_*` reset and `glError` 0. A second `texImage2D` of the
+same GL texture object (`sameResource: true`, 1024×2048, 32 MiB, `glError` 0) also blanks.
+First Pixi `initializeTexture` / `getGlSource` still paints. Experiment M consumes those
+dirty ranges and skips the WebGL palette GPU rewrite (no `texSubImage2D`, no `texImage2D`)
+while `apply` still calls `#bindMeshSources`. Do not call `source.update()` here: Pixi's
+buffer uploader takes `texSubImage2D` when the GL size already matches. Do not create a new
+`BufferImageSource` / `Texture`. WebGPU keeps dirty rectangles. Proto dirty rects still go
+through `uploadFloatTextureRanges`.
 
 The first proto `initializeTexture` uploads whatever `highWater` is at that moment (often glyph 0
 only). Three appearance glyphs still fit in one 1024-wide row, so the texture size does not grow
@@ -366,9 +369,10 @@ happen to resolve to the same color stay two writes.
 `writeTexture`. WebGPU requires `bytesPerRow % 256 === 0` when `height > 1`. The default 1024
 texel width is 16 KiB per row and is aligned. Narrow palettes (unit tests use width 8) stay
 row-by-row so WebGL and WebGPU share the same rectangles. Do not pad `bytesPerRow` — the CPU
-buffer has no row padding. WebGL `rgba32float` palette dirties skip those rects and
-`texImage2D` the existing texture. A packed full-width `texSubImage2D` still blanks this
-compositor.
+buffer has no row padding. WebGL `rgba32float` palette dirties blank on any GPU rewrite of
+the bound texture after the first `initializeTexture` (`texSubImage2D` and a second
+`texImage2D` of the same object). Experiment M consumes those ranges without rewriting the
+WebGL GPU image.
 
 ## Spatial queries with dense results must not pay the grid sort
 

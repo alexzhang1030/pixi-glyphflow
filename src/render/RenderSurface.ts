@@ -633,13 +633,29 @@ export class RenderSurface {
       this.#transformWrites += 1;
       return;
     }
-    // WebGL rgba32float texSubImage2D blanks this compositor after the first texImage2D,
-    // even as one packed 1024×1 row at x=0 with UNPACK reset and glError 0. Reallocate
-    // the existing texture. Pixi source.update() is still texSubImage2D when sizes match.
+    // Experiment M: consume dirty transform ranges (already taken in apply) but do
+    // not rewrite the WebGL palette GPU image. texSubImage2D and a second texImage2D
+    // of the same GL object both blank after the first initializeTexture. Keep
+    // reallocateWebGLFloatTexture for N logs / a later unbind-upload-rebind trial.
+    // #bindMeshSources stays in apply() so this run splits upload vs bind.
     if (isWebGLRenderer(this.#renderer)) {
-      const uploaded = reallocateWebGLFloatTexture(this.#renderer, this.#paletteSource, data);
-      this.#transformUploadBytes += uploaded.bytes;
-      this.#transformWrites += uploaded.writes;
+      // #region agent log
+      const skipLog = (globalThis as { __GLYPHFLOW_M_LOGS?: number }).__GLYPHFLOW_M_LOGS ?? 0;
+      if (skipLog < 4) {
+        (globalThis as { __GLYPHFLOW_M_LOGS?: number }).__GLYPHFLOW_M_LOGS = skipLog + 1;
+        agentLog("M", "RenderSurface.ts:#syncPaletteTexture", "webgl palette gpu rewrite skipped", {
+          runId: "hyp-M",
+          helper: reallocateWebGLFloatTexture.name,
+          label: this.#paletteSource.label,
+          rangeCount: ranges.length,
+          rangeBytes: ranges.reduce((sum, range) => sum + range.length, 0),
+          w: this.#paletteSource.width,
+          h: this.#paletteSource.height,
+          bytes: data.byteLength,
+          paletteInitialized: this.#paletteInitialized,
+        });
+      }
+      // #endregion
       return;
     }
     const uploaded = uploadFloatTextureRanges(

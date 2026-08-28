@@ -69,8 +69,9 @@ writes, and remirroring the store.
 - Later creates skip `queryAll`. They enter through the resident dirty path and still appear in
   the same commit.
 - Palette storms upload stacked full texture rows instead of one write per row. WebGL
-  `rgba32float` palette dirties `texImage2D` the existing texture. A packed full-width
-  `texSubImage2D` still blanks the first view on this compositor.
+  `rgba32float` palette dirties blank on any GPU rewrite of the bound texture after the
+  first `initializeTexture` (`texSubImage2D` and a second `texImage2D`). Experiment M
+  consumes those ranges without rewriting the WebGL GPU image.
 - Duplicate strings intern one layout result per (family, size, weight, text) and skip
   `LayoutEngine.layout` for the rest of that commit and later first-seen copies. Font-registry
   revision drops the intern.
