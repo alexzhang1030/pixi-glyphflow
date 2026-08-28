@@ -234,6 +234,22 @@ export class GlyphMesh extends Mesh<Geometry, Shader> {
 
   #bindPrototype = (): void => {
     this.#ownedShader.resources.uPrototype = this.#prototypeTexture.source;
+    // #region agent log
+    const debug = (globalThis as { __GLYPHFLOW_BIND_LOGS?: number }).__GLYPHFLOW_BIND_LOGS ?? 0;
+    if (debug < 8) {
+      (globalThis as { __GLYPHFLOW_BIND_LOGS?: number }).__GLYPHFLOW_BIND_LOGS = debug + 1;
+      const group = this.#ownedShader.groups[99];
+      agentLog("F", "GlyphMesh.ts:#bindPrototype", "bindPrototype", {
+        protoUid: this.#prototypeTexture.source.uid,
+        resourceUid: (this.#ownedShader.resources.uPrototype as { uid?: number } | undefined)?.uid,
+        groupNull: group?.resources == null,
+        isRenderable: this.isRenderable,
+        culled: this.culled,
+        localDisplayStatus: this.localDisplayStatus,
+        groupAlpha: this.groupAlpha,
+      });
+    }
+    // #endregion
   };
 
   override destroy(): void {
@@ -306,4 +322,35 @@ function normalizeAtlasArrays(
     throw new TypeError("texture must be the first atlas-array entry");
   }
   return [supplied[0] ?? primary, supplied[1] ?? primary];
+}
+
+function agentLog(
+  hypothesisId: string,
+  location: string,
+  message: string,
+  data: Record<string, unknown>,
+): void {
+  if (!(globalThis as { __GLYPHFLOW_AGENT_DEBUG?: boolean }).__GLYPHFLOW_AGENT_DEBUG) return;
+  const entry = {
+    hypothesisId,
+    location,
+    message,
+    data,
+    timestamp: Date.now(),
+    id: `log_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
+  };
+  const line = JSON.stringify(entry);
+  console.info("__AGENT_LOG__", line);
+  if (typeof fetch !== "function") return;
+  const send = (url: string): void => {
+    void fetch(url, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: line,
+      keepalive: true,
+      mode: "cors",
+    }).catch(() => undefined);
+  };
+  send("http://127.0.0.1:7733/");
+  send("/agent-debug-log");
 }

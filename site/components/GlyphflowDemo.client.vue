@@ -14,7 +14,7 @@ import {
 import { charsetSdfPrebuilt, mergePrebuilt } from "pixi-glyphflow/prebuilt";
 import { bindViewport, type ViewportBinding } from "pixi-glyphflow/viewport";
 import { Viewport } from "pixi-viewport";
-import { Application, type TextStyleOptions } from "pixi.js";
+import { Application, type Container, type TextStyleOptions } from "pixi.js";
 import { computed, onBeforeUnmount, onMounted, ref } from "vue";
 
 import {
@@ -66,6 +66,7 @@ function resolveDemoBackend(
 const canvasHost = ref<HTMLElement>();
 const state = ref<"booting" | "ready" | "error">("booting");
 const firstFrameReady = ref(false);
+const tickerFrames = ref(0);
 const errorMessage = ref("");
 const loadedPercent = ref(0);
 const bootStage = ref("Loading type");
@@ -226,6 +227,7 @@ function updateRendererQuery(backend: RendererBackend): void {
 
 function resetHud(): void {
   firstFrameReady.value = false;
+  tickerFrames.value = 0;
   loadedPercent.value = 0;
   bootStage.value = "Loading type";
   resident.value = "0";
@@ -431,6 +433,10 @@ async function initialize(backend: RendererBackend, runId: number): Promise<void
   // #region agent log
   logDemoSnapshot("A", "first-render", nextApp, nextViewport, nextLayer);
   // #endregion
+  // Experiment E: keep the ticker running after the first present. Do not issue a
+  // second stopped-ticker app.render() after the million commit.
+  nextApp.start();
+  startRuntime(nextApp, nextViewport, nextWorldWidth, nextWorldHeight, runId);
 
   bootStage.value = "Filling the million";
   for (let start = 0; start < LABEL_COUNT; start += CHUNK_SIZE) {
@@ -470,13 +476,9 @@ async function initialize(backend: RendererBackend, runId: number): Promise<void
   await nextBinding.whenIdle();
   if (isStale(runId)) return;
   // #region agent log
-  logDemoSnapshot("C", "before-second-render", nextApp, nextViewport, nextLayer);
+  logDemoSnapshot("E", "post-million-skipped-second-render", nextApp, nextViewport, nextLayer);
   // #endregion
-  nextApp.render();
   console.info("[demo-stats-second]", JSON.stringify(nextLayer.stats));
-  // #region agent log
-  logDemoSnapshot("D", "after-second-render", nextApp, nextViewport, nextLayer);
-  // #endregion
 
   const rendererAdapter = nextLayer.stats.rendererAdapter;
   if (rendererAdapter !== backend) {
@@ -488,8 +490,6 @@ async function initialize(backend: RendererBackend, runId: number): Promise<void
   if (backend === "webgpu") webGpuCapability.value = "available";
   state.value = "ready";
   updateHud(0);
-  nextApp.start();
-  startRuntime(nextApp, nextViewport, nextWorldWidth, nextWorldHeight, runId);
 }
 
 function createLabelStyles(): Readonly<{
@@ -593,12 +593,21 @@ function startRuntime(
   runId: number,
 ): void {
   let frameCount = 0;
+  let debugTicks = 0;
   let lastFpsSample = performance.now();
   let lastHudUpdate = 0;
 
   nextApp.ticker.add(() => {
     nextViewport.emit("frame-end", nextViewport);
     frameCount += 1;
+    // #region agent log
+    debugTicks += 1;
+    tickerFrames.value = debugTicks;
+    const nextLayer = layer;
+    if (debugTicks <= 5 && nextLayer !== undefined) {
+      logDemoSnapshot("E", `ticker-${String(debugTicks)}`, nextApp, nextViewport, nextLayer);
+    }
+    // #endregion
     const now = performance.now();
     if (now - lastFpsSample >= 500) {
       fps.value = Math.round((frameCount * 1_000) / (now - lastFpsSample)).toString();
@@ -872,6 +881,47 @@ function sampleFramebuffer(nextApp: Application): Record<string, unknown> {
   };
 }
 
+function meshSnapshot(child: Container): Record<string, unknown> {
+  const mesh = child as Container & {
+    isRenderable?: boolean;
+    culled?: boolean;
+    localDisplayStatus?: number;
+    groupAlpha?: number;
+    geometry?: { instanceCount?: number; bounds?: { x: number; y: number; width: number; height: number } };
+    shader?: {
+      resources?: { uPrototype?: { uid?: number }; uTransformTexture?: { uid?: number } };
+      groups?: Record<string, { resources: unknown }>;
+    };
+  };
+  const bounds = mesh.geometry?.bounds;
+  return {
+    label: child.label,
+    destroyed: child.destroyed,
+    parent: child.parent?.label,
+    visible: child.visible,
+    worldVisible: child.worldVisible,
+    renderable: child.renderable,
+    isRenderable: mesh.isRenderable,
+    culled: mesh.culled,
+    localDisplayStatus: mesh.localDisplayStatus,
+    groupAlpha: mesh.groupAlpha,
+    wt: {
+      tx: child.worldTransform.tx,
+      ty: child.worldTransform.ty,
+      a: child.worldTransform.a,
+      d: child.worldTransform.d,
+    },
+    instanceCount: mesh.geometry?.instanceCount,
+    bounds:
+      bounds === undefined
+        ? undefined
+        : { x: bounds.x, y: bounds.y, width: bounds.width, height: bounds.height },
+    protoUid: mesh.shader?.resources?.uPrototype?.uid,
+    paletteUid: mesh.shader?.resources?.uTransformTexture?.uid,
+    group99Null: mesh.shader?.groups?.[99]?.resources == null,
+  };
+}
+
 function logDemoSnapshot(
   hypothesisId: string,
   phase: string,
@@ -880,27 +930,7 @@ function logDemoSnapshot(
   nextLayer: TextLayer,
 ): void {
   const bounds = nextViewport.getVisibleBounds();
-  const meshes = nextLayer.children.map((child) => ({
-    label: child.label,
-    destroyed: child.destroyed,
-    parent: child.parent?.label,
-    visible: child.visible,
-    worldVisible: child.worldVisible,
-    renderable: child.renderable,
-    wt: {
-      tx: child.worldTransform.tx,
-      ty: child.worldTransform.ty,
-      a: child.worldTransform.a,
-      d: child.worldTransform.d,
-    },
-    instanceCount:
-      "geometry" in child &&
-      child.geometry !== null &&
-      typeof child.geometry === "object" &&
-      "instanceCount" in child.geometry
-        ? Number(child.geometry.instanceCount)
-        : undefined,
-  }));
+  const meshes = nextLayer.children.map((child) => meshSnapshot(child));
   const stats = nextLayer.stats;
   agentLog(hypothesisId, `GlyphflowDemo.client.vue:${phase}`, phase, {
     contextLost:
@@ -936,6 +966,8 @@ function logDemoSnapshot(
     viewportChildCount: nextViewport.children.length,
     lastObjectRendered: nextApp.renderer.lastObjectRendered?.label,
     tickerStarted: nextApp.ticker.started,
+    canvasConnected: nextApp.canvas.isConnected,
+    canvasParentIsHost: nextApp.canvas.parentElement === canvasHost.value,
     stats: {
       labelCount: stats.labelCount,
       visible: stats.visibleLabelCount,
@@ -990,6 +1022,7 @@ async function loadCustomFonts(): Promise<readonly Readonly<LoadedFontAsset>[]> 
     :data-cull-path="cullPath"
     :data-palette-path="palettePath"
     :data-first-frame="firstFrameReady"
+    :data-ticker-frames="tickerFrames"
     :data-pending-glyphs="pendingGlyphs"
     :data-draw-calls="drawCalls"
     :data-atlas-textures="atlasTextures"

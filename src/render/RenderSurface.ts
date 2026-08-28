@@ -352,6 +352,13 @@ export class RenderSurface {
   ): void {
     this.#assertActive();
     const uploadStart = performance.now();
+    // #region agent log
+    agentLog("E", "RenderSurface.ts:apply", "apply enter", {
+      drawOrderChanged: result.drawOrderChanged,
+      meshCount: this.#meshes.size,
+      submittedGlyphs: this.#submittedGlyphs,
+    });
+    // #endregion
     const paletteSourceBefore = this.#paletteSource;
     const paletteTextureBefore = this.#paletteTexture;
     const paletteDataBefore = this.#paletteData;

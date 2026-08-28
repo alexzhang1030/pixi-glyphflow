@@ -902,6 +902,17 @@ export class TextLayer extends Container {
         admitGroups.length === 0 &&
         !needsComputeDispatch)
     ) {
+      // #region agent log
+      agentLog("E", "TextLayer.ts:commit", "skip apply - no render work", {
+        dirtyLabels: this.#lastCommitDirtyLabels,
+        changes: changes.length,
+        laneCount,
+        contentCount,
+        admitGroups: admitGroups.length,
+        needsComputeDispatch,
+        visibleCount: this.#visibleCount,
+      });
+      // #endregion
       if (this.#visibleCount === 0) this.#renderSurface?.dropIdleMeshes();
       this.#lastCommitDurationMs = performance.now() - start;
       this.#lastCommitPromise = this.#renderTail.then(() => {
@@ -1036,6 +1047,16 @@ export class TextLayer extends Container {
               drawViewport,
             )
           : undefined;
+      // #region agent log
+      agentLog("E", "TextLayer.ts:commit", "apply decision", {
+        dirtyLabels: this.#lastCommitDirtyLabels,
+        hasResult: result !== undefined,
+        hasCompute: computeUpdate !== undefined,
+        applied: result !== undefined && surface !== undefined,
+        refreshedCull: result === undefined && computeUpdate !== undefined,
+        lastUploadMs: surface?.stats.lastUploadMs ?? 0,
+      });
+      // #endregion
       if (result !== undefined) surface?.apply(result, computeUpdate);
       else if (computeUpdate !== undefined) surface?.refreshComputeCull(computeUpdate);
       this.#lastUploadMs = surface?.stats.lastUploadMs ?? 0;
@@ -2750,4 +2771,35 @@ function growTypedArray<T extends Uint8Array | Uint32Array>(source: T, capacity:
   target.set(source);
 
   return target;
+}
+
+function agentLog(
+  hypothesisId: string,
+  location: string,
+  message: string,
+  data: Record<string, unknown>,
+): void {
+  if (!(globalThis as { __GLYPHFLOW_AGENT_DEBUG?: boolean }).__GLYPHFLOW_AGENT_DEBUG) return;
+  const entry = {
+    hypothesisId,
+    location,
+    message,
+    data,
+    timestamp: Date.now(),
+    id: `log_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
+  };
+  const line = JSON.stringify(entry);
+  console.info("__AGENT_LOG__", line);
+  if (typeof fetch !== "function") return;
+  const send = (url: string): void => {
+    void fetch(url, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: line,
+      keepalive: true,
+      mode: "cors",
+    }).catch(() => undefined);
+  };
+  send("http://127.0.0.1:7733/");
+  send("/agent-debug-log");
 }
