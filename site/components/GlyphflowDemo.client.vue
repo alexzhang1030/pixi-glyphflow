@@ -260,6 +260,8 @@ async function initialize(backend: RendererBackend, runId: number): Promise<void
     backend === "webgpu"
       ? await requestComputeCullGpu({ powerPreference: "high-performance" })
       : undefined;
+  // Storage-palette bind is a library path. Do not catch a createBindGroup
+  // crash here and rebuild as WebGL or force palettePath: "texture".
   if (backend === "webgpu" && gpu === undefined) {
     throw new Error("WebGPU device is unavailable");
   }

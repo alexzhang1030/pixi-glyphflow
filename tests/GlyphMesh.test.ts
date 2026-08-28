@@ -258,6 +258,7 @@ describe("GlyphMesh", () => {
     expect(fallbackMesh.palettePath).toBe("texture");
     expect(storageMesh.palettePath).toBe("storage");
     storageMesh.setPaletteTexture(Texture.WHITE, 2, 4);
+    storageMesh.unbindPaletteTexture();
     const shader = storageMesh.shader;
     expect(shader).not.toBeNull();
     if (shader === null) return;

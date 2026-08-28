@@ -236,7 +236,17 @@ export class GlyphMesh extends Mesh<Geometry, Shader> {
 
   /** Drop the live palette sampler so a later GPU rewrite is not a bound vertex texture. */
   unbindPaletteTexture(): void {
-    this.#ownedShader.resources.uTransformTexture = Texture.EMPTY.source;
+    switch (this.palettePath) {
+      case "texture":
+        this.#ownedShader.resources.uTransformTexture = Texture.EMPTY.source;
+        return;
+      case "storage":
+        return;
+      default: {
+        const _exhaustive: never = this.palettePath;
+        return _exhaustive;
+      }
+    }
   }
 
   setPaletteStorage(buffer: Buffer): void {

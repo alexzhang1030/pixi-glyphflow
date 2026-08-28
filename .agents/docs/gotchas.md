@@ -122,6 +122,12 @@ storage shader. Do not mark `palettePath` `"storage"` until `PaletteStoragePass.
 has registered a GPU buffer. If that table is not ready, stay on the texture shader for the
 frame so position storms still write CPU texels.
 
+The homepage must not hide that throw. Keep `requestComputeCullGpu()` on WebGPU. Do not catch
+the TypeError and rebuild as WebGL, force `palettePath: "texture"`, or drop storage resources
+so the canvas still paints. Show the error. WebGL's texture palette stays valid.
+`unbindPaletteTexture` is a WebGL sampler drop only; it must not write `uTransformTexture`
+onto a storage-path mesh.
+
 ## Compute culling needs a larger CPU working set than its draw set
 
 When culling has viewport bounds, never instance `SpatialIndex.queryAll()` for compute culling. A

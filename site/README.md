@@ -59,3 +59,10 @@ palette-path readouts, position-storm revisions, progressive examples, camera co
 switching, reduced motion, keyboard access, console errors, and horizontal fit at 320, 768, 1024,
 and 1440 pixels. WebGL stays on `palettePath` `"texture"`. WebGPU reports `"storage"` when
 `requestComputeCullGpu()` raised `maxStorageBuffersInVertexStage`.
+
+If a live WebGPU device takes `"storage"` and then throws
+`createBindGroup` / `GPUBindGroupDescriptor` `layout` undefined on the first compute-cull
+draw, that is a library `GlyphMesh` bind (`uTransformTexture` vs `uTransforms`), not a
+site bug. #36 binds `uTransforms` only. The homepage must not catch a regression and rebuild
+as WebGL, force a texture palette, or drop storage resources so the canvas still paints.
+Show the error. WebGL remains the valid path on this page.
