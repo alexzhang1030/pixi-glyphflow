@@ -21,9 +21,9 @@ test("renders glyph meshes, uploads transform-only moves, and survives reattachm
     contentType: "application/json",
   });
 
-  expect(messages.filter((message) => /createBindGroup|Required member is undefined/i.test(message))).toEqual(
-    [],
-  );
+  expect(
+    messages.filter((message) => /createBindGroup|Required member is undefined/i.test(message)),
+  ).toEqual([]);
   const webglResult = assertFixture(webgl, "webgl");
   const webgpuResult = assertFixture(webgpu, webgpuAvailable ? "webgpu" : "webgl");
   if (!webgpuAvailable) return;
@@ -65,9 +65,9 @@ function assertFixture(
     submittedGlyphs: 17,
     atlasTextureCount: 1,
   });
-  expect(result.initialStats.palettePath === "texture" || result.initialStats.palettePath === "storage").toBe(
-    true,
-  );
+  expect(
+    result.initialStats.palettePath === "texture" || result.initialStats.palettePath === "storage",
+  ).toBe(true);
   if (renderer === "webgl") expect(result.initialStats.palettePath).toBe("texture");
   expect(result.movedStats.instanceUploadBytes).toBe(result.initialStats.instanceUploadBytes);
   expect(Number(result.movedStats.transformUploadBytes)).toBeGreaterThan(

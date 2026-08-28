@@ -167,7 +167,7 @@ export class GlyphMesh extends Mesh<Geometry, Shader> {
           uAtlasR: atlasR.source,
           uAtlasRGBA: atlasRGBA.source,
           uSampler: ATLAS_SAMPLER_STYLE,
-          ...paletteResources(palettePath, options.paletteTexture, options.paletteStorage),
+          ...glyphPaletteResources(palettePath, options.paletteTexture, options.paletteStorage),
           uPrototype: options.prototypeTexture.source,
           glyphUniforms: {
             uPaletteWidth: { value: options.paletteWidth, type: "f32" },
@@ -310,25 +310,23 @@ export function glyphPaletteBindSpec(path: PalettePath): GlyphPaletteBindSpec {
   }
 }
 
-function paletteVertexBinding(path: PalettePath): {
-  binding: 3;
-  visibility: number;
-  texture?: GlyphPaletteBindSpec["texture"];
-  buffer?: GlyphPaletteBindSpec["buffer"];
-} {
-  const spec = glyphPaletteBindSpec(path);
+function paletteVertexBinding(path: PalettePath): GPUBindGroupLayoutEntry {
   switch (path) {
     case "texture":
       return {
-        binding: spec.binding,
-        visibility: spec.visibility,
-        texture: spec.texture,
+        binding: 3,
+        visibility: ShaderStage.VERTEX,
+        texture: {
+          sampleType: "unfilterable-float",
+          viewDimension: "2d",
+          multisampled: false,
+        },
       };
     case "storage":
       return {
-        binding: spec.binding,
-        visibility: spec.visibility,
-        buffer: spec.buffer,
+        binding: 3,
+        visibility: ShaderStage.VERTEX,
+        buffer: { type: "read-only-storage" },
       };
     default: {
       const _exhaustive: never = path;
@@ -338,11 +336,11 @@ function paletteVertexBinding(path: PalettePath): {
 }
 
 /**
- * Pixi puts resource names missing from the GPU program into group 99. That group's
- * bind-group layout is undefined, so the first WebGPU `createBindGroup` throws.
- * Storage WGSL has `uTransforms` only. Texture WGSL has `uTransformTexture` only.
+ * Pixi puts resource names missing from the GPU program into group 99. That group's bind-group
+ * layout is undefined, so the first WebGPU `createBindGroup` throws. Storage WGSL has `uTransforms`
+ * only. Texture WGSL has `uTransformTexture` only.
  */
-function paletteResources(
+export function glyphPaletteResources(
   path: PalettePath,
   paletteTexture: Texture,
   paletteStorage: Buffer | undefined,
