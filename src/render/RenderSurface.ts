@@ -194,6 +194,16 @@ export class RenderSurface {
     this.#protoTexture = new Texture({ source: this.#protoSource });
     this.#rArray = createAtlasArray("r", 1, 1, 1, true);
     this.#rgbaArray = createAtlasArray("rgba", 1, 1, 1, true);
+    // #region agent log
+    const canvas = renderer.canvas;
+    if (canvas !== undefined && typeof canvas.addEventListener === "function") {
+      canvas.addEventListener("webglcontextlost", () => {
+        agentLog("A", "RenderSurface.ts:webglcontextlost", "webglcontextlost", {
+          adapter: rendererKind(renderer),
+        });
+      });
+    }
+    // #endregion
   }
 
   prepareCullPath(): CullPath {
@@ -342,6 +352,12 @@ export class RenderSurface {
   ): void {
     this.#assertActive();
     const uploadStart = performance.now();
+    const paletteSourceBefore = this.#paletteSource;
+    const paletteTextureBefore = this.#paletteTexture;
+    const paletteDataBefore = this.#paletteData;
+    const protoSourceBefore = this.#protoSource;
+    const protoTextureBefore = this.#protoTexture;
+    const meshCountBefore = this.#meshes.size;
     this.#applyAtlasCommit(result.atlasCommit);
     const transformRanges = this.#coordinator.transforms.consumeDirty();
     const instanceRanges = this.#coordinator.instances.consumeDirty();
@@ -362,12 +378,57 @@ export class RenderSurface {
     }
     if (computeCull === undefined) this.#useCpuCull();
     else this.#refreshComputeCull(computeCull);
-    if (this.#paletteGrew) {
+    const paletteGrew = this.#paletteGrew;
+    if (paletteGrew) {
       this.#refreshPrototypeTexture();
       this.#paletteGrew = false;
     }
     this.#bindMeshSources();
     this.#lastUploadMs = performance.now() - uploadStart;
+    // #region agent log
+    const mesh = this.#meshes.get(0)?.mesh;
+    agentLog("B", "RenderSurface.ts:apply", "apply exit", {
+      drawOrderChanged: result.drawOrderChanged,
+      transformRangeCount: transformRanges.length,
+      transformRangeBytes: transformRanges.reduce((sum, range) => sum + range.length, 0),
+      instanceRangeCount: instanceRanges.length,
+      instanceRangeBytes: instanceRanges.reduce((sum, range) => sum + range.length, 0),
+      paletteDataSame: this.#paletteData === paletteDataBefore,
+      paletteSourceChanged: this.#paletteSource !== paletteSourceBefore,
+      paletteTextureChanged: this.#paletteTexture !== paletteTextureBefore,
+      protoSourceChanged: this.#protoSource !== protoSourceBefore,
+      protoTextureChanged: this.#protoTexture !== protoTextureBefore,
+      paletteGrew,
+      needDrawRebuild,
+      meshCountBefore,
+      meshCount: this.#meshes.size,
+      paletteAfter: sourceState(this.#paletteSource, this.#paletteTexture),
+      protoAfter: sourceState(this.#protoSource, this.#protoTexture),
+      protoSample: floatSample(this.#protoPixels),
+      paletteSample: floatSample(this.#paletteData),
+      ownerParent: this.#owner.parent?.label,
+      ownerChildCount: this.#owner.children.length,
+      ownerWorldVisible: this.#owner.worldVisible,
+      ownerRenderable: this.#owner.renderable,
+      meshDestroyed: mesh?.destroyed,
+      meshParent: mesh?.parent?.label,
+      meshWorldVisible: mesh?.worldVisible,
+      meshRenderable: mesh?.renderable,
+      meshWt:
+        mesh === undefined
+          ? undefined
+          : {
+              tx: mesh.worldTransform.tx,
+              ty: mesh.worldTransform.ty,
+              a: mesh.worldTransform.a,
+              d: mesh.worldTransform.d,
+            },
+      instanceCount: mesh?.geometry.instanceCount,
+      lastUploadMs: this.#lastUploadMs,
+      transformUploadBytes: this.#transformUploadBytes,
+      instanceUploadBytes: this.#instanceUploadBytes,
+    });
+    // #endregion
   }
 
   get stats(): Readonly<RenderSurfaceStats> {
@@ -526,6 +587,14 @@ export class RenderSurface {
     const stats = this.#coordinator.transforms.stats;
     if (data !== this.#paletteData) {
       const oldTexture = this.#paletteTexture;
+      // #region agent log
+      agentLog("B", "RenderSurface.ts:#syncPaletteTexture", "palette replace", {
+        old: sourceState(this.#paletteSource, oldTexture),
+        oldBytes: this.#paletteData.byteLength,
+        newBytes: data.byteLength,
+        meshCount: this.#meshes.size,
+      });
+      // #endregion
       this.#paletteData = data;
       this.#paletteSource = createPaletteSource(this.#coordinator);
       this.#paletteTexture = new Texture({ source: this.#paletteSource });
@@ -635,6 +704,15 @@ export class RenderSurface {
 
   #adoptPrototypePixels(pixels: Float32Array, width: number): void {
     const oldTexture = this.#protoTexture;
+    // #region agent log
+    agentLog("B", "RenderSurface.ts:#adoptPrototypePixels", "proto replace", {
+      old: sourceState(this.#protoSource, oldTexture),
+      oldBytes: this.#protoPixels.byteLength,
+      newBytes: pixels.byteLength,
+      width,
+      meshCount: this.#meshes.size,
+    });
+    // #endregion
     this.#protoPixels = pixels;
     this.#protoWidth = width;
     this.#protoSource = createPrototypeSource(pixels, width, pixels.length / (width * 4));
@@ -992,6 +1070,12 @@ export class RenderSurface {
   }
 
   #destroyMeshes(): void {
+    // #region agent log
+    agentLog("B", "RenderSurface.ts:#destroyMeshes", "destroyMeshes", {
+      meshCount: this.#meshes.size,
+      submittedGlyphs: this.#submittedGlyphs,
+    });
+    // #endregion
     for (const [key, surface] of this.#meshes) this.#destroyMesh(key, surface);
     this.#submittedGlyphs = 0;
     this.#syncedDrawEpoch = -1;
@@ -1036,6 +1120,64 @@ export class RenderSurface {
   #assertActive(): void {
     if (this.#destroyed) throw new Error("RenderSurface has been destroyed");
   }
+}
+
+function agentLog(
+  hypothesisId: string,
+  location: string,
+  message: string,
+  data: Record<string, unknown>,
+): void {
+  if (!(globalThis as { __GLYPHFLOW_AGENT_DEBUG?: boolean }).__GLYPHFLOW_AGENT_DEBUG) return;
+  const entry = {
+    hypothesisId,
+    location,
+    message,
+    data,
+    timestamp: Date.now(),
+    id: `log_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
+  };
+  const line = JSON.stringify(entry);
+  console.info("__AGENT_LOG__", line);
+  if (typeof fetch !== "function") return;
+  const send = (url: string): void => {
+    void fetch(url, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: line,
+      keepalive: true,
+      mode: "cors",
+    }).catch(() => undefined);
+  };
+  send("http://127.0.0.1:7733/");
+  send("/agent-debug-log");
+}
+
+function sourceState(source: BufferImageSource, texture: Texture): Record<string, unknown> {
+  return {
+    srcUid: source.uid,
+    srcDestroyed: source.destroyed,
+    styleNull: source.style === null,
+    texUid: texture.uid,
+    texDestroyed: texture.destroyed,
+    w: source.width,
+    h: source.height,
+    label: source.label,
+  };
+}
+
+function floatSample(data: Float32Array): Record<string, unknown> {
+  const head: number[] = [];
+  const limit = Math.min(8, data.length);
+  for (let index = 0; index < limit; index += 1) head.push(data[index] ?? 0);
+  let nonzero = -1;
+  for (let index = 0; index < data.length; index += 1) {
+    if (data[index] !== 0) {
+      nonzero = index;
+      break;
+    }
+  }
+  return { bytes: data.byteLength, head, nonzero };
 }
 
 function createPrototypeSource(
@@ -1272,6 +1414,17 @@ function withAtlasUnpack(gl: WebGL2RenderingContext, write: () => void): void {
 }
 
 function initializeTexture(renderer: Renderer, source: BufferImageSource): void {
+  // #region agent log
+  agentLog("B", "RenderSurface.ts:initializeTexture", "initializeTexture", {
+    label: source.label,
+    uid: source.uid,
+    destroyed: source.destroyed,
+    styleNull: source.style === null,
+    w: source.width,
+    h: source.height,
+    resourceBytes: source.resource instanceof Float32Array ? source.resource.byteLength : 0,
+  });
+  // #endregion
   if (isWebGLRenderer(renderer)) renderer.texture.getGlSource(source);
   else if (isWebGPURenderer(renderer)) renderer.texture.getGpuSource(source);
   else source.update();

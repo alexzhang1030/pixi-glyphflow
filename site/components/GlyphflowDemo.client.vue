@@ -298,6 +298,20 @@ async function initialize(backend: RendererBackend, runId: number): Promise<void
     "One million interactive multilingual glyph labels rendered with custom CJKV and system fallback fonts",
   );
   host.appendChild(nextApp.canvas);
+  // #region agent log
+  (
+    globalThis as typeof globalThis & { __GLYPHFLOW_AGENT_DEBUG?: boolean }
+  ).__GLYPHFLOW_AGENT_DEBUG = true;
+  nextApp.canvas.addEventListener("webglcontextlost", (event) => {
+    const lost = event as WebGLContextEvent;
+    agentLog("A", "GlyphflowDemo.client.vue:webglcontextlost", "webglcontextlost", {
+      statusMessage: lost.statusMessage,
+    });
+  });
+  nextApp.canvas.addEventListener("webglcontextrestored", () => {
+    agentLog("A", "GlyphflowDemo.client.vue:webglcontextrestored", "webglcontextrestored", {});
+  });
+  // #endregion
 
   const nextWorldWidth = worldWidth();
   const nextWorldHeight = worldHeight();
@@ -413,6 +427,10 @@ async function initialize(backend: RendererBackend, runId: number): Promise<void
   nextApp.render();
   firstFrameReady.value = true;
   updateHud(0);
+  console.info("[demo-stats-first]", JSON.stringify(nextLayer.stats));
+  // #region agent log
+  logDemoSnapshot("A", "first-render", nextApp, nextViewport, nextLayer);
+  // #endregion
 
   bootStage.value = "Filling the million";
   for (let start = 0; start < LABEL_COUNT; start += CHUNK_SIZE) {
@@ -429,6 +447,9 @@ async function initialize(backend: RendererBackend, runId: number): Promise<void
     loadedPercent.value = Math.round((end / LABEL_COUNT) * 100);
     await nextFrame();
   }
+  // #region agent log
+  logDemoSnapshot("A", "after-million-alloc", nextApp, nextViewport, nextLayer);
+  // #endregion
 
   bootStage.value = "Publishing the resident set";
   const initialCommit = nextLayer.commit();
@@ -448,7 +469,14 @@ async function initialize(backend: RendererBackend, runId: number): Promise<void
   nextViewport.emit("frame-end", nextViewport);
   await nextBinding.whenIdle();
   if (isStale(runId)) return;
+  // #region agent log
+  logDemoSnapshot("C", "before-second-render", nextApp, nextViewport, nextLayer);
+  // #endregion
   nextApp.render();
+  console.info("[demo-stats-second]", JSON.stringify(nextLayer.stats));
+  // #region agent log
+  logDemoSnapshot("D", "after-second-render", nextApp, nextViewport, nextLayer);
+  // #endregion
 
   const rendererAdapter = nextLayer.stats.rendererAdapter;
   if (rendererAdapter !== backend) {
@@ -779,6 +807,146 @@ function formatRenderer(value: string): string {
 
 function nextFrame(): Promise<void> {
   return new Promise((resolve) => window.requestAnimationFrame(() => resolve()));
+}
+
+function agentLog(
+  hypothesisId: string,
+  location: string,
+  message: string,
+  data: Record<string, unknown>,
+): void {
+  const entry = {
+    hypothesisId,
+    location,
+    message,
+    data,
+    timestamp: Date.now(),
+    id: `log_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
+  };
+  const line = JSON.stringify(entry);
+  console.info("__AGENT_LOG__", line);
+  if (typeof fetch !== "function") return;
+  const send = (url: string): void => {
+    void fetch(url, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: line,
+      keepalive: true,
+      mode: "cors",
+    }).catch(() => undefined);
+  };
+  send("http://127.0.0.1:7733/");
+  send("/agent-debug-log");
+}
+
+function sampleFramebuffer(nextApp: Application): Record<string, unknown> {
+  const renderer = nextApp.renderer;
+  if (!("gl" in renderer)) return { adapter: "not-webgl" };
+  const gl = (renderer as { gl: WebGL2RenderingContext }).gl;
+  if (gl.isContextLost()) return { lost: true };
+  const previous = gl.getParameter(gl.FRAMEBUFFER_BINDING) as WebGLFramebuffer | null;
+  gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+  const width = gl.drawingBufferWidth;
+  const height = gl.drawingBufferHeight;
+  const center = new Uint8Array(4);
+  const corner = new Uint8Array(4);
+  gl.readPixels(
+    Math.floor(width / 2),
+    Math.floor(height / 2),
+    1,
+    1,
+    gl.RGBA,
+    gl.UNSIGNED_BYTE,
+    center,
+  );
+  gl.readPixels(0, 0, 1, 1, gl.RGBA, gl.UNSIGNED_BYTE, corner);
+  const glError = gl.getError();
+  gl.bindFramebuffer(gl.FRAMEBUFFER, previous);
+  return {
+    lost: false,
+    width,
+    height,
+    center: [center[0], center[1], center[2], center[3]],
+    corner: [corner[0], corner[1], corner[2], corner[3]],
+    glError,
+  };
+}
+
+function logDemoSnapshot(
+  hypothesisId: string,
+  phase: string,
+  nextApp: Application,
+  nextViewport: Viewport,
+  nextLayer: TextLayer,
+): void {
+  const bounds = nextViewport.getVisibleBounds();
+  const meshes = nextLayer.children.map((child) => ({
+    label: child.label,
+    destroyed: child.destroyed,
+    parent: child.parent?.label,
+    visible: child.visible,
+    worldVisible: child.worldVisible,
+    renderable: child.renderable,
+    wt: {
+      tx: child.worldTransform.tx,
+      ty: child.worldTransform.ty,
+      a: child.worldTransform.a,
+      d: child.worldTransform.d,
+    },
+    instanceCount:
+      "geometry" in child &&
+      child.geometry !== null &&
+      typeof child.geometry === "object" &&
+      "instanceCount" in child.geometry
+        ? Number(child.geometry.instanceCount)
+        : undefined,
+  }));
+  const stats = nextLayer.stats;
+  agentLog(hypothesisId, `GlyphflowDemo.client.vue:${phase}`, phase, {
+    contextLost:
+      "gl" in nextApp.renderer
+        ? (nextApp.renderer as { gl: WebGL2RenderingContext }).gl.isContextLost()
+        : "not-webgl",
+    pixels: sampleFramebuffer(nextApp),
+    viewport: {
+      centerX: nextViewport.center.x,
+      centerY: nextViewport.center.y,
+      scale: nextViewport.scale.x,
+      rotation: nextViewport.rotation,
+      x: nextViewport.position.x,
+      y: nextViewport.position.y,
+      visible: { x: bounds.x, y: bounds.y, w: bounds.width, h: bounds.height },
+    },
+    layer: {
+      parent: nextLayer.parent?.label,
+      inViewport: nextLayer.parent === nextViewport,
+      childCount: nextLayer.children.length,
+      visible: nextLayer.visible,
+      worldVisible: nextLayer.worldVisible,
+      renderable: nextLayer.renderable,
+      wt: {
+        tx: nextLayer.worldTransform.tx,
+        ty: nextLayer.worldTransform.ty,
+        a: nextLayer.worldTransform.a,
+        d: nextLayer.worldTransform.d,
+      },
+    },
+    meshes,
+    stageChildren: nextApp.stage.children.map((child) => child.label),
+    viewportChildCount: nextViewport.children.length,
+    lastObjectRendered: nextApp.renderer.lastObjectRendered?.label,
+    tickerStarted: nextApp.ticker.started,
+    stats: {
+      labelCount: stats.labelCount,
+      visible: stats.visibleLabelCount,
+      submittedGlyphs: stats.submittedGlyphs,
+      drawCalls: stats.drawCalls,
+      lastUploadMs: stats.lastUploadMs,
+      transformUploadBytes: stats.transformUploadBytes,
+      instanceUploadBytes: stats.instanceUploadBytes,
+      lastCommitDirtyLabels: stats.lastCommitDirtyLabels,
+    },
+  });
 }
 
 async function installDemoFaces(fonts: readonly Readonly<LoadedFontAsset>[]): Promise<void> {
