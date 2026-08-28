@@ -195,16 +195,6 @@ export class RenderSurface {
     this.#protoTexture = new Texture({ source: this.#protoSource });
     this.#rArray = createAtlasArray("r", 1, 1, 1, true);
     this.#rgbaArray = createAtlasArray("rgba", 1, 1, 1, true);
-    // #region agent log
-    const canvas = renderer.canvas;
-    if (canvas !== undefined && typeof canvas.addEventListener === "function") {
-      canvas.addEventListener("webglcontextlost", () => {
-        agentLog("A", "RenderSurface.ts:webglcontextlost", "webglcontextlost", {
-          adapter: rendererKind(renderer),
-        });
-      });
-    }
-    // #endregion
   }
 
   prepareCullPath(): CullPath {
@@ -353,34 +343,9 @@ export class RenderSurface {
   ): void {
     this.#assertActive();
     const uploadStart = performance.now();
-    // #region agent log
-    agentLog("E", "RenderSurface.ts:apply", "apply enter", {
-      drawOrderChanged: result.drawOrderChanged,
-      meshCount: this.#meshes.size,
-      submittedGlyphs: this.#submittedGlyphs,
-    });
-    // #endregion
-    const paletteSourceBefore = this.#paletteSource;
-    const paletteTextureBefore = this.#paletteTexture;
-    const paletteDataBefore = this.#paletteData;
-    const protoSourceBefore = this.#protoSource;
-    const protoTextureBefore = this.#protoTexture;
-    const meshCountBefore = this.#meshes.size;
     this.#applyAtlasCommit(result.atlasCommit);
     const transformRanges = this.#coordinator.transforms.consumeDirty();
     const instanceRanges = this.#coordinator.instances.consumeDirty();
-    // #region agent log
-    const rangeLog =
-      (globalThis as { __GLYPHFLOW_RANGE_LOGS?: number }).__GLYPHFLOW_RANGE_LOGS ?? 0;
-    if (rangeLog < 6) {
-      (globalThis as { __GLYPHFLOW_RANGE_LOGS?: number }).__GLYPHFLOW_RANGE_LOGS = rangeLog + 1;
-      agentLog("I", "RenderSurface.ts:apply", "transform ranges", {
-        ranges: transformRanges.map((range) => ({ offset: range.offset, length: range.length })),
-        instanceRanges: instanceRanges.length,
-        slots: paletteSlotSamples(this.#coordinator.transforms.data),
-      });
-    }
-    // #endregion
     this.#syncPalette(transformRanges);
     this.flushPaletteStorage();
     this.#syncPrototype(instanceRanges);
@@ -405,50 +370,6 @@ export class RenderSurface {
     }
     this.#bindMeshSources();
     this.#lastUploadMs = performance.now() - uploadStart;
-    // #region agent log
-    const mesh = this.#meshes.get(0)?.mesh;
-    agentLog("B", "RenderSurface.ts:apply", "apply exit", {
-      drawOrderChanged: result.drawOrderChanged,
-      transformRangeCount: transformRanges.length,
-      transformRangeBytes: transformRanges.reduce((sum, range) => sum + range.length, 0),
-      instanceRangeCount: instanceRanges.length,
-      instanceRangeBytes: instanceRanges.reduce((sum, range) => sum + range.length, 0),
-      paletteDataSame: this.#paletteData === paletteDataBefore,
-      paletteSourceChanged: this.#paletteSource !== paletteSourceBefore,
-      paletteTextureChanged: this.#paletteTexture !== paletteTextureBefore,
-      protoSourceChanged: this.#protoSource !== protoSourceBefore,
-      protoTextureChanged: this.#protoTexture !== protoTextureBefore,
-      paletteGrew,
-      needDrawRebuild,
-      meshCountBefore,
-      meshCount: this.#meshes.size,
-      paletteAfter: sourceState(this.#paletteSource, this.#paletteTexture),
-      protoAfter: sourceState(this.#protoSource, this.#protoTexture),
-      protoSample: floatSample(this.#protoPixels),
-      paletteSample: floatSample(this.#paletteData),
-      ownerParent: this.#owner.parent?.label,
-      ownerChildCount: this.#owner.children.length,
-      ownerWorldVisible: this.#owner.worldVisible,
-      ownerRenderable: this.#owner.renderable,
-      meshDestroyed: mesh?.destroyed,
-      meshParent: mesh?.parent?.label,
-      meshWorldVisible: mesh?.worldVisible,
-      meshRenderable: mesh?.renderable,
-      meshWt:
-        mesh === undefined
-          ? undefined
-          : {
-              tx: mesh.worldTransform.tx,
-              ty: mesh.worldTransform.ty,
-              a: mesh.worldTransform.a,
-              d: mesh.worldTransform.d,
-            },
-      instanceCount: mesh?.geometry.instanceCount,
-      lastUploadMs: this.#lastUploadMs,
-      transformUploadBytes: this.#transformUploadBytes,
-      instanceUploadBytes: this.#instanceUploadBytes,
-    });
-    // #endregion
   }
 
   get stats(): Readonly<RenderSurfaceStats> {
@@ -607,14 +528,6 @@ export class RenderSurface {
     const stats = this.#coordinator.transforms.stats;
     if (data !== this.#paletteData) {
       const oldTexture = this.#paletteTexture;
-      // #region agent log
-      agentLog("B", "RenderSurface.ts:#syncPaletteTexture", "palette replace", {
-        old: sourceState(this.#paletteSource, oldTexture),
-        oldBytes: this.#paletteData.byteLength,
-        newBytes: data.byteLength,
-        meshCount: this.#meshes.size,
-      });
-      // #endregion
       this.#paletteData = data;
       this.#paletteSource = createPaletteSource(this.#coordinator);
       this.#paletteTexture = new Texture({ source: this.#paletteSource });
@@ -635,36 +548,10 @@ export class RenderSurface {
       return;
     }
     if (isWebGLRenderer(this.#renderer)) {
-      const meshCount = this.#meshes.size;
+      // A bound rgba32float vertex palette rewritten with texSubImage2D/texImage2D blanks
+      // the compositor on ANGLE/SwiftShader. Unbind the mesh sampler and GL units first.
       for (const surface of this.#meshes.values()) surface.mesh.unbindPaletteTexture();
-      const unbound = unbindWebGLPalette(this.#renderer, this.#paletteTexture);
-      // #region agent log
-      const rewriteLog = (globalThis as { __GLYPHFLOW_O_LOGS?: number }).__GLYPHFLOW_O_LOGS ?? 0;
-      if (rewriteLog < 4) {
-        (globalThis as { __GLYPHFLOW_O_LOGS?: number }).__GLYPHFLOW_O_LOGS = rewriteLog + 1;
-        agentLog(
-          "O",
-          "RenderSurface.ts:#syncPaletteTexture",
-          "webgl palette unbind before rewrite",
-          {
-            runId: "hyp-O",
-            helper: reallocateWebGLFloatTexture.name,
-            label: this.#paletteSource.label,
-            meshCount,
-            rangeCount: ranges.length,
-            rangeBytes: ranges.reduce((sum, range) => sum + range.length, 0),
-            w: this.#paletteSource.width,
-            h: this.#paletteSource.height,
-            bytes: data.byteLength,
-            paletteInitialized: this.#paletteInitialized,
-            glUnits: unbound.glUnits,
-            vertexUnits: unbound.vertexUnits,
-            combinedUnits: unbound.combinedUnits,
-            slots: paletteSlotSamples(data),
-          },
-        );
-      }
-      // #endregion
+      unbindWebGLPalette(this.#renderer, this.#paletteTexture);
       const uploaded = uploadFloatTextureRanges(
         this.#renderer,
         this.#paletteSource,
@@ -676,23 +563,6 @@ export class RenderSurface {
       this.#transformWrites += uploaded.writes;
       unbindWebGLPalette(this.#renderer, this.#paletteTexture);
       this.#bindMeshSources();
-      // #region agent log
-      if (rewriteLog < 4) {
-        const mesh = this.#meshes.get(0)?.mesh;
-        agentLog(
-          "O",
-          "RenderSurface.ts:#syncPaletteTexture",
-          "webgl palette rebind after rewrite",
-          {
-            runId: "hyp-O",
-            writes: uploaded.writes,
-            bytes: uploaded.bytes,
-            rebound: mesh?.shader?.resources.uTransformTexture === this.#paletteSource,
-            meshCount: this.#meshes.size,
-          },
-        );
-      }
-      // #endregion
       return;
     }
     const uploaded = uploadFloatTextureRanges(
@@ -785,15 +655,6 @@ export class RenderSurface {
 
   #adoptPrototypePixels(pixels: Float32Array, width: number): void {
     const oldTexture = this.#protoTexture;
-    // #region agent log
-    agentLog("B", "RenderSurface.ts:#adoptPrototypePixels", "proto replace", {
-      old: sourceState(this.#protoSource, oldTexture),
-      oldBytes: this.#protoPixels.byteLength,
-      newBytes: pixels.byteLength,
-      width,
-      meshCount: this.#meshes.size,
-    });
-    // #endregion
     this.#protoPixels = pixels;
     this.#protoWidth = width;
     this.#protoSource = createPrototypeSource(pixels, width, pixels.length / (width * 4));
@@ -1151,12 +1012,6 @@ export class RenderSurface {
   }
 
   #destroyMeshes(): void {
-    // #region agent log
-    agentLog("B", "RenderSurface.ts:#destroyMeshes", "destroyMeshes", {
-      meshCount: this.#meshes.size,
-      submittedGlyphs: this.#submittedGlyphs,
-    });
-    // #endregion
     for (const [key, surface] of this.#meshes) this.#destroyMesh(key, surface);
     this.#submittedGlyphs = 0;
     this.#syncedDrawEpoch = -1;
@@ -1201,86 +1056,6 @@ export class RenderSurface {
   #assertActive(): void {
     if (this.#destroyed) throw new Error("RenderSurface has been destroyed");
   }
-}
-
-function agentLog(
-  hypothesisId: string,
-  location: string,
-  message: string,
-  data: Record<string, unknown>,
-): void {
-  if (!(globalThis as { __GLYPHFLOW_AGENT_DEBUG?: boolean }).__GLYPHFLOW_AGENT_DEBUG) return;
-  const entry = {
-    hypothesisId,
-    location,
-    message,
-    data,
-    timestamp: Date.now(),
-    id: `log_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
-  };
-  const line = JSON.stringify(entry);
-  console.info("__AGENT_LOG__", line);
-  if (typeof fetch !== "function") return;
-  const send = (url: string): void => {
-    void fetch(url, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: line,
-      keepalive: true,
-      mode: "cors",
-    }).catch(() => undefined);
-  };
-  send("http://127.0.0.1:7733/");
-  send("/agent-debug-log");
-}
-
-function sourceState(source: BufferImageSource, texture: Texture): Record<string, unknown> {
-  return {
-    srcUid: source.uid,
-    srcDestroyed: source.destroyed,
-    styleNull: source.style === null,
-    texUid: texture.uid,
-    texDestroyed: texture.destroyed,
-    w: source.width,
-    h: source.height,
-    label: source.label,
-  };
-}
-
-function paletteSlotSamples(data: Float32Array, count = 4): unknown[] {
-  const samples: unknown[] = [];
-  const slots = Math.floor(data.length / 8);
-  for (let slot = 0; slot < slots && samples.length < count; slot += 1) {
-    const offset = slot * 8;
-    const x = data[offset] ?? 0;
-    const y = data[offset + 1] ?? 0;
-    const sx = data[offset + 2] ?? 0;
-    if (x === 0 && y === 0 && sx === 0) continue;
-    samples.push({
-      slot,
-      x,
-      y,
-      sx,
-      sy: data[offset + 3] ?? 0,
-      fill: data[offset + 6] ?? 0,
-      pack: data[offset + 7] ?? 0,
-    });
-  }
-  return samples;
-}
-
-function floatSample(data: Float32Array): Record<string, unknown> {
-  const head: number[] = [];
-  const limit = Math.min(8, data.length);
-  for (let index = 0; index < limit; index += 1) head.push(data[index] ?? 0);
-  let nonzero = -1;
-  for (let index = 0; index < data.length; index += 1) {
-    if (data[index] !== 0) {
-      nonzero = index;
-      break;
-    }
-  }
-  return { bytes: data.byteLength, head, nonzero };
 }
 
 function createPrototypeSource(
@@ -1561,96 +1336,22 @@ function withAtlasUnpack(gl: WebGL2RenderingContext, write: () => void): void {
   }
 }
 
-function unbindWebGLPalette(
-  renderer: WebGLRenderer,
-  texture: Texture,
-): Readonly<{ glUnits: number[]; vertexUnits: number; combinedUnits: number }> {
+function unbindWebGLPalette(renderer: WebGLRenderer, texture: Texture): void {
   renderer.texture.unbind(texture);
   const gl = renderer.gl;
   const resource = renderer.texture.getGlSource(texture.source);
   const combinedUnits = gl.getParameter(gl.MAX_COMBINED_TEXTURE_IMAGE_UNITS) as number;
-  const vertexUnits = gl.getParameter(gl.MAX_VERTEX_TEXTURE_IMAGE_UNITS) as number;
   const previous = gl.getParameter(gl.ACTIVE_TEXTURE) as number;
-  const glUnits: number[] = [];
   for (let unit = 0; unit < combinedUnits; unit += 1) {
     gl.activeTexture(gl.TEXTURE0 + unit);
     if (gl.getParameter(gl.TEXTURE_BINDING_2D) === resource.texture) {
       gl.bindTexture(gl.TEXTURE_2D, null);
-      glUnits.push(unit);
     }
   }
   gl.activeTexture(previous);
-  return { glUnits, vertexUnits, combinedUnits };
-}
-
-function reallocateWebGLFloatTexture(
-  renderer: WebGLRenderer,
-  source: BufferImageSource,
-  data: Float32Array,
-): Readonly<{ bytes: number; writes: number }> {
-  const gl = renderer.gl;
-  const resource = renderer.texture.getGlSource(source);
-  // #region agent log
-  const uploadLog =
-    (globalThis as { __GLYPHFLOW_UPLOAD_LOGS?: number }).__GLYPHFLOW_UPLOAD_LOGS ?? 0;
-  if (uploadLog < 4) {
-    (globalThis as { __GLYPHFLOW_UPLOAD_LOGS?: number }).__GLYPHFLOW_UPLOAD_LOGS = uploadLog + 1;
-    agentLog("N", "RenderSurface.ts:reallocateWebGLFloatTexture", "webgl float texImage2D enter", {
-      runId: "hyp-N",
-      label: source.label,
-      w: source.width,
-      h: source.height,
-      bytes: data.byteLength,
-      glWidth: resource.width,
-      glHeight: resource.height,
-      sameResource: source.resource === data,
-    });
-  }
-  // #endregion
-  withFloatUnpack(gl, () => {
-    gl.bindTexture(resource.target, resource.texture);
-    gl.texImage2D(
-      resource.target,
-      0,
-      resource.internalFormat,
-      source.width,
-      source.height,
-      0,
-      resource.format,
-      resource.type,
-      data,
-    );
-  });
-  resource.width = source.width;
-  resource.height = source.height;
-  // #region agent log
-  if (uploadLog < 4) {
-    agentLog("N", "RenderSurface.ts:reallocateWebGLFloatTexture", "webgl float texImage2D exit", {
-      runId: "hyp-N",
-      label: source.label,
-      writes: 1,
-      bytes: data.byteLength,
-      glError: gl.getError(),
-      glWidth: resource.width,
-      glHeight: resource.height,
-    });
-  }
-  // #endregion
-  return { bytes: data.byteLength, writes: 1 };
 }
 
 function initializeTexture(renderer: Renderer, source: BufferImageSource): void {
-  // #region agent log
-  agentLog("B", "RenderSurface.ts:initializeTexture", "initializeTexture", {
-    label: source.label,
-    uid: source.uid,
-    destroyed: source.destroyed,
-    styleNull: source.style === null,
-    w: source.width,
-    h: source.height,
-    resourceBytes: source.resource instanceof Float32Array ? source.resource.byteLength : 0,
-  });
-  // #endregion
   if (isWebGLRenderer(renderer)) renderer.texture.getGlSource(source);
   else if (isWebGPURenderer(renderer)) renderer.texture.getGpuSource(source);
   else source.update();
@@ -1675,26 +1376,6 @@ function uploadFloatTextureRanges(
     const gl = renderer.gl;
     const resource = renderer.texture.getGlSource(source);
     const rects = webglFloatPaletteRects(ranges, textureWidth);
-    // #region agent log
-    const uploadLog =
-      (globalThis as { __GLYPHFLOW_UPLOAD_LOGS?: number }).__GLYPHFLOW_UPLOAD_LOGS ?? 0;
-    if (uploadLog < 4) {
-      (globalThis as { __GLYPHFLOW_UPLOAD_LOGS?: number }).__GLYPHFLOW_UPLOAD_LOGS = uploadLog + 1;
-      agentLog("L", "RenderSurface.ts:uploadFloatTextureRanges", "webgl float rects", {
-        runId: "hyp-O",
-        label: source.label,
-        rangeCount: ranges.length,
-        rangeBytes: ranges.reduce((sum, range) => sum + range.length, 0),
-        rects: rects.map((rect) => ({
-          x: rect.x,
-          y: rect.y,
-          width: rect.width,
-          height: rect.height,
-          texel: rect.texel,
-        })),
-      });
-    }
-    // #endregion
     withFloatUnpack(gl, () => {
       gl.bindTexture(resource.target, resource.texture);
       for (const rect of rects) {
@@ -1714,17 +1395,6 @@ function uploadFloatTextureRanges(
         writes += 1;
       }
     });
-    // #region agent log
-    if (uploadLog < 4) {
-      agentLog("L", "RenderSurface.ts:uploadFloatTextureRanges", "webgl float upload exit", {
-        runId: "hyp-O",
-        label: source.label,
-        writes,
-        bytes,
-        glError: gl.getError(),
-      });
-    }
-    // #endregion
   } else if (isWebGPURenderer(renderer)) {
     const texture = renderer.texture.getGpuSource(source);
     for (const range of ranges) {

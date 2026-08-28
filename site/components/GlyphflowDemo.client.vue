@@ -14,7 +14,7 @@ import {
 import { charsetSdfPrebuilt, mergePrebuilt } from "pixi-glyphflow/prebuilt";
 import { bindViewport, type ViewportBinding } from "pixi-glyphflow/viewport";
 import { Viewport } from "pixi-viewport";
-import { Application, type Container, type TextStyleOptions } from "pixi.js";
+import { Application, type TextStyleOptions } from "pixi.js";
 import { computed, onBeforeUnmount, onMounted, ref } from "vue";
 
 import {
@@ -51,8 +51,6 @@ interface LoadedFontAsset {
 }
 
 const numberFormat = new Intl.NumberFormat("en-US");
-/** Debug hold so Playwright can screenshot ready before the first storm apply. */
-const STORM_HOLD_MS = 4_000;
 
 type RendererBackend = "webgl" | "webgpu";
 type WebGpuCapability = "checking" | "available" | "unavailable";
@@ -68,7 +66,6 @@ function resolveDemoBackend(
 const canvasHost = ref<HTMLElement>();
 const state = ref<"booting" | "ready" | "error">("booting");
 const firstFrameReady = ref(false);
-const tickerFrames = ref(0);
 const errorMessage = ref("");
 const loadedPercent = ref(0);
 const bootStage = ref("Loading type");
@@ -76,8 +73,6 @@ const requestedBackend = ref<RendererBackend>("webgl");
 const activeBackend = ref<RendererBackend>();
 const webGpuCapability = ref<WebGpuCapability>("checking");
 const stormEnabled = ref(true);
-const stormPhase = ref<"idle" | "hold" | "active">("idle");
-const stormCommits = ref(0);
 const allVisible = ref(true);
 const visibilityPending = ref(false);
 const rotationDegrees = ref(0);
@@ -133,7 +128,6 @@ let binding: ViewportBinding | undefined;
 let resizeObserver: ResizeObserver | undefined;
 let intersectionObserver: IntersectionObserver | undefined;
 let stormTimer: number | undefined;
-let stormHoldTimer: number | undefined;
 let movingIds: Float64Array | undefined;
 let firstPositions: Float32Array | undefined;
 let secondPositions: Float32Array | undefined;
@@ -232,7 +226,6 @@ function updateRendererQuery(backend: RendererBackend): void {
 
 function resetHud(): void {
   firstFrameReady.value = false;
-  tickerFrames.value = 0;
   loadedPercent.value = 0;
   bootStage.value = "Loading type";
   resident.value = "0";
@@ -253,8 +246,6 @@ function resetHud(): void {
   allVisible.value = true;
   visibilityPending.value = false;
   rotationDegrees.value = 0;
-  stormPhase.value = "idle";
-  stormCommits.value = 0;
 }
 
 function isStale(runId: number): boolean {
@@ -307,31 +298,6 @@ async function initialize(backend: RendererBackend, runId: number): Promise<void
     "One million interactive multilingual glyph labels rendered with custom CJKV and system fallback fonts",
   );
   host.appendChild(nextApp.canvas);
-  // #region agent log
-  (
-    globalThis as typeof globalThis & {
-      __GLYPHFLOW_AGENT_DEBUG?: boolean;
-      __GLYPHFLOW_BIND_LOGS?: number;
-      __GLYPHFLOW_RANGE_LOGS?: number;
-      __GLYPHFLOW_POS_LOGS?: number;
-      __GLYPHFLOW_WORK_LOGS?: number;
-    }
-  ).__GLYPHFLOW_AGENT_DEBUG = true;
-  (globalThis as typeof globalThis & { __GLYPHFLOW_BIND_LOGS?: number }).__GLYPHFLOW_BIND_LOGS = 0;
-  (globalThis as typeof globalThis & { __GLYPHFLOW_RANGE_LOGS?: number }).__GLYPHFLOW_RANGE_LOGS =
-    0;
-  (globalThis as typeof globalThis & { __GLYPHFLOW_POS_LOGS?: number }).__GLYPHFLOW_POS_LOGS = 0;
-  (globalThis as typeof globalThis & { __GLYPHFLOW_WORK_LOGS?: number }).__GLYPHFLOW_WORK_LOGS = 0;
-  nextApp.canvas.addEventListener("webglcontextlost", (event) => {
-    const lost = event as WebGLContextEvent;
-    agentLog("A", "GlyphflowDemo.client.vue:webglcontextlost", "webglcontextlost", {
-      statusMessage: lost.statusMessage,
-    });
-  });
-  nextApp.canvas.addEventListener("webglcontextrestored", () => {
-    agentLog("A", "GlyphflowDemo.client.vue:webglcontextrestored", "webglcontextrestored", {});
-  });
-  // #endregion
 
   const nextWorldWidth = worldWidth();
   const nextWorldHeight = worldHeight();
@@ -447,12 +413,6 @@ async function initialize(backend: RendererBackend, runId: number): Promise<void
   nextApp.render();
   firstFrameReady.value = true;
   updateHud(0);
-  console.info("[demo-stats-first]", JSON.stringify(nextLayer.stats));
-  // #region agent log
-  logDemoSnapshot("A", "first-render", nextApp, nextViewport, nextLayer);
-  // #endregion
-  // Experiment E: keep the ticker running after the first present. Do not issue a
-  // second stopped-ticker app.render() after the million commit.
   nextApp.start();
   startRuntime(nextApp, nextViewport, nextWorldWidth, nextWorldHeight, runId);
 
@@ -471,9 +431,6 @@ async function initialize(backend: RendererBackend, runId: number): Promise<void
     loadedPercent.value = Math.round((end / LABEL_COUNT) * 100);
     await nextFrame();
   }
-  // #region agent log
-  logDemoSnapshot("A", "after-million-alloc", nextApp, nextViewport, nextLayer);
-  // #endregion
 
   bootStage.value = "Publishing the resident set";
   const initialCommit = nextLayer.commit();
@@ -493,10 +450,6 @@ async function initialize(backend: RendererBackend, runId: number): Promise<void
   nextViewport.emit("frame-end", nextViewport);
   await nextBinding.whenIdle();
   if (isStale(runId)) return;
-  // #region agent log
-  logDemoSnapshot("E", "post-million-skipped-second-render", nextApp, nextViewport, nextLayer);
-  // #endregion
-  console.info("[demo-stats-second]", JSON.stringify(nextLayer.stats));
 
   const rendererAdapter = nextLayer.stats.rendererAdapter;
   if (rendererAdapter !== backend) {
@@ -508,22 +461,8 @@ async function initialize(backend: RendererBackend, runId: number): Promise<void
   if (backend === "webgpu") webGpuCapability.value = "available";
   state.value = "ready";
   updateHud(0);
-  // Experiment H: hold the first storm so a ready screenshot can beat the 100ms interval.
-  stormPhase.value = "hold";
-  // #region agent log
-  logDemoSnapshot("H", "ready-before-storm", nextApp, nextViewport, nextLayer);
-  // #endregion
-  stormHoldTimer = window.setTimeout(() => {
-    if (isStale(runId)) return;
-    stormPhase.value = "active";
-    // #region agent log
-    agentLog("H", "GlyphflowDemo.client.vue:storm-hold-released", "storm-hold-released", {
-      holdMs: STORM_HOLD_MS,
-    });
-    // #endregion
-    stormTimer = window.setInterval(() => void runPositionStorm(runId), STORM_INTERVAL_MS);
-    void runPositionStorm(runId);
-  }, STORM_HOLD_MS);
+  stormTimer = window.setInterval(() => void runPositionStorm(runId), STORM_INTERVAL_MS);
+  void runPositionStorm(runId);
 }
 
 function createLabelStyles(): Readonly<{
@@ -627,21 +566,12 @@ function startRuntime(
   runId: number,
 ): void {
   let frameCount = 0;
-  let debugTicks = 0;
   let lastFpsSample = performance.now();
   let lastHudUpdate = 0;
 
   nextApp.ticker.add(() => {
     nextViewport.emit("frame-end", nextViewport);
     frameCount += 1;
-    // #region agent log
-    debugTicks += 1;
-    tickerFrames.value = debugTicks;
-    const nextLayer = layer;
-    if (debugTicks <= 5 && nextLayer !== undefined) {
-      logDemoSnapshot("E", `ticker-${String(debugTicks)}`, nextApp, nextViewport, nextLayer);
-    }
-    // #endregion
     const now = performance.now();
     if (now - lastFpsSample >= 500) {
       fps.value = Math.round((frameCount * 1_000) / (now - lastFpsSample)).toString();
@@ -706,23 +636,7 @@ async function runPositionStorm(runId: number): Promise<void> {
     nextLayer.updatePositions(ids, useSecondPositions ? second : first);
     useSecondPositions = !useSecondPositions;
     await nextLayer.commit();
-    stormCommits.value += 1;
     updateDuration.value = `${(performance.now() - startedAt).toFixed(2)} ms`;
-    // #region agent log
-    if (
-      (stormCommits.value === 1 || stormCommits.value === 2) &&
-      app !== undefined &&
-      viewport !== undefined
-    ) {
-      logDemoSnapshot(
-        "O",
-        stormCommits.value === 1 ? "first-held-storm" : "storm-plus-1",
-        app,
-        viewport,
-        nextLayer,
-      );
-    }
-    // #endregion
   } finally {
     if (!isStale(runId)) stormPending = false;
   }
@@ -834,7 +748,6 @@ function emitCameraChange(nextViewport: Viewport, zoomed: boolean): void {
 
 function cleanup(): void {
   if (stormTimer !== undefined) window.clearInterval(stormTimer);
-  if (stormHoldTimer !== undefined) window.clearTimeout(stormHoldTimer);
   resizeObserver?.disconnect();
   intersectionObserver?.disconnect();
   binding?.destroy();
@@ -843,7 +756,6 @@ function cleanup(): void {
   app?.destroy(true);
   computeCullGpuDevice?.destroy();
   stormTimer = undefined;
-  stormHoldTimer = undefined;
   resizeObserver = undefined;
   intersectionObserver = undefined;
   binding = undefined;
@@ -867,172 +779,6 @@ function formatRenderer(value: string): string {
 
 function nextFrame(): Promise<void> {
   return new Promise((resolve) => window.requestAnimationFrame(() => resolve()));
-}
-
-function agentLog(
-  hypothesisId: string,
-  location: string,
-  message: string,
-  data: Record<string, unknown>,
-): void {
-  const entry = {
-    hypothesisId,
-    location,
-    message,
-    data,
-    timestamp: Date.now(),
-    id: `log_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
-  };
-  const line = JSON.stringify(entry);
-  console.info("__AGENT_LOG__", line);
-  if (typeof fetch !== "function") return;
-  const send = (url: string): void => {
-    void fetch(url, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: line,
-      keepalive: true,
-      mode: "cors",
-    }).catch(() => undefined);
-  };
-  send("http://127.0.0.1:7733/");
-  send("/agent-debug-log");
-}
-
-function sampleFramebuffer(nextApp: Application): Record<string, unknown> {
-  const renderer = nextApp.renderer;
-  if (!("gl" in renderer)) return { adapter: "not-webgl" };
-  const gl = (renderer as { gl: WebGL2RenderingContext }).gl;
-  if (gl.isContextLost()) return { lost: true };
-  const previous = gl.getParameter(gl.FRAMEBUFFER_BINDING) as WebGLFramebuffer | null;
-  gl.bindFramebuffer(gl.FRAMEBUFFER, null);
-  const width = gl.drawingBufferWidth;
-  const height = gl.drawingBufferHeight;
-  const center = new Uint8Array(4);
-  const corner = new Uint8Array(4);
-  gl.readPixels(
-    Math.floor(width / 2),
-    Math.floor(height / 2),
-    1,
-    1,
-    gl.RGBA,
-    gl.UNSIGNED_BYTE,
-    center,
-  );
-  gl.readPixels(0, 0, 1, 1, gl.RGBA, gl.UNSIGNED_BYTE, corner);
-  const glError = gl.getError();
-  gl.bindFramebuffer(gl.FRAMEBUFFER, previous);
-  return {
-    lost: false,
-    width,
-    height,
-    center: [center[0], center[1], center[2], center[3]],
-    corner: [corner[0], corner[1], corner[2], corner[3]],
-    glError,
-  };
-}
-
-function meshSnapshot(child: Container): Record<string, unknown> {
-  const mesh = child as Container & {
-    isRenderable?: boolean;
-    culled?: boolean;
-    localDisplayStatus?: number;
-    groupAlpha?: number;
-    geometry?: {
-      instanceCount?: number;
-      bounds?: { x: number; y: number; width: number; height: number };
-    };
-    shader?: {
-      resources?: { uPrototype?: { uid?: number }; uTransformTexture?: { uid?: number } };
-      groups?: Record<string, { resources: unknown }>;
-    };
-  };
-  const bounds = mesh.geometry?.bounds;
-  return {
-    label: child.label,
-    destroyed: child.destroyed,
-    parent: child.parent?.label,
-    visible: child.visible,
-    worldVisible: child.worldVisible,
-    renderable: child.renderable,
-    isRenderable: mesh.isRenderable,
-    culled: mesh.culled,
-    localDisplayStatus: mesh.localDisplayStatus,
-    groupAlpha: mesh.groupAlpha,
-    wt: {
-      tx: child.worldTransform.tx,
-      ty: child.worldTransform.ty,
-      a: child.worldTransform.a,
-      d: child.worldTransform.d,
-    },
-    instanceCount: mesh.geometry?.instanceCount,
-    bounds:
-      bounds === undefined
-        ? undefined
-        : { x: bounds.x, y: bounds.y, width: bounds.width, height: bounds.height },
-    protoUid: mesh.shader?.resources?.uPrototype?.uid,
-    paletteUid: mesh.shader?.resources?.uTransformTexture?.uid,
-    group99Null: mesh.shader?.groups?.[99]?.resources == null,
-  };
-}
-
-function logDemoSnapshot(
-  hypothesisId: string,
-  phase: string,
-  nextApp: Application,
-  nextViewport: Viewport,
-  nextLayer: TextLayer,
-): void {
-  const bounds = nextViewport.getVisibleBounds();
-  const meshes = nextLayer.children.map((child) => meshSnapshot(child));
-  const stats = nextLayer.stats;
-  agentLog(hypothesisId, `GlyphflowDemo.client.vue:${phase}`, phase, {
-    contextLost:
-      "gl" in nextApp.renderer
-        ? (nextApp.renderer as { gl: WebGL2RenderingContext }).gl.isContextLost()
-        : "not-webgl",
-    pixels: sampleFramebuffer(nextApp),
-    viewport: {
-      centerX: nextViewport.center.x,
-      centerY: nextViewport.center.y,
-      scale: nextViewport.scale.x,
-      rotation: nextViewport.rotation,
-      x: nextViewport.position.x,
-      y: nextViewport.position.y,
-      visible: { x: bounds.x, y: bounds.y, w: bounds.width, h: bounds.height },
-    },
-    layer: {
-      parent: nextLayer.parent?.label,
-      inViewport: nextLayer.parent === nextViewport,
-      childCount: nextLayer.children.length,
-      visible: nextLayer.visible,
-      worldVisible: nextLayer.worldVisible,
-      renderable: nextLayer.renderable,
-      wt: {
-        tx: nextLayer.worldTransform.tx,
-        ty: nextLayer.worldTransform.ty,
-        a: nextLayer.worldTransform.a,
-        d: nextLayer.worldTransform.d,
-      },
-    },
-    meshes,
-    stageChildren: nextApp.stage.children.map((child) => child.label),
-    viewportChildCount: nextViewport.children.length,
-    lastObjectRendered: nextApp.renderer.lastObjectRendered?.label,
-    tickerStarted: nextApp.ticker.started,
-    canvasConnected: nextApp.canvas.isConnected,
-    canvasParentIsHost: nextApp.canvas.parentElement === canvasHost.value,
-    stats: {
-      labelCount: stats.labelCount,
-      visible: stats.visibleLabelCount,
-      submittedGlyphs: stats.submittedGlyphs,
-      drawCalls: stats.drawCalls,
-      lastUploadMs: stats.lastUploadMs,
-      transformUploadBytes: stats.transformUploadBytes,
-      instanceUploadBytes: stats.instanceUploadBytes,
-      lastCommitDirtyLabels: stats.lastCommitDirtyLabels,
-    },
-  });
 }
 
 async function installDemoFaces(fonts: readonly Readonly<LoadedFontAsset>[]): Promise<void> {
@@ -1076,10 +822,6 @@ async function loadCustomFonts(): Promise<readonly Readonly<LoadedFontAsset>[]> 
     :data-cull-path="cullPath"
     :data-palette-path="palettePath"
     :data-first-frame="firstFrameReady"
-    :data-storm-phase="stormPhase"
-    :data-storm-commits="stormCommits"
-    :data-storm-hold-ms="STORM_HOLD_MS"
-    :data-ticker-frames="tickerFrames"
     :data-pending-glyphs="pendingGlyphs"
     :data-draw-calls="drawCalls"
     :data-atlas-textures="atlasTextures"

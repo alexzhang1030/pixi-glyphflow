@@ -147,20 +147,6 @@ export class TransformPalette {
     if (written > 0) {
       this.#recordPositionDirty(minSlot, maxSlot, written, slots, count, occupied);
     }
-    // #region agent log
-    const posLog = (globalThis as { __GLYPHFLOW_POS_LOGS?: number }).__GLYPHFLOW_POS_LOGS ?? 0;
-    if (posLog < 3) {
-      (globalThis as { __GLYPHFLOW_POS_LOGS?: number }).__GLYPHFLOW_POS_LOGS = posLog + 1;
-      agentLog("K", "TransformPalette.ts:writePositions", "writePositions", {
-        count,
-        written,
-        minSlot: written > 0 ? minSlot : -1,
-        maxSlot: written > 0 ? maxSlot : -1,
-        spanSlots: written > 0 ? maxSlot - minSlot + 1 : 0,
-        pendingDirtyRanges: this.#dirty.pendingRanges,
-      });
-    }
-    // #endregion
 
     return written;
   }
@@ -582,37 +568,6 @@ function assertPositiveInteger(name: string, value: number): void {
   if (!Number.isSafeInteger(value) || value <= 0) {
     throw new TypeError(`${name} must be a positive safe integer`);
   }
-}
-
-function agentLog(
-  hypothesisId: string,
-  location: string,
-  message: string,
-  data: Record<string, unknown>,
-): void {
-  if (!(globalThis as { __GLYPHFLOW_AGENT_DEBUG?: boolean }).__GLYPHFLOW_AGENT_DEBUG) return;
-  const entry = {
-    hypothesisId,
-    location,
-    message,
-    data,
-    timestamp: Date.now(),
-    id: `log_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
-  };
-  const line = JSON.stringify(entry);
-  console.info("__AGENT_LOG__", line);
-  if (typeof fetch !== "function") return;
-  const send = (url: string): void => {
-    void fetch(url, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: line,
-      keepalive: true,
-      mode: "cors",
-    }).catch(() => undefined);
-  };
-  send("http://127.0.0.1:7733/");
-  send("/agent-debug-log");
 }
 
 function nextPowerOfTwo(value: number): number {

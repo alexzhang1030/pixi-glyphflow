@@ -902,24 +902,6 @@ export class TextLayer extends Container {
         admitGroups.length === 0 &&
         !needsComputeDispatch)
     ) {
-      // #region agent log
-      agentLog("E", "TextLayer.ts:commit", "skip apply - no render work", {
-        dirtyLabels: this.#lastCommitDirtyLabels,
-        changes: changes.length,
-        laneCount,
-        contentCount,
-        admitGroups: admitGroups.length,
-        needsComputeDispatch,
-        visibleCount: this.#visibleCount,
-      });
-      if (this.#lastCommitDirtyLabels > 1_000) {
-        agentLog("H", "TextLayer.ts:commit", "skip apply palette sample", {
-          pendingDirtyRanges: coordinator?.transforms.stats.pendingDirtyRanges ?? -1,
-          activeLabels: coordinator?.transforms.stats.activeLabels ?? -1,
-          slots: paletteSlotSamples(coordinator?.transforms.data),
-        });
-      }
-      // #endregion
       if (this.#visibleCount === 0) this.#renderSurface?.dropIdleMeshes();
       this.#lastCommitDurationMs = performance.now() - start;
       this.#lastCommitPromise = this.#renderTail.then(() => {
@@ -1054,31 +1036,6 @@ export class TextLayer extends Container {
               drawViewport,
             )
           : undefined;
-      // #region agent log
-      agentLog("E", "TextLayer.ts:commit", "apply decision", {
-        dirtyLabels: this.#lastCommitDirtyLabels,
-        hasResult: result !== undefined,
-        hasCompute: computeUpdate !== undefined,
-        applied: result !== undefined && surface !== undefined,
-        refreshedCull: result === undefined && computeUpdate !== undefined,
-        lastUploadMs: surface?.stats.lastUploadMs ?? 0,
-      });
-      const workLog = (globalThis as { __GLYPHFLOW_WORK_LOGS?: number }).__GLYPHFLOW_WORK_LOGS ?? 0;
-      if (workLog < 6) {
-        (globalThis as { __GLYPHFLOW_WORK_LOGS?: number }).__GLYPHFLOW_WORK_LOGS = workLog + 1;
-        agentLog("I", "TextLayer.ts:commit", "apply work shape", {
-          dirtyLabels: this.#lastCommitDirtyLabels,
-          changes: changes.length,
-          laneCount,
-          contentCount,
-          admitGroups: admitGroups.length,
-          appliedLabels: result?.appliedLabels ?? 0,
-          drawOrderChanged: result?.drawOrderChanged ?? false,
-          atlasUploads: result?.atlasUploads ?? 0,
-          slots: paletteSlotSamples(coordinator.transforms.data),
-        });
-      }
-      // #endregion
       if (result !== undefined) surface?.apply(result, computeUpdate);
       else if (computeUpdate !== undefined) surface?.refreshComputeCull(computeUpdate);
       this.#lastUploadMs = surface?.stats.lastUploadMs ?? 0;
@@ -2793,58 +2750,4 @@ function growTypedArray<T extends Uint8Array | Uint32Array>(source: T, capacity:
   target.set(source);
 
   return target;
-}
-
-function paletteSlotSamples(data: Float32Array | undefined, count = 4): unknown[] {
-  if (data === undefined) return [];
-  const samples: unknown[] = [];
-  const slots = Math.floor(data.length / 8);
-  for (let slot = 0; slot < slots && samples.length < count; slot += 1) {
-    const offset = slot * 8;
-    const x = data[offset] ?? 0;
-    const y = data[offset + 1] ?? 0;
-    const sx = data[offset + 2] ?? 0;
-    if (x === 0 && y === 0 && sx === 0) continue;
-    samples.push({
-      slot,
-      x,
-      y,
-      sx,
-      sy: data[offset + 3] ?? 0,
-      fill: data[offset + 6] ?? 0,
-      pack: data[offset + 7] ?? 0,
-    });
-  }
-  return samples;
-}
-
-function agentLog(
-  hypothesisId: string,
-  location: string,
-  message: string,
-  data: Record<string, unknown>,
-): void {
-  if (!(globalThis as { __GLYPHFLOW_AGENT_DEBUG?: boolean }).__GLYPHFLOW_AGENT_DEBUG) return;
-  const entry = {
-    hypothesisId,
-    location,
-    message,
-    data,
-    timestamp: Date.now(),
-    id: `log_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
-  };
-  const line = JSON.stringify(entry);
-  console.info("__AGENT_LOG__", line);
-  if (typeof fetch !== "function") return;
-  const send = (url: string): void => {
-    void fetch(url, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: line,
-      keepalive: true,
-      mode: "cors",
-    }).catch(() => undefined);
-  };
-  send("http://127.0.0.1:7733/");
-  send("/agent-debug-log");
 }

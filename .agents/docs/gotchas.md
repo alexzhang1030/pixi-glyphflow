@@ -26,18 +26,16 @@ the live texel. `packedFloatTexelView` copies the range first. Do not pass `data
 straight to `texSubImage2D`.
 
 A position storm's first dirty palette write is the first GPU rewrite after
-`initializeTexture` (full `texImage2D`). Sixteen sparse movers publish eight 624-byte bands.
-`texSubImage2D` of those bands blanks the canvas while CPU slots stay live — including a packed
-1024-wide row at `x = 0` with `UNPACK_*` reset and `glError` 0. A second `texImage2D` of the
-same GL texture object (`sameResource: true`, 1024×2048, 32 MiB, `glError` 0) also blanks.
-First Pixi `initializeTexture` / `getGlSource` still paints. Experiment M kept glyphs by
-consuming those ranges and skipping the WebGL rewrite. Experiment O unbinds the palette from
-each mesh (`unbindPaletteTexture` → `Texture.EMPTY`) and from every GL `TEXTURE_2D` unit
-(`renderer.texture.unbind` plus a combined-unit walk), then dirty-`texSubImage2D`s the same
-object and rebinds through `#bindMeshSources`. Do not call `source.update()` here: Pixi's
-buffer uploader takes `texSubImage2D` when the GL size already matches. Do not create a new
-`BufferImageSource` / `Texture`. WebGPU keeps dirty rectangles. Proto dirty rects still go
-through `uploadFloatTextureRanges`.
+`initializeTexture` (full `texImage2D`). Rewriting a bound `rgba32float` vertex palette with
+`texSubImage2D` or a second `texImage2D` of the same GL object blanks the compositor on
+ANGLE/SwiftShader while CPU slots stay live, including a packed 1024-wide row at `x = 0`
+with `UNPACK_*` reset and `glError` 0. First Pixi `initializeTexture` / `getGlSource` still
+paints. Unbind the mesh sampler first (`unbindPaletteTexture` → `Texture.EMPTY`) and every
+GL `TEXTURE_2D` unit (`renderer.texture.unbind` plus a combined-unit walk), dirty-upload
+the same object, then rebind through `#bindMeshSources`. Do not skip the WebGL rewrite.
+Do not call `source.update()` here: Pixi's buffer uploader takes `texSubImage2D` when the
+GL size already matches. Do not create a new `BufferImageSource` / `Texture`. WebGPU keeps
+dirty rectangles. Proto dirty rects still go through `uploadFloatTextureRanges`.
 
 The first proto `initializeTexture` uploads whatever `highWater` is at that moment (often glyph 0
 only). Three appearance glyphs still fit in one 1024-wide row, so the texture size does not grow
@@ -373,8 +371,8 @@ texel width is 16 KiB per row and is aligned. Narrow palettes (unit tests use wi
 row-by-row so WebGL and WebGPU share the same rectangles. Do not pad `bytesPerRow` — the CPU
 buffer has no row padding. WebGL `rgba32float` palette dirties blank on any GPU rewrite of
 the bound texture after the first `initializeTexture` (`texSubImage2D` and a second
-`texImage2D` of the same object). Experiment O unbinds the mesh sampler and GL units,
-dirty-uploads the same object, then rebinds.
+`texImage2D` of the same object). Unbind the mesh sampler and GL units, dirty-upload
+the same object, then rebind.
 
 ## Spatial queries with dense results must not pay the grid sort
 
