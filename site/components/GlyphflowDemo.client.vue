@@ -345,6 +345,7 @@ async function initialize(backend: RendererBackend, runId: number): Promise<void
     renderer: nextApp.renderer,
     initialCapacity: LABEL_COUNT,
     rendering: {
+      transformOptions: { initialCapacity: LABEL_COUNT },
       rasterizerOptions: {
         tinySdf: true,
         distanceFieldMinFontSize: 48,
@@ -447,6 +448,7 @@ async function initialize(backend: RendererBackend, runId: number): Promise<void
   nextViewport.emit("frame-end", nextViewport);
   await nextBinding.whenIdle();
   if (isStale(runId)) return;
+  nextApp.render();
 
   const rendererAdapter = nextLayer.stats.rendererAdapter;
   if (rendererAdapter !== backend) {

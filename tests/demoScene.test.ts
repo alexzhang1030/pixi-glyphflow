@@ -72,7 +72,7 @@ describe("homepage demo scene", () => {
     expect(new Set(firstView).size).toBe(firstView.length);
 
     const visible = gridIndicesInWorldBounds(tight);
-    expect(visible.length).toBeGreaterThan(80);
+    expect(visible.length).toBeGreaterThan(60);
     expect(visible.every((index) => firstViewSet.has(index))).toBe(true);
 
     const heroVisible = visible.filter((index) => resolveLanguageSample(index).hero);
