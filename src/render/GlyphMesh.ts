@@ -11,7 +11,7 @@ import {
   type Texture,
 } from "pixi.js";
 
-import type { PalettePath } from "./paletteStorage";
+import { readyPalettePath, type PalettePath } from "./paletteStorage";
 import { GLYPH_FRAGMENT_GLSL, glyphShaderWgsl, GLYPH_VERTEX_GLSL } from "./shaders";
 import { GLYPH_DRAW_STRIDE, GLYPH_PROTO_TEXTURE_WIDTH, GLYPH_TEXTURE_BANK_SIZE } from "./types";
 
@@ -43,6 +43,7 @@ export interface GlyphMeshOptions {
 
 export class GlyphMesh extends Mesh<Geometry, Shader> {
   readonly instanceBuffer: Buffer;
+  readonly palettePath: PalettePath;
   readonly #ownedGeometry: Geometry;
   readonly #ownedShader: Shader;
   #prototypeTexture: Texture;
@@ -57,6 +58,10 @@ export class GlyphMesh extends Mesh<Geometry, Shader> {
       throw new TypeError("prototypeWidth must be a positive safe integer");
     }
     const [atlasR, atlasRGBA] = normalizeAtlasArrays(options.texture, options.textures);
+    const palettePath = readyPalettePath(
+      options.palettePath ?? "texture",
+      options.paletteStorage !== undefined,
+    );
     const vertexBuffer = new Buffer({
       data: new Float32Array([0, 0, 1, 0, 1, 1, 0, 1]),
       usage: BufferUsage.VERTEX,
@@ -102,11 +107,11 @@ export class GlyphMesh extends Mesh<Geometry, Shader> {
         gpuProgram: GpuProgram.from({
           name: "pixi-glyphflow",
           vertex: {
-            source: glyphShaderWgsl(options.palettePath ?? "texture"),
+            source: glyphShaderWgsl(palettePath),
             entryPoint: "mainVertex",
           },
           fragment: {
-            source: glyphShaderWgsl(options.palettePath ?? "texture"),
+            source: glyphShaderWgsl(palettePath),
             entryPoint: "mainFragment",
           },
           gpuLayout: [
@@ -140,7 +145,7 @@ export class GlyphMesh extends Mesh<Geometry, Shader> {
                 visibility: ShaderStage.FRAGMENT,
                 sampler: { type: "filtering" },
               },
-              paletteVertexBinding(options.palettePath ?? "texture"),
+              paletteVertexBinding(palettePath),
               {
                 binding: 4,
                 visibility: ShaderStage.VERTEX,
@@ -162,8 +167,7 @@ export class GlyphMesh extends Mesh<Geometry, Shader> {
           uAtlasR: atlasR.source,
           uAtlasRGBA: atlasRGBA.source,
           uSampler: ATLAS_SAMPLER_STYLE,
-          uTransformTexture: options.paletteTexture.source,
-          ...(options.paletteStorage === undefined ? {} : { uTransforms: options.paletteStorage }),
+          ...glyphPaletteResources(palettePath, options.paletteTexture, options.paletteStorage),
           uPrototype: options.prototypeTexture.source,
           glyphUniforms: {
             uPaletteWidth: { value: options.paletteWidth, type: "f32" },
@@ -173,6 +177,7 @@ export class GlyphMesh extends Mesh<Geometry, Shader> {
       });
     super({ geometry, shader, texture: options.texture });
     this.instanceBuffer = instanceBuffer;
+    this.palettePath = palettePath;
     this.#ownedGeometry = geometry;
     this.#ownedShader = shader;
     this.#prototypeTexture = options.prototypeTexture;
@@ -213,15 +218,35 @@ export class GlyphMesh extends Mesh<Geometry, Shader> {
     if (!Number.isFinite(effectBase) || effectBase < 0) {
       throw new TypeError("effectBase must be a finite non-negative number");
     }
-    this.#ownedShader.resources.uTransformTexture = texture.source;
+    switch (this.palettePath) {
+      case "texture":
+        this.#ownedShader.resources.uTransformTexture = texture.source;
+        break;
+      case "storage":
+        break;
+      default: {
+        const _exhaustive: never = this.palettePath;
+        return _exhaustive;
+      }
+    }
     this.#ownedShader.resources.glyphUniforms.uniforms.uPaletteWidth = width;
     this.#ownedShader.resources.glyphUniforms.uniforms.uEffectBase = effectBase;
     this.#bindPrototype();
   }
 
   setPaletteStorage(buffer: Buffer): void {
-    this.#ownedShader.resources.uTransforms = buffer;
-    this.#bindPrototype();
+    switch (this.palettePath) {
+      case "texture":
+        return;
+      case "storage":
+        this.#ownedShader.resources.uTransforms = buffer;
+        this.#bindPrototype();
+        return;
+      default: {
+        const _exhaustive: never = this.palettePath;
+        return _exhaustive;
+      }
+    }
   }
 
   setPrototypeTexture(texture: Texture, width: number): void {
@@ -245,16 +270,47 @@ export class GlyphMesh extends Mesh<Geometry, Shader> {
   }
 }
 
-function paletteVertexBinding(path: PalettePath): {
-  binding: number;
-  visibility: number;
-  texture?: {
+export interface GlyphPaletteBindSpec {
+  readonly resourceName: "uTransformTexture" | "uTransforms";
+  readonly binding: 3;
+  readonly visibility: number;
+  readonly texture?: {
     sampleType: "unfilterable-float";
     viewDimension: "2d";
     multisampled: false;
   };
-  buffer?: { type: "read-only-storage" };
-} {
+  readonly buffer?: { type: "read-only-storage" };
+}
+
+/** Group 2 binding 3 for the requested palette path. Names must match WGSL and resources. */
+export function glyphPaletteBindSpec(path: PalettePath): GlyphPaletteBindSpec {
+  switch (path) {
+    case "texture":
+      return {
+        resourceName: "uTransformTexture",
+        binding: 3,
+        visibility: ShaderStage.VERTEX,
+        texture: {
+          sampleType: "unfilterable-float",
+          viewDimension: "2d",
+          multisampled: false,
+        },
+      };
+    case "storage":
+      return {
+        resourceName: "uTransforms",
+        binding: 3,
+        visibility: ShaderStage.VERTEX,
+        buffer: { type: "read-only-storage" },
+      };
+    default: {
+      const _exhaustive: never = path;
+      return _exhaustive;
+    }
+  }
+}
+
+function paletteVertexBinding(path: PalettePath): GPUBindGroupLayoutEntry {
   switch (path) {
     case "texture":
       return {
@@ -272,6 +328,31 @@ function paletteVertexBinding(path: PalettePath): {
         visibility: ShaderStage.VERTEX,
         buffer: { type: "read-only-storage" },
       };
+    default: {
+      const _exhaustive: never = path;
+      return _exhaustive;
+    }
+  }
+}
+
+/**
+ * Pixi puts resource names missing from the GPU program into group 99. That group's bind-group
+ * layout is undefined, so the first WebGPU `createBindGroup` throws. Storage WGSL has `uTransforms`
+ * only. Texture WGSL has `uTransformTexture` only.
+ */
+export function glyphPaletteResources(
+  path: PalettePath,
+  paletteTexture: Texture,
+  paletteStorage: Buffer | undefined,
+): { readonly uTransformTexture: Texture["source"] } | { readonly uTransforms: Buffer } {
+  switch (path) {
+    case "texture":
+      return { uTransformTexture: paletteTexture.source };
+    case "storage":
+      if (paletteStorage === undefined) {
+        throw new TypeError("storage palette path requires paletteStorage");
+      }
+      return { uTransforms: paletteStorage };
     default: {
       const _exhaustive: never = path;
       return _exhaustive;

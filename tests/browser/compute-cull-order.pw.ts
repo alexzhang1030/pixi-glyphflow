@@ -21,6 +21,9 @@ test("keeps WebGPU compute cull after instance ranges leave draw order", async (
     contentType: "application/json",
   });
 
+  expect(
+    messages.filter((message) => /createBindGroup|Required member is undefined/i.test(message)),
+  ).toEqual([]);
   assertFixture(webgl, "webgl");
   assertFixture(webgpu, webgpuAvailable ? "webgpu" : "webgl");
 });
@@ -41,5 +44,9 @@ function assertFixture(state: FixtureState, renderer: RendererAdapter): void {
     cullPath: renderer === "webgpu" ? "compute-cull" : "cpu-grid",
     drawCalls: 1,
   });
+  expect(state.result?.palettePath === "texture" || state.result?.palettePath === "storage").toBe(
+    true,
+  );
+  if (renderer === "webgl") expect(state.result?.palettePath).toBe("texture");
   expect(state.result?.submittedGlyphs).toBeGreaterThan(0);
 }

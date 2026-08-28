@@ -31,6 +31,23 @@ export function resolvePalettePath(input: PalettePathInput): PalettePath {
   return "storage";
 }
 
+/**
+ * Storage WGSL and the CPU skip are only valid once the GPU table exists. A requested storage path
+ * with no bound buffer stays on the texture shader.
+ */
+export function readyPalettePath(requested: PalettePath, storageReady: boolean): PalettePath {
+  switch (requested) {
+    case "texture":
+      return "texture";
+    case "storage":
+      return storageReady ? "storage" : "texture";
+    default: {
+      const _exhaustive: never = requested;
+      return _exhaustive;
+    }
+  }
+}
+
 /** Position storms on the storage path skip the CPU 32-byte scatter. */
 export function shouldWriteCpuPalettePositions(path: PalettePath): boolean {
   switch (path) {

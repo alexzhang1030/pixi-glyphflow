@@ -1,6 +1,6 @@
 import { Application } from "pixi.js";
 
-import { TextLayer } from "../../src";
+import { requestComputeCullGpu, TextLayer } from "../../src";
 import { measureVisiblePixels } from "./pixels";
 
 interface BrowserFixtureState {
@@ -36,6 +36,7 @@ void run().catch((error: unknown) => {
 async function run(): Promise<void> {
   const requestedRenderer =
     new URL(window.location.href).searchParams.get("renderer") === "webgpu" ? "webgpu" : "webgl";
+  const gpu = requestedRenderer === "webgpu" ? await requestComputeCullGpu() : undefined;
   const app = new Application();
   await app.init({
     width: 320,
@@ -45,6 +46,7 @@ async function run(): Promise<void> {
     preference: requestedRenderer,
     preferWebGLVersion: 2,
     preserveDrawingBuffer: true,
+    ...(gpu === undefined ? {} : { gpu }),
   });
   document.body.appendChild(app.canvas);
   const layer = new TextLayer({

@@ -50,6 +50,11 @@ export class PaletteStoragePass {
     return this.#ready;
   }
 
+  /** True after `ensureTransforms` registered a GPU storage buffer with Pixi. */
+  get hasGpuTransforms(): boolean {
+    return this.#transforms !== undefined;
+  }
+
   initialize(): boolean {
     if (this.#ready) return true;
     const device = this.#renderer.gpu?.device;
