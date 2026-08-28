@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 
-import { GpuProgram, Shader, Texture } from "pixi.js";
+import { Buffer, BufferUsage, GpuProgram, Shader, Texture } from "pixi.js";
 
 import {
   GLYPH_ATLAS_ARRAY_LAYERS,
@@ -8,6 +8,8 @@ import {
   GLYPH_TEXTURE_BANK_SIZE,
   GlyphMesh,
 } from "../src/advanced";
+import { glyphPaletteBindSpec, glyphPaletteResources } from "../src/render/GlyphMesh";
+import type { PalettePath } from "../src/render/paletteStorage";
 import {
   GLYPH_FRAGMENT_GLSL,
   GLYPH_SHADER_WGSL,
@@ -192,4 +194,101 @@ describe("GlyphMesh", () => {
     expect(GLYPH_ATLAS_ARRAY_LAYERS).toBe(256);
     expect(GLYPH_DRAW_STRIDE).toBe(8);
   });
+
+  test("keeps texture and storage palette binds on matching names", () => {
+    const storage = new Buffer({
+      size: 64,
+      usage: BufferUsage.STORAGE | BufferUsage.COPY_DST,
+      label: "pixi-glyphflow-test-palette-storage",
+    });
+    const shared = {
+      uAtlasR: Texture.WHITE.source,
+      uAtlasRGBA: Texture.WHITE.source,
+      uSampler: Texture.WHITE.source.style,
+      uPrototype: Texture.WHITE.source,
+      glyphUniforms: {
+        uPaletteWidth: { value: 1, type: "f32" },
+        uEffectBase: { value: 0, type: "f32" },
+      },
+    };
+    const storageProgram = GpuProgram.from({
+      vertex: { source: glyphShaderWgsl("storage"), entryPoint: "mainVertex" },
+      fragment: { source: glyphShaderWgsl("storage"), entryPoint: "mainFragment" },
+    });
+    const leftover = new Shader({
+      gpuProgram: storageProgram,
+      resources: {
+        ...shared,
+        uTransformTexture: Texture.WHITE.source,
+        uTransforms: storage,
+      },
+    });
+    const storageShader = new Shader({
+      gpuProgram: storageProgram,
+      resources: {
+        ...shared,
+        ...glyphPaletteResources("storage", Texture.WHITE, storage),
+      },
+    });
+    const textureShader = new Shader({
+      gpuProgram: GpuProgram.from({
+        vertex: { source: glyphShaderWgsl("texture"), entryPoint: "mainVertex" },
+        fragment: { source: glyphShaderWgsl("texture"), entryPoint: "mainFragment" },
+      }),
+      resources: {
+        ...shared,
+        ...glyphPaletteResources("texture", Texture.WHITE, undefined),
+      },
+    });
+
+    expect(leftover.groups[99]).toBeDefined();
+    assertPaletteBind(storageShader, "storage", storage);
+    assertPaletteBind(textureShader, "texture", Texture.WHITE.source);
+
+    const fallbackMesh = new GlyphMesh(
+      meshOptions({ palettePath: "storage", shader: textureShader }),
+    );
+    const storageMesh = new GlyphMesh(
+      meshOptions({
+        palettePath: "storage",
+        paletteStorage: storage,
+        shader: storageShader,
+      }),
+    );
+    expect(fallbackMesh.palettePath).toBe("texture");
+    expect(storageMesh.palettePath).toBe("storage");
+    storageMesh.setPaletteTexture(Texture.WHITE, 2, 4);
+    const shader = storageMesh.shader;
+    expect(shader).not.toBeNull();
+    if (shader === null) return;
+    expect("uTransformTexture" in shader.resources).toBe(false);
+    expect(shader.groups[99]).toBeUndefined();
+
+    leftover.destroy();
+    fallbackMesh.destroy();
+    storageMesh.destroy();
+  });
 });
+
+function assertPaletteBind(
+  shader: Shader,
+  path: PalettePath,
+  expected: Buffer | Texture["source"],
+): void {
+  const spec = glyphPaletteBindSpec(path);
+  const otherName = spec.resourceName === "uTransformTexture" ? "uTransforms" : "uTransformTexture";
+  const program = shader.gpuProgram;
+  const source = glyphShaderWgsl(path);
+
+  expect(program).toBeDefined();
+  if (program === undefined) return;
+  expect(source).toContain(`@group(2) @binding(${String(spec.binding)}`);
+  expect(source).toContain(spec.resourceName);
+  expect(source).not.toContain(otherName);
+  expect(program.layout[2]?.[spec.resourceName]).toBe(spec.binding);
+  expect(program.layout[2]?.[otherName]).toBeUndefined();
+  expect(shader.resources[spec.resourceName]).toBe(expected);
+  expect(otherName in shader.resources).toBe(false);
+  expect(shader.groups[2]?.getResource(spec.binding)).toBe(expected);
+  expect(shader.groups[99]).toBeUndefined();
+}

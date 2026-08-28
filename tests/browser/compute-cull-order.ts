@@ -1,6 +1,6 @@
 import { Application } from "pixi.js";
 
-import { TextLayer } from "../../src";
+import { requestComputeCullGpu, TextLayer } from "../../src";
 
 interface ComputeCullOrderFixtureState {
   done: boolean;
@@ -8,6 +8,7 @@ interface ComputeCullOrderFixtureState {
   result?: {
     rendererAdapter: string;
     cullPath: string;
+    palettePath: string;
     drawCalls: number;
     submittedGlyphs: number;
   };
@@ -30,6 +31,7 @@ void run().catch((error: unknown) => {
 async function run(): Promise<void> {
   const requestedRenderer =
     new URL(window.location.href).searchParams.get("renderer") === "webgpu" ? "webgpu" : "webgl";
+  const gpu = requestedRenderer === "webgpu" ? await requestComputeCullGpu() : undefined;
   const app = new Application();
   await app.init({
     width: 320,
@@ -39,6 +41,7 @@ async function run(): Promise<void> {
     preference: requestedRenderer,
     preferWebGLVersion: 2,
     preserveDrawingBuffer: true,
+    ...(gpu === undefined ? {} : { gpu }),
   });
   document.body.appendChild(app.canvas);
   const layer = new TextLayer({
@@ -70,6 +73,7 @@ async function run(): Promise<void> {
   window.__glyphflowComputeCullOrder.result = {
     rendererAdapter: stats.rendererAdapter,
     cullPath: stats.cullPath,
+    palettePath: stats.palettePath,
     drawCalls: stats.drawCalls,
     submittedGlyphs: stats.submittedGlyphs,
   };

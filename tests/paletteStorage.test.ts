@@ -9,6 +9,7 @@ import {
   PALETTE_ORIGIN_FLOATS,
   paletteMoveRange,
   refreshPaletteOrigins,
+  readyPalettePath,
   resolvePalettePath,
   shouldWriteCpuPalettePositions,
 } from "../src/render/paletteStorage";
@@ -43,6 +44,10 @@ describe("palette storage path", () => {
     ).toBe("texture");
     expect(shouldWriteCpuPalettePositions("texture")).toBe(true);
     expect(shouldWriteCpuPalettePositions("storage")).toBe(false);
+    expect(readyPalettePath("storage", true)).toBe("storage");
+    expect(readyPalettePath("storage", false)).toBe("texture");
+    expect(readyPalettePath("texture", true)).toBe("texture");
+    expect(readyPalettePath("texture", false)).toBe("texture");
   });
 
   test("selects a storage palette when the vertex stage can bind the table", () => {

@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+### Fixed
+
+- WebGPU storage-palette meshes no longer pass a leftover `uTransformTexture` resource into Pixi.
+  That unknown name became bind group 99 with an undefined layout, and the first compute-cull
+  `createBindGroup` threw. The storage path now binds `uTransforms` only, and it stays on the
+  texture shader until the storage table is registered.
+
 ### Changed
 
 - The homepage live demo frames a readable multilingual specimen band, paints that first camera
