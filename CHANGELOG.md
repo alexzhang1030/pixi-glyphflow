@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+### Changed
+
+- The homepage live demo frames a readable multilingual specimen band, paints that first camera
+  view before the rest of the million-label allocate, and reports `stats.palettePath` next to
+  the cull path. Extra engine numbers sit behind a disclosure. WebGL stays on the texture
+  palette. Published benchmark numbers are unchanged.
+
 ### Added
 
 - `TextLayerCullingOptions.offscreenAdmitBudgetBytes` caps compute-cull first-seen admission

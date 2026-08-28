@@ -199,12 +199,12 @@ const guides = [
           <div>
             <h1 id="hero-title">Render text at<br />scene scale.</h1>
             <p class="hero-copy">
-              One retained layer for a million labels, compact glyph batches, incremental updates,
-              CJKV and complex-script shaping, and camera-aware culling across WebGL and WebGPU.
+              A million labels live in one layer. The canvas below is that layer: CJKV and seven
+              more scripts, 100,000 packed moves every 100 ms, WebGL or WebGPU.
             </p>
             <div class="hero-actions">
               <a class="button primary" href="#start">Build a layer</a>
-              <a class="button secondary" href="#viewport">Run the viewport</a>
+              <a class="button secondary" href="#viewport">Bind a camera</a>
             </div>
           </div>
 

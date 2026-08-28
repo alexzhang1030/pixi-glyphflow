@@ -7,7 +7,7 @@
 - [100× performance path](performance-100x.md) — why compute-cull felt slower than cpu-grid, what 100× actually means on the homepage, shared prototype instance ranges, the first-seen admit lane, the prototype-fetch instance mesh, parallel admit-group prepare, TinySDF same-size miss batch, columnar spatial translate, admit fill merge, optional `uiSdfPrebuilt` / `charsetSdfPrebuilt` side export, physical distance-field intern, empty-ink generation skip, atlas texture arrays, the off-screen admit byte budget, prebuilt physical-size rematch, WebGPU palette storage (mover slot list, no 1M CPU gather), and the remaining slice (tight-view unique raster; rejected default baked pages in the core gzip).
 - [Implementation plan](../../tasks/plan.md) — dependency order, delivery phases, checkpoints, risks, and release sequence.
 - [Task ledger](../../tasks/todo.md) — small implementation slices with acceptance criteria and verification commands.
-- [Interactive documentation site](../../site/README.md) — Nuxt build contract, live-render scale, WebGPU when available, cull-path readout, browser acceptance, and local operation.
+- [Interactive documentation site](../../site/README.md) — Nuxt build contract, live-render scale, WebGPU when available, cull-path and palette-path readouts, first-view paint before the million-label allocate, browser acceptance, and local operation.
 - [Font and language guide](../../docs/fonts.md) — custom font sources, CJKV routing, fallback semantics, shaping controls, and MSDF asset setup.
 
 The 1.0 specification is the current unstamped design record. Tests, benchmarks, package artifacts, and tagged release evidence are the authoritative proof for implementation claims.

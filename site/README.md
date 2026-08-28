@@ -26,7 +26,10 @@ points through exact aliases to `dist/`.
 - a WebGL 2 or WebGPU selector that rebuilds the complete PixiJS scene;
 - WebGPU as the first boot when a GPU adapter is available and `?renderer` is absent;
 - `?renderer=webgl` and `?renderer=webgpu` as hard overrides;
-- `computeCull: "auto"` plus a HUD and `data-cull-path` readout of `stats.cullPath`, either `compute-cull` or `cpu-grid`;
+- `computeCull: "auto"` plus a compact HUD and `data-cull-path` / `data-palette-path` readouts of
+  `stats.cullPath` (`compute-cull` or `cpu-grid`) and `stats.palettePath` (`storage` or `texture`);
+- a first camera view framed on the multilingual specimen band, painted before the rest of the
+  million-label set is allocated;
 - 1,000,000 resident labels and viewport culling;
 - 100,000 packed position updates every 100 milliseconds;
 - five registered Noto subsets covering CJKV, Arabic, Devanagari, Hebrew, and Thai;
@@ -51,6 +54,8 @@ existing responsive document layout.
 ## Browser acceptance
 
 `bun run site:test` builds the root package and Nuxt server, then runs Chrome checks for the live
-default backend, capability-gated WebGPU renderer, WebGL override and rebuild, cull-path readout,
-position-storm revisions, progressive examples, camera controls, theme switching, reduced motion,
-keyboard access, console errors, and horizontal fit at 320, 768, 1024, and 1440 pixels.
+default backend, capability-gated WebGPU renderer, WebGL override and rebuild, cull-path and
+palette-path readouts, position-storm revisions, progressive examples, camera controls, theme
+switching, reduced motion, keyboard access, console errors, and horizontal fit at 320, 768, 1024,
+and 1440 pixels. WebGL stays on `palettePath` `"texture"`. WebGPU reports `"storage"` when
+`requestComputeCullGpu()` raised `maxStorageBuffersInVertexStage`.

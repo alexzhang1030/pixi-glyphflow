@@ -140,6 +140,10 @@ Budgeted first-seen waves (`prepareBudgetMs` / `prepareWave` / leftover rAF) hid
 working set and filled it in over later frames. That is rejected: on-screen text must appear in
 the commit that first sees it.
 
+The homepage demo follows that rule with a two-phase allocate. It creates every label that
+intersects the first camera working set, commits once so that text appears, then allocates the
+rest of the million off that view. Do not split the first on-screen set across later commits.
+
 The hitch those waves were papering over is still real. A homepage pan after a working-set miss
 spent 1.89s then 2.65s in layout and raster because compute-cull prepared the padded working set,
 not the tight draw view. `retainResources` only helps revisits. New glyphs still need layout and
