@@ -30,7 +30,6 @@ export class PaletteStoragePass {
   #originY: GPUBuffer | undefined;
   #slots: GPUBuffer | undefined;
   #uniform: GPUBuffer | undefined;
-  #bindGroup: GPUBindGroup | undefined;
   #transformBytes = 0;
   #originCapacity = 0;
   #slotCapacity = 0;
@@ -93,7 +92,6 @@ export class PaletteStoragePass {
     if (size <= this.#transformBytes && this.#transforms !== undefined) {
       return { ok: true, replaced: false };
     }
-    this.#bindGroup = undefined;
     const previous = this.#transformBuffer;
     this.#transformBuffer = createPaletteBuffer(size);
     this.#renderer.buffer.updateBuffer(this.#transformBuffer);
@@ -166,7 +164,6 @@ export class PaletteStoragePass {
     device.queue.writeBuffer(slots, 0, move.slots.buffer, move.slots.byteOffset, slotBytes);
     this.#uniformInts[0] = move.count;
     device.queue.writeBuffer(uniform, 0, this.#uniformScratch);
-    this.#bindGroup = undefined;
     const bindGroup = device.createBindGroup({
       label: "pixi-glyphflow-palette-patch-bind-group",
       layout,
@@ -178,7 +175,6 @@ export class PaletteStoragePass {
         { binding: 4, resource: { buffer: transforms } },
       ],
     });
-    this.#bindGroup = bindGroup;
     const groups = Math.max(1, Math.ceil(move.count / PALETTE_PATCH_WORKGROUP));
     const encoder = device.createCommandEncoder({ label: "pixi-glyphflow-palette-patch" });
     const pass = encoder.beginComputePass();
@@ -197,7 +193,6 @@ export class PaletteStoragePass {
     this.#uniform?.destroy();
     this.#transformBuffer.destroy();
     this.#transforms = undefined;
-    this.#bindGroup = undefined;
     this.#ready = false;
     this.#device = undefined;
   }
@@ -269,13 +264,11 @@ export class PaletteStoragePass {
       this.#originX = createBuffer(device, originBytes, "pixi-glyphflow-palette-origin-x");
       this.#originY = createBuffer(device, originBytes, "pixi-glyphflow-palette-origin-y");
       this.#originCapacity = originBytes / Float32Array.BYTES_PER_ELEMENT;
-      this.#bindGroup = undefined;
     }
     if (slotCount > this.#slotCapacity || this.#slots === undefined) {
       this.#slots?.destroy();
       this.#slots = createBuffer(device, slotBytes, "pixi-glyphflow-palette-move-slots");
       this.#slotCapacity = slotBytes / Uint32Array.BYTES_PER_ELEMENT;
-      this.#bindGroup = undefined;
     }
     if (this.#uniform === undefined) {
       this.#uniform = createBuffer(

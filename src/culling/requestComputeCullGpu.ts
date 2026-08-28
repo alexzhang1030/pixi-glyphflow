@@ -15,7 +15,7 @@ export function computeCullDeviceLimits(adapter: {
     readonly maxBufferSize: number;
     readonly maxStorageBuffersInVertexStage?: number;
   };
-}): GPUDeviceDescriptor["requiredLimits"] {
+}): Record<string, number> {
   const limits: Record<string, number> = {
     maxStorageBufferBindingSize: adapter.limits.maxStorageBufferBindingSize,
     maxBufferSize: adapter.limits.maxBufferSize,

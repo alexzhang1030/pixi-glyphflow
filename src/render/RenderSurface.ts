@@ -940,14 +940,15 @@ export class RenderSurface {
   ): SurfaceMesh {
     const textures = this.#atlasTextures();
     const paletteStats = this.#coordinator.transforms.stats;
+    const paletteStorage =
+      this.#palettePath === "storage" ? this.#palettePass?.transformBuffer : undefined;
     const mesh = new GlyphMesh({
       texture: textures[0],
       textures,
       paletteTexture: this.#paletteTexture,
       paletteWidth: paletteStats.textureWidth,
       palettePath: this.#palettePath,
-      paletteStorage:
-        this.#palettePath === "storage" ? this.#palettePass?.transformBuffer : undefined,
+      ...(paletteStorage === undefined ? {} : { paletteStorage }),
       prototypeTexture: this.#protoTexture,
       prototypeWidth: this.#protoWidth,
       effectBase: paletteStats.effectBase,

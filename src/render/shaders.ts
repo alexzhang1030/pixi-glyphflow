@@ -226,7 +226,7 @@ void main(void) {
 }
 `;
 
-const GLYPH_SHADER_WGSL_TEXTURE = /* wgsl */ `
+const GLYPH_SHADER_WGSL_TEXTURE: string = /* wgsl */ `
 struct GlobalUniforms {
     uProjectionMatrix: mat3x3<f32>,
     uWorldTransformMatrix: mat3x3<f32>,
@@ -473,7 +473,7 @@ fn mainFragment(input: VertexOutput) -> @location(0) vec4<f32> {
 }
 `;
 
-const GLYPH_SHADER_WGSL_STORAGE = GLYPH_SHADER_WGSL_TEXTURE.replace(
+const GLYPH_SHADER_WGSL_STORAGE: string = GLYPH_SHADER_WGSL_TEXTURE.replace(
   "@group(2) @binding(3) var uTransformTexture: texture_2d<f32>;",
   "@group(2) @binding(3) var<storage, read> uTransforms: array<vec4<f32>>;",
 )
@@ -490,7 +490,7 @@ const GLYPH_SHADER_WGSL_STORAGE = GLYPH_SHADER_WGSL_TEXTURE.replace(
     "        uTransforms[u32(glyphUniforms.uEffectBase) + aPaletteIndex]",
   );
 
-export const GLYPH_SHADER_WGSL = GLYPH_SHADER_WGSL_TEXTURE;
+export const GLYPH_SHADER_WGSL: string = GLYPH_SHADER_WGSL_TEXTURE;
 
 export function glyphShaderWgsl(path: PalettePath): string {
   switch (path) {
