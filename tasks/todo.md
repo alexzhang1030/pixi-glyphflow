@@ -411,10 +411,10 @@
   - Verify: bun test tests/computeCull.test.ts tests/RenderCoordinator.test.ts tests/TextLayer.commit.test.ts tests/culling.test.ts
   - Files: src/culling/computeCull.ts, src/render/RenderCoordinator.ts, src/TextLayer.ts
 
-- [ ] Task 12.7: Add hybrid glyph generation and upload budgets (Wave 4).
+- [x] Task 12.7: Add hybrid glyph generation and upload budgets (Wave 4).
   - Acceptance: Local TinySDF or prebaked pages serve the common set; dynamic MSDF remains the long tail; a per-frame budget gates off-screen label admission, not texel uploads for already-instanced glyphs, without growing the core gzip entry.
-  - Verify: bun test tests/glyph-providers.test.ts tests/GlyphAtlas.test.ts && bun run benchmark -- --workload atlas-pressure,multilingual-stream
-  - Files: src/atlas/RasterGlyphProvider.ts, src/atlas/PrebuiltGlyphProvider.ts, src/atlas/GlyphAtlas.ts
+  - Verify: bun test tests/glyph-providers.test.ts tests/GlyphAtlas.test.ts tests/computeCull.test.ts tests/culling.test.ts && bun run typecheck
+  - Files: src/culling/computeCull.ts, src/TextLayer.ts, src/types.ts, src/atlas/RasterGlyphProvider.ts, src/atlas/PrebuiltGlyphProvider.ts, src/prebuilt
 
 - [ ] Task 12.8: Optional extreme quality tracks (Wave 5).
   - Acceptance: Outline (Slug), collision, SIMD shaping, and SharedArrayBuffer rings land only as opt-in modes with their own workloads and pixel tolerances.

@@ -129,8 +129,9 @@ export function shouldInstanceUnshaped(input: {
 
 /**
  * After {@link shouldInstanceUnshaped}: the tight draw view always admits, including a unique miss.
- * Ring-only unique waits for an intern hit. Cache hits stay on the same turn. cpu-grid visible
- * slots are already the tight set.
+ * Ring-only unique waits for an intern hit. Cache hits are eligible on the same turn; a per-frame
+ * byte budget may leave some off-screen intern hits unstamped. cpu-grid visible slots are already
+ * the tight set.
  */
 export function shouldAdmitUnshaped(input: {
   readonly cullPath: CullPath;
@@ -183,6 +184,139 @@ export function shouldAdmitOffscreenGroup(input: {
       return _exhaustive;
     }
   }
+}
+
+/** One fill-only palette row. Off-screen intern hits charge this, not atlas texels. */
+export const OFFSCREEN_ADMIT_LABEL_BYTES = 32;
+
+/** Default compute-cull off-screen admit cap. Tight-view labels do not consume it. */
+export const DEFAULT_OFFSCREEN_ADMIT_BUDGET_BYTES = 65_536;
+
+export type AdmitSlotKind = "tight" | "offscreen" | "skip";
+
+export interface OffscreenAdmitBudget {
+  remainingBytes: number;
+  deferred: boolean;
+}
+
+export function createOffscreenAdmitBudget(input: {
+  readonly cullPath: CullPath;
+  readonly budgetBytes: number;
+}): OffscreenAdmitBudget {
+  switch (input.cullPath) {
+    case "cpu-grid":
+      return { remainingBytes: Number.POSITIVE_INFINITY, deferred: false };
+    case "compute-cull":
+      return { remainingBytes: input.budgetBytes, deferred: false };
+    default: {
+      const _exhaustive: never = input.cullPath;
+      return _exhaustive;
+    }
+  }
+}
+
+export function tryAdmitOffscreen(budget: OffscreenAdmitBudget): boolean {
+  if (budget.remainingBytes >= OFFSCREEN_ADMIT_LABEL_BYTES) {
+    budget.remainingBytes -= OFFSCREEN_ADMIT_LABEL_BYTES;
+    return true;
+  }
+  budget.deferred = true;
+  return false;
+}
+
+export function classifyAdmitSlot(input: {
+  readonly cullPath: CullPath;
+  readonly ring: CullViewport | undefined;
+  readonly draw: CullViewport | undefined;
+  readonly interned: boolean;
+  readonly groupHasTight: boolean;
+  readonly minX: number;
+  readonly minY: number;
+  readonly maxX: number;
+  readonly maxY: number;
+}): AdmitSlotKind {
+  if (!shouldInstanceUnshaped(input)) return "skip";
+  switch (input.cullPath) {
+    case "cpu-grid":
+      return "tight";
+    case "compute-cull":
+      if (input.draw === undefined) return "tight";
+      if (aabbVisible(input.minX, input.minY, input.maxX, input.maxY, input.draw)) return "tight";
+      return input.interned || input.groupHasTight ? "offscreen" : "skip";
+    default: {
+      const _exhaustive: never = input.cullPath;
+      return _exhaustive;
+    }
+  }
+}
+
+/**
+ * Keep tight members of an eligible group. Charge {@link OFFSCREEN_ADMIT_LABEL_BYTES} per
+ * off-screen intern hit or same-commit ring copy. Unique ring-only groups stay empty.
+ */
+export function selectAdmitBoxes(input: {
+  readonly cullPath: CullPath;
+  readonly ring: CullViewport | undefined;
+  readonly draw: CullViewport | undefined;
+  readonly interned: boolean;
+  readonly boxes: readonly {
+    readonly minX: number;
+    readonly minY: number;
+    readonly maxX: number;
+    readonly maxY: number;
+  }[];
+  readonly budget: OffscreenAdmitBudget;
+}): boolean[] {
+  const take = input.boxes.map(() => false);
+  if (!shouldAdmitOffscreenGroup(input)) return take;
+  let groupHasTight = input.draw === undefined;
+  if (!groupHasTight && input.draw !== undefined) {
+    for (const box of input.boxes) {
+      if (aabbVisible(box.minX, box.minY, box.maxX, box.maxY, input.draw)) {
+        groupHasTight = true;
+        break;
+      }
+    }
+  }
+  for (let index = 0; index < input.boxes.length; index += 1) {
+    const box = input.boxes[index];
+    if (box === undefined) continue;
+    const kind = classifyAdmitSlot({
+      cullPath: input.cullPath,
+      ring: input.ring,
+      draw: input.draw,
+      interned: input.interned,
+      groupHasTight,
+      minX: box.minX,
+      minY: box.minY,
+      maxX: box.maxX,
+      maxY: box.maxY,
+    });
+    switch (kind) {
+      case "tight":
+        take[index] = true;
+        break;
+      case "offscreen":
+        take[index] = tryAdmitOffscreen(input.budget);
+        break;
+      case "skip":
+        break;
+      default: {
+        const _exhaustive: never = kind;
+        return _exhaustive;
+      }
+    }
+  }
+  return take;
+}
+
+export function shouldQueryPrepareRing(input: {
+  readonly preparedRing: CullViewport | undefined;
+  readonly draw: CullViewport;
+  readonly offscreenDeferred: boolean;
+}): boolean {
+  if (input.offscreenDeferred) return true;
+  return input.preparedRing === undefined || !workingSetContains(input.preparedRing, input.draw);
 }
 
 export function expandPrepareRing(draw: CullViewport): CullViewport {

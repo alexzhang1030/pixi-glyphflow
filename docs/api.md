@@ -45,6 +45,13 @@ glyphs fit one atlas bank. WebGL, unavailable devices, multi-segment meshes, and
 CPU grid. `lod: true` drops labels whose projected font height is below one pixel. That changes
 pixels and stays off by default.
 
+`offscreenAdmitBudgetBytes` caps compute-cull first-seen admission for labels that sit only
+in the 0.25-viewport prepare ring. Each intern-hit ring label charges 32 bytes, one fill-only
+palette row. Tight-view labels always finish in that commit and do not consume the cap. Atlas
+texel uploads for already-instanced glyphs stay ungated. The default is 65536 (2048 off-screen
+labels). `0` admits the tight view only. The CPU grid ignores the cap because its visible set
+is already the tight view.
+
 PixiJS creates WebGPU devices with the 128 MiB core `maxStorageBufferBindingSize`. Compute cull
 binds record storage and an 8-byte-per-visible-glyph compact draw buffer. `requestComputeCullGpu()`
 requests the adapter's storage and buffer limits and returns `{ adapter, device }` for

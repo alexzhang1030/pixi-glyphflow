@@ -122,13 +122,15 @@ storage budgets stay until a human accepts new numbers.
   fetch the unique store from a
   prototype texture. Compact and scatter stamp the palette index.
 - Set an atlas ceiling that matches the product glyph working set.
-- Compute-cull layouts first-seen labels in the tight draw view. The 0.25-viewport ring still
-  admits intern hits and same-commit copies of a tight unique string. Ring-only unique misses
-  stay unshaped. The expanded working set is residency slack, not a prepare batch. Known strings
-  hit the shape cache on the same turn and share instance ranges. First-seen fill-only copies of
-  those strings skip per-label snapshots and write the palette in a column. Distinct first-seen
-  strings prepare those columns in parallel. Unique groups that share a fill write one
-  `writeFills` column.
+- Compute-cull layouts first-seen labels in the tight draw view. The 0.25-viewport ring may
+  admit intern hits and same-commit copies of a tight unique string, up to
+  `culling.offscreenAdmitBudgetBytes` (default 65536). Ring-only unique misses stay unshaped.
+  Deferred ring hits resume on a later ring query or when they enter the tight view. Atlas
+  texel uploads for already-instanced glyphs stay ungated. The expanded working set is residency
+  slack, not a prepare batch. Known strings hit the shape cache on the same turn and share
+  instance ranges. First-seen fill-only copies of those strings skip per-label snapshots and
+  write the palette in a column. Distinct first-seen strings prepare those columns in parallel.
+  Unique groups that share a fill write one `writeFills` column.
 - Put stable UI alphabets on `rasterizerOptions.prebuilt` pages. Do not ship those pages in the
   core bundle. `pixi-glyphflow/prebuilt` (`uiSdfPrebuilt`, `charsetSdfPrebuilt`) is the optional
   side export; import it from that entry, not from `pixi-glyphflow`. Empty-ink scalars skip

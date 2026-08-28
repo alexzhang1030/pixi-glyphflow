@@ -123,20 +123,24 @@ The hitch those waves were papering over is still real. A homepage pan after a w
 spent 1.89s then 2.65s in layout and raster because compute-cull prepared the padded working set,
 not the tight draw view. `retainResources` only helps revisits. New glyphs still need layout and
 raster. Do that for labels that intersect the tight draw view. Cache hits in the 0.25-viewport
-ring stay on the same turn. Off-screen working-set residents stay unshaped until the camera
+ring are eligible on the same turn, then gated by `offscreenAdmitBudgetBytes` (32 bytes per
+off-screen intern-hit label). Off-screen working-set unique misses stay unshaped until the camera
 reaches them.
 
-Do not bring back per-frame admission leftovers, `pendingAdmissionCount`, or animation-frame
-continue. That path also remirrored the instance buffer every wave and made compute-cull slower
-than `cpu-grid`.
+Do not bring back leftover rAF, `pendingAdmissionCount`, or animation-frame continue. That path
+also remirrored the instance buffer every wave and made compute-cull slower than `cpu-grid`.
+Resume deferred ring hits by querying the prepare ring on a later commit, or when a leftover
+enters the tight view. Do not gate atlas texel uploads for already-instanced glyphs.
 
 Compute-cull must not raster a unique miss that only intersects the prepare ring. The tight
 draw view still finishes in that commit, including unique text. Ring copies of a string that
-already has an intern, or that has a tight member in the same group, still admit. Skip the
+already has an intern, or that has a tight member in the same group, are eligible that turn
+and then spend `offscreenAdmitBudgetBytes`. Skip the
 rendered-epoch stamp on a dropped ring unique, or a later camera move will think it is done.
 Camera motion that stays inside the last prepared ring must still query the tight view for
-those leftovers. Skipping the whole first-seen scan there was only safe when the ring was
-fully prepared.
+those leftovers. If the last commit deferred off-screen intern hits, query the prepare ring
+again so the budget can resume. Skipping the whole first-seen scan there was only safe when
+the ring was fully prepared.
 
 ## TinySDF binary fonts need FontFace
 
