@@ -115,8 +115,8 @@ storage budgets stay until a human accepts new numbers.
 - Reuse styles and fonts to maximize shaping and layout cache hits. Duplicate strings intern one
   layout result per (family, size, weight, text). Broadcast `updateTextPositions` with default
   anchors uses a columnar content lane: one layout, a shared prototype range, packed x/y, and
-  `placeMany` AABBs from the shared run box. Position-only storms slide those boxes with
-  `translateMany` (size class stays; only a cell crossing rebuckets). Non-zero anchors,
+  `placeMany` for the shared local box. Position-only storms write store x/y once; the
+  spatial index aliases those columns and only rebuckets on a cell crossing. Non-zero anchors,
   non-unit scale, shaping overrides, and trusted runs stay on the object path. Duplicate
   strings do not copy instance bytes. Draw instances are 8 bytes per visible glyph; shaders
   fetch the unique store from a

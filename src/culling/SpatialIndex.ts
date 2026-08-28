@@ -22,10 +22,13 @@ export class SpatialIndex {
   #capacity: number;
   #highWater = 0;
   #entries = 0;
-  #minimumX: Float32Array;
-  #minimumY: Float32Array;
-  #maximumX: Float32Array;
-  #maximumY: Float32Array;
+  #originX: Float32Array;
+  #originY: Float32Array;
+  #localX: Float32Array;
+  #localY: Float32Array;
+  #width: Float32Array;
+  #height: Float32Array;
+  #originsAliased = false;
   #zIndex: Float32Array;
   #order: Uint32Array;
   #occupied: Uint8Array;
@@ -50,10 +53,12 @@ export class SpatialIndex {
       throw new RangeError("initialCapacity exceeds maxCapacity");
     }
     this.#capacity = nextPowerOfTwo(initialCapacity);
-    this.#minimumX = new Float32Array(this.#capacity);
-    this.#minimumY = new Float32Array(this.#capacity);
-    this.#maximumX = new Float32Array(this.#capacity);
-    this.#maximumY = new Float32Array(this.#capacity);
+    this.#originX = new Float32Array(this.#capacity);
+    this.#originY = new Float32Array(this.#capacity);
+    this.#localX = new Float32Array(this.#capacity);
+    this.#localY = new Float32Array(this.#capacity);
+    this.#width = new Float32Array(this.#capacity);
+    this.#height = new Float32Array(this.#capacity);
     this.#zIndex = new Float32Array(this.#capacity);
     this.#order = new Uint32Array(this.#capacity);
     this.#occupied = new Uint8Array(this.#capacity);
@@ -86,10 +91,7 @@ export class SpatialIndex {
     }
     this.#ensureCapacity(slot + 1);
     const wasOccupied = this.#occupied[slot] === 1;
-    this.#minimumX[slot] = bounds.x;
-    this.#minimumY[slot] = bounds.y;
-    this.#maximumX[slot] = bounds.x + bounds.width;
-    this.#maximumY[slot] = bounds.y + bounds.height;
+    this.#writeWorld(slot, bounds.x, bounds.y, bounds.width, bounds.height);
     this.#zIndex[slot] = zIndex;
     this.#visible[slot] = Number(visible);
     if (!wasOccupied) {
@@ -107,10 +109,7 @@ export class SpatialIndex {
     if (slot >= this.#highWater || this.#occupied[slot] !== 1) {
       throw new RangeError("Spatial update requires a current occupied slot");
     }
-    this.#minimumX[slot] = bounds.x;
-    this.#minimumY[slot] = bounds.y;
-    this.#maximumX[slot] = bounds.x + bounds.width;
-    this.#maximumY[slot] = bounds.y + bounds.height;
+    this.#writeWorld(slot, bounds.x, bounds.y, bounds.width, bounds.height);
     this.#zIndex[slot] = zIndex;
     this.#visible[slot] = Number(visible);
     this.#rehash(slot);
@@ -176,10 +175,14 @@ export class SpatialIndex {
       if (slot >= this.#highWater || this.#occupied[slot] !== 1) continue;
       const originX = xy[index * 2] ?? 0;
       const originY = xy[index * 2 + 1] ?? 0;
-      this.#minimumX[slot] = originX + localX;
-      this.#minimumY[slot] = originY + localY;
-      this.#maximumX[slot] = originX + localX + width;
-      this.#maximumY[slot] = originY + localY + height;
+      if (!this.#originsAliased) {
+        this.#originX[slot] = originX;
+        this.#originY[slot] = originY;
+      }
+      this.#localX[slot] = localX;
+      this.#localY[slot] = localY;
+      this.#width[slot] = width;
+      this.#height[slot] = height;
       this.#rehash(slot);
       placed += 1;
     }
@@ -187,8 +190,38 @@ export class SpatialIndex {
   }
 
   /**
+   * Alias label-origin columns. World AABB is then origin + cached local box, so a position storm
+   * writes x/y once and only rebuckets. Bind before insert, or only to grown copies of the same
+   * values. @internal
+   */
+  bindOrigins(x: Float32Array, y: Float32Array): void {
+    this.#assertActive();
+    if (!(x instanceof Float32Array) || !(y instanceof Float32Array)) {
+      throw new TypeError("Spatial origin columns must be Float32Array");
+    }
+    if (x.length !== y.length) {
+      throw new TypeError("Spatial origin columns must have the same length");
+    }
+    if (this.#highWater > x.length) {
+      throw new RangeError("Spatial origin columns are shorter than occupied slots");
+    }
+    this.#originX = x;
+    this.#originY = y;
+    this.#originsAliased = true;
+  }
+
+  /** Rebucket one occupied slot after its aliased origin moved. Size class stays. @internal */
+  rehashCurrent(slot: number): boolean {
+    this.#assertActive();
+    if (slot >= this.#highWater || this.#occupied[slot] !== 1) return false;
+    this.#rehashPreservingLevel(slot);
+    return true;
+  }
+
+  /**
    * Slide occupied AABBs by packed per-slot deltas. Size is unchanged, so the size class stays;
-   * only a cell-boundary crossing rebuckets. Keeps z-index and visibility. @internal
+   * only a cell-boundary crossing rebuckets. Aliased origins already moved with the store, so this
+   * only rebuckets. Keeps z-index and visibility. @internal
    */
   translateMany(slots: Uint32Array, count: number, deltas: Float32Array): number {
     this.#assertActive();
@@ -251,10 +284,12 @@ export class SpatialIndex {
     assertSlot(slot);
     if (slot >= this.#highWater || this.#occupied[slot] !== 1) return undefined;
     const target = output ?? { x: 0, y: 0, width: 0, height: 0 };
-    target.x = this.#minimumX[slot] ?? 0;
-    target.y = this.#minimumY[slot] ?? 0;
-    target.width = (this.#maximumX[slot] ?? 0) - target.x;
-    target.height = (this.#maximumY[slot] ?? 0) - target.y;
+    const minX = (this.#originX[slot] ?? 0) + (this.#localX[slot] ?? 0);
+    const minY = (this.#originY[slot] ?? 0) + (this.#localY[slot] ?? 0);
+    target.x = minX;
+    target.y = minY;
+    target.width = this.#width[slot] ?? 0;
+    target.height = this.#height[slot] ?? 0;
 
     return target;
   }
@@ -316,11 +351,13 @@ export class SpatialIndex {
     let topOrder = 0;
     const visit = (slot: number): void => {
       if (this.#occupied[slot] !== 1 || this.#visible[slot] !== 1) return;
+      const minX = (this.#originX[slot] ?? 0) + (this.#localX[slot] ?? 0);
+      const minY = (this.#originY[slot] ?? 0) + (this.#localY[slot] ?? 0);
       if (
-        point.x < (this.#minimumX[slot] ?? 0) ||
-        point.x > (this.#maximumX[slot] ?? 0) ||
-        point.y < (this.#minimumY[slot] ?? 0) ||
-        point.y > (this.#maximumY[slot] ?? 0)
+        point.x < minX ||
+        point.x > minX + (this.#width[slot] ?? 0) ||
+        point.y < minY ||
+        point.y > minY + (this.#height[slot] ?? 0)
       ) {
         return;
       }
@@ -359,10 +396,11 @@ export class SpatialIndex {
       entries: this.#entries,
       capacity: this.#capacity,
       allocatedBytes:
-        this.#minimumX.byteLength +
-        this.#minimumY.byteLength +
-        this.#maximumX.byteLength +
-        this.#maximumY.byteLength +
+        (this.#originsAliased ? 0 : this.#originX.byteLength + this.#originY.byteLength) +
+        this.#localX.byteLength +
+        this.#localY.byteLength +
+        this.#width.byteLength +
+        this.#height.byteLength +
         this.#zIndex.byteLength +
         this.#order.byteLength +
         this.#occupied.byteLength +
@@ -378,10 +416,13 @@ export class SpatialIndex {
 
   destroy(): void {
     if (this.#destroyed) return;
-    this.#minimumX = new Float32Array();
-    this.#minimumY = new Float32Array();
-    this.#maximumX = new Float32Array();
-    this.#maximumY = new Float32Array();
+    this.#originX = new Float32Array();
+    this.#originY = new Float32Array();
+    this.#localX = new Float32Array();
+    this.#localY = new Float32Array();
+    this.#width = new Float32Array();
+    this.#height = new Float32Array();
+    this.#originsAliased = false;
     this.#zIndex = new Float32Array();
     this.#order = new Uint32Array();
     this.#occupied = new Uint8Array();
@@ -404,10 +445,18 @@ export class SpatialIndex {
     let capacity = this.#capacity;
     while (capacity < required) capacity *= 2;
     capacity = Math.min(capacity, this.#maxCapacity);
-    this.#minimumX = grow(this.#minimumX, capacity);
-    this.#minimumY = grow(this.#minimumY, capacity);
-    this.#maximumX = grow(this.#maximumX, capacity);
-    this.#maximumY = grow(this.#maximumY, capacity);
+    if (this.#originsAliased) {
+      if (required > this.#originX.length) {
+        throw new RangeError("Spatial origin columns are shorter than the required slot");
+      }
+    } else {
+      this.#originX = grow(this.#originX, capacity);
+      this.#originY = grow(this.#originY, capacity);
+    }
+    this.#localX = grow(this.#localX, capacity);
+    this.#localY = grow(this.#localY, capacity);
+    this.#width = grow(this.#width, capacity);
+    this.#height = grow(this.#height, capacity);
     this.#zIndex = grow(this.#zIndex, capacity);
     this.#order = grow(this.#order, capacity);
     this.#occupied = grow(this.#occupied, capacity);
@@ -429,11 +478,13 @@ export class SpatialIndex {
     const visit = (slot: number): void => {
       if (this.#occupied[slot] !== 1 || this.#visible[slot] !== 1) return;
       tested += 1;
+      const minX = (this.#originX[slot] ?? 0) + (this.#localX[slot] ?? 0);
+      const minY = (this.#originY[slot] ?? 0) + (this.#localY[slot] ?? 0);
       if (
-        (this.#maximumX[slot] ?? 0) < minimumX ||
-        (this.#maximumY[slot] ?? 0) < minimumY ||
-        (this.#minimumX[slot] ?? 0) > maximumX ||
-        (this.#minimumY[slot] ?? 0) > maximumY
+        minX + (this.#width[slot] ?? 0) < minimumX ||
+        minY + (this.#height[slot] ?? 0) < minimumY ||
+        minX > maximumX ||
+        minY > maximumY
       ) {
         return;
       }
@@ -531,10 +582,10 @@ export class SpatialIndex {
     if (slot >= this.#highWater || this.#occupied[slot] !== 1) {
       return false;
     }
-    this.#minimumX[slot] = (this.#minimumX[slot] ?? 0) + deltaX;
-    this.#minimumY[slot] = (this.#minimumY[slot] ?? 0) + deltaY;
-    this.#maximumX[slot] = (this.#maximumX[slot] ?? 0) + deltaX;
-    this.#maximumY[slot] = (this.#maximumY[slot] ?? 0) + deltaY;
+    if (!this.#originsAliased) {
+      this.#originX[slot] = (this.#originX[slot] ?? 0) + deltaX;
+      this.#originY[slot] = (this.#originY[slot] ?? 0) + deltaY;
+    }
     this.#rehashPreservingLevel(slot);
     return true;
   }
@@ -563,8 +614,10 @@ export class SpatialIndex {
       return;
     }
     const cell = CELL_SIZES[level] ?? 64;
-    const centerX = ((this.#minimumX[slot] ?? 0) + (this.#maximumX[slot] ?? 0)) * 0.5;
-    const centerY = ((this.#minimumY[slot] ?? 0) + (this.#maximumY[slot] ?? 0)) * 0.5;
+    const minX = (this.#originX[slot] ?? 0) + (this.#localX[slot] ?? 0);
+    const minY = (this.#originY[slot] ?? 0) + (this.#localY[slot] ?? 0);
+    const centerX = minX + (this.#width[slot] ?? 0) * 0.5;
+    const centerY = minY + (this.#height[slot] ?? 0) * 0.5;
     const next = packCell(level, Math.floor(centerX / cell), Math.floor(centerY / cell)) ?? 0;
     if (next === current) return;
     this.#unhash(slot);
@@ -615,9 +668,7 @@ export class SpatialIndex {
   }
 
   #cellFor(slot: number): number {
-    const width = (this.#maximumX[slot] ?? 0) - (this.#minimumX[slot] ?? 0);
-    const height = (this.#maximumY[slot] ?? 0) - (this.#minimumY[slot] ?? 0);
-    const size = Math.max(width, height);
+    const size = Math.max(this.#width[slot] ?? 0, this.#height[slot] ?? 0);
     let level = -1;
     for (let index = 0; index < CELL_SIZES.length; index += 1) {
       if (size <= (CELL_SIZES[index] ?? 0)) {
@@ -627,11 +678,27 @@ export class SpatialIndex {
     }
     if (level < 0) return 0;
     const cell = CELL_SIZES[level] ?? 64;
-    const centerX = ((this.#minimumX[slot] ?? 0) + (this.#maximumX[slot] ?? 0)) * 0.5;
-    const centerY = ((this.#minimumY[slot] ?? 0) + (this.#maximumY[slot] ?? 0)) * 0.5;
+    const minX = (this.#originX[slot] ?? 0) + (this.#localX[slot] ?? 0);
+    const minY = (this.#originY[slot] ?? 0) + (this.#localY[slot] ?? 0);
+    const centerX = minX + (this.#width[slot] ?? 0) * 0.5;
+    const centerY = minY + (this.#height[slot] ?? 0) * 0.5;
     const cx = Math.floor(centerX / cell);
     const cy = Math.floor(centerY / cell);
     return packCell(level, cx, cy) ?? 0;
+  }
+
+  #writeWorld(slot: number, x: number, y: number, width: number, height: number): void {
+    if (this.#originsAliased) {
+      this.#localX[slot] = x - (this.#originX[slot] ?? 0);
+      this.#localY[slot] = y - (this.#originY[slot] ?? 0);
+    } else {
+      this.#originX[slot] = x;
+      this.#originY[slot] = y;
+      this.#localX[slot] = 0;
+      this.#localY[slot] = 0;
+    }
+    this.#width[slot] = width;
+    this.#height[slot] = height;
   }
 
   #assertActive(): void {

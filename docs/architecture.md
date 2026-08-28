@@ -126,7 +126,8 @@ transform palette and the prototype texture stay inside the WebGL 2 minimum text
 
 ## Culling and camera integration
 
-`SpatialIndex` keeps dense bounds, visibility, z order, and stable insertion order. Query output uses
+`SpatialIndex` keeps a local box, visibility, z order, and stable insertion order. `TextLayer`
+aliases `TextStore` x/y as the origin, so world bounds are derived. Query output uses
 caller-owned typed arrays. `ViewportBinding` converts pixi-viewport camera corners through the layer
 transform, coalesces the current input burst, updates culling bounds, and publishes visibility work.
 

@@ -133,6 +133,41 @@ describe("TransformPalette", () => {
     palette.destroy();
   });
 
+  test("records one dirty span for a dense position column and per-slot ranges when sparse", () => {
+    const palette = new TransformPalette({ initialCapacity: 16, textureWidth: 16 });
+    const slots = new Uint32Array(11);
+    const xy = new Float32Array(22);
+    for (let index = 0; index < 11; index += 1) {
+      slots[index] = index;
+      xy[index * 2] = index;
+      xy[index * 2 + 1] = 1;
+    }
+    palette.writeFills(slots, 11, xy, 0xffffff);
+    palette.consumeDirty();
+
+    const denseSlots = slots.subarray(0, 8);
+    const denseXy = new Float32Array(16);
+    for (let index = 0; index < 8; index += 1) {
+      denseXy[index * 2] = index + 10;
+      denseXy[index * 2 + 1] = 1;
+    }
+    expect(palette.writePositions(denseSlots, 8, denseXy)).toBe(8);
+    expect(palette.consumeDirty()).toEqual([
+      { offset: 0, length: 7 * TRANSFORM_PALETTE_STRIDE + 16 },
+    ]);
+
+    // Slots 0 and 10 sit more than the 256-byte merge gap apart, so sparse records stay two ranges.
+    const sparseSlots = new Uint32Array([0, 10]);
+    const sparseXy = new Float32Array([100, 1, 110, 1]);
+    expect(palette.writePositions(sparseSlots, 2, sparseXy)).toBe(2);
+    expect(palette.consumeDirty()).toEqual([
+      { offset: 0, length: 16 },
+      { offset: 10 * TRANSFORM_PALETTE_STRIDE, length: 16 },
+    ]);
+
+    palette.destroy();
+  });
+
   test("occupies a fill-only column from packed x/y without per-slot objects", () => {
     const palette = new TransformPalette({ initialCapacity: 2, textureWidth: 4 });
     const slots = new Uint32Array([0, 1, 2, 3, 4, 5, 6, 7]);

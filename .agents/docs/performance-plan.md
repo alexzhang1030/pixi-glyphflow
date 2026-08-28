@@ -14,7 +14,7 @@ Version 1.1.0 already meets the formal million-label frame and mutation budgets 
 2. Dynamic text is at the wall. `dynamic-counters` records 16.40 ms frame p95 and 15.70 ms mutation p95 against a 16.67 ms limit.
 3. Camera-only frames still walk every resident label. `SpatialIndex.query` is a dense linear scan. Viewport workloads stay inside budget (5.40–7.60 ms p95) but leave little room for denser worlds, rotated cameras, or slower devices.
 4. The 8,000,000-glyph “full visibility” frame number in 1.1.0 artifacts is a synthetic `GlyphMesh`. `million-live` now exists as the product-path workload; treat 0.10 ms p95 as GPU submission evidence until a reference `million-live` artifact exists.
-5. CPU and GPU store the same transform three times: `TextStore` columns, `SpatialIndex` bounds, and a GPU palette texel. Fill-only labels use 32 bytes on the GPU. The CPU store now packs the non-position columns; one million reserved slots stay ≤ 48 MiB in unit measurement. The 1.1.0 artifacts still report 72 MiB and 64-byte records.
+5. CPU and GPU still store the same transform: `TextStore` columns and a GPU palette texel. `SpatialIndex` keeps a local box and aliases the store origin, so a position storm does not write world min/max. Fill-only labels use 32 bytes on the GPU. The CPU store now packs the non-position columns; one million reserved slots stay ≤ 48 MiB in unit measurement. The 1.1.0 artifacts still report 72 MiB and 64-byte records.
 
 Extreme here means: keep 1,000,000 resident labels and 8,000,000 visible glyphs, then make atlas pressure, dynamic counters, and camera motion cheap enough that the 16.67 ms budget is headroom rather than a cliff. Do not replace the product with a document renderer, a compute-only 2D engine, or an outline-only GPU path.
 
@@ -139,12 +139,13 @@ LRU, 52-bit keys, the 48 MiB store (test-pinned, 44.9 MiB measured), the sparse 
     glyph. Neighbors on one sheet would corrupt distances. Concurrent `#ensureDocumentFont`
     for one family shares
     one `FontFace.load()`. Do not ship default baked pages in the core gzip graph.
-15. **Columnar spatial translate — LANDED.** `translateMany` slides occupied AABBs from packed
-    deltas. Translate does not change size, so the size class stays and only a cell-boundary
-    crossing rebuckets. Spill still goes through `#cellFor` in case a coord overflow can
-    re-enter a cell. `updatePositions` and same-text `updateTextPositions` collect one delta
-    column. Do not rewrite z or visibility. Wave 1's ≤ 8 ms `dynamic-counters` target still
-    needs a reference M1 Pro artifact before anyone claims the number.
+15. **Columnar spatial translate — LANDED, then derived origins.** `translateMany` still slides
+    owned origins for a standalone index. `TextLayer` aliases `TextStore` x/y, so a position
+    storm does not write a second world AABB. Intake calls `rehashCurrent`. Size class stays.
+    Only a cell-boundary crossing rebuckets. `writePositions` records one dirty span when the
+    slot column is dense. Camera residency refresh keeps rendered movers on that lane. Do not
+    rewrite z or visibility. Wave 1's ≤ 8 ms `dynamic-counters` target still needs a reference
+    M1 Pro artifact before anyone claims the number.
 16. **Admit fill merge — LANDED.** Unique first-seen groups that share a `style.fill`
     identity concatenate slots/xy and call `writeFills` once. Instance columns and
     draw-state inserts stay per (text, style). Distinct fill identities stay separate.
@@ -232,7 +233,7 @@ This is the likely core of `dynamic-counters` sitting at 16.40 ms. Live instance
 
 ### Transforms are parsed and stored three times
 
-`TransformPalette.set` writes a 32-byte fill-only core (xy, scale, packed half2 rotation, packed half2 anchors, packed RGB, packed alphas plus an effect flag). Stroke and drop shadow occupy one extra texel after `capacity * 2`, allocated only when any label first uses those effects. Numeric fills skip PixiJS `Color`, and position-only commits call `setPosition` so a position storm dirties 16 bytes. `TextStore` keeps `x`/`y`/`zIndex` as `Float32` and packs scale, rotation, alpha, and anchors as binary16 so they match the GPU palette quanta. Occupied, visible, and the position-only kind share one flag byte. Generation and source revision are `u16`. The dirty journal still has a per-slot mask but grows the dirty-slot list with the pending wave and releases it on publish. `SpatialIndex` still stores a second copy as min/max bounds.
+`TransformPalette.set` writes a 32-byte fill-only core (xy, scale, packed half2 rotation, packed half2 anchors, packed RGB, packed alphas plus an effect flag). Stroke and drop shadow occupy one extra texel after `capacity * 2`, allocated only when any label first uses those effects. Numeric fills skip PixiJS `Color`, and position-only commits call `writePositions` so a position storm dirties 16 bytes per label, or one span when the slot column is dense. `TextStore` keeps `x`/`y`/`zIndex` as `Float32` and packs scale, rotation, alpha, and anchors as binary16 so they match the GPU palette quanta. Occupied, visible, and the position-only kind share one flag byte. Generation and source revision are `u16`. The dirty journal still has a per-slot mask but grows the dirty-slot list with the pending wave and releases it on publish. `SpatialIndex` stores a local box and aliases the store origin columns on `TextLayer`; world min/max are derived.
 
 The published 128 MiB store and 64-byte transform ceilings stay until new M1 Pro Chrome artifacts exist. Do not fail CI on 48 MiB or 32-byte transforms yet.
 
@@ -359,7 +360,7 @@ Verify: `bun test tests/GlyphAtlas.test.ts tests/GlyphInstanceStore.test.ts test
 Do this only after Wave 1 timers show where the remaining bytes and bandwidth go.
 
 - Make `TransformPalette` the GPU view of `TextStore` columns plus a sparse effect table. Fill-only labels use a 16- or 32-byte record (xy, scale, packed rotation, packed rgba, packed flags). Stroke/shadow stay in a side table.
-- Stop mirroring x/y into spatial storage as a second write; derive query bounds from position plus cached local width/height.
+- Stop mirroring x/y into spatial storage as a second write; derive query bounds from position plus cached local width/height. LANDED: `TextLayer` aliases store x/y; the index stores the local box.
 - Quantize instance local rectangles to f16 or 16-bit fixed point relative to the label origin. UVs are already `uint16`. Target 20–24 bytes per glyph before proposing a budget change. Keep the 32-byte public ceiling until artifacts prove the smaller stride.
 - Intern `style` and `text` references in `TextStore` so 100,000 counters that share a format do not hold 100,000 style objects.
 - Upload only dirty palette texels and dirty instance ranges. Position storms should not rewrite fill/effect texels.
