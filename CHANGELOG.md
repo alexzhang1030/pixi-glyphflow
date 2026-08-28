@@ -24,6 +24,10 @@
 
 ### Performance
 
+- WebGL dirty uploads of the `rgba32float` transform table write complete texture rows at
+  `x = 0`. A mid-row 39-texel `texSubImage2D` from a banded position storm blanked the first
+  view on ANGLE / SwiftShader after the initial full `texImage2D`. `packedFloatTexelView` still
+  copies a non-zero `byteOffset`. WebGPU keeps the tight rectangles.
 - WebGPU owns the 32-byte transform table in a storage buffer when the vertex stage can bind
   it. Position-only storms skip the CPU 32-byte scatter and submit the mover slot list. A
   compute pass writes x/y from the store columns. Camera-only frames do not gather the full

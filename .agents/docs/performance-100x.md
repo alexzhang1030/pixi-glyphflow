@@ -68,7 +68,9 @@ writes, and remirroring the store.
   Duplicate-string labels ensure glyphs once per (run, size, weight) per commit.
 - Later creates skip `queryAll`. They enter through the resident dirty path and still appear in
   the same commit.
-- Palette storms upload stacked full texture rows instead of one write per row.
+- Palette storms upload stacked full texture rows instead of one write per row. WebGL
+  `rgba32float` dirty writes expand mid-row bands to a full-width row at `x = 0` before
+  `texSubImage2D`; a 39-texel slice at `x = 96` blanks the first view.
 - Duplicate strings intern one layout result per (family, size, weight, text) and skip
   `LayoutEngine.layout` for the rest of that commit and later first-seen copies. Font-registry
   revision drops the intern.
