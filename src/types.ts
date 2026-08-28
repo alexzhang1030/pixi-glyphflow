@@ -43,6 +43,13 @@ export interface TextLayerCullingOptions {
   readonly computeCull?: boolean | "auto";
   /** Drop labels whose projected font height is below one pixel. Changes pixels. Default is false. */
   readonly lod?: boolean;
+  /**
+   * Compute-cull byte cap for off-screen first-seen admission. Each intern-hit ring label charges
+   * 32 bytes (one fill-only palette row). Tight-view labels always finish and do not consume the
+   * cap. Atlas texel uploads for already-instanced glyphs stay ungated. Default is 65536 (2048
+   * off-screen labels). `0` admits the tight view only.
+   */
+  readonly offscreenAdmitBudgetBytes?: number;
 }
 
 /** Optional shaping controls for multilingual and variable-font labels. */

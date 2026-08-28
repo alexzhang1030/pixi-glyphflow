@@ -72,8 +72,11 @@ hits stay on the same turn. Duplicate strings share one prototype instance range
 are an 8-byte `(prototypeGlyph, paletteIndex)` pair; shaders fetch the unique rect, UV, and
 metadata. Compute-cull still instances an expanded working set for camera slack, but it only
 layouts and rasters first-seen labels that intersect the tight draw view. The 0.25-viewport ring
-still admits intern hits and same-commit copies of a tight unique string. Ring-only unique misses
-stay unshaped. Unique admit groups prepare in parallel so a tight-view wave is not the sum of
+may admit intern hits and same-commit copies of a tight unique string, up to
+`culling.offscreenAdmitBudgetBytes` (default 65536, 32 bytes per off-screen label). Ring-only
+unique misses stay unshaped. Deferred ring hits resume on a later commit that queries the ring
+or when they enter the tight view. Atlas texel uploads for already-instanced glyphs stay ungated.
+Unique admit groups prepare in parallel so a tight-view wave is not the sum of
 each string's layout and raster.
 `tinySdf: true` builds those HarfBuzz glyphs as a local SDF from the canvas mask.
 Same-size TinySDF misses share one FontFace wait and serialize canvas plus EDT. EDT stays per
@@ -83,8 +86,8 @@ sizes that clamp to `distanceFieldMinFontSize` intern one field.
 generator start. A single-scalar miss retries `glyphId: 0` so HarfBuzz ids can still crop a
 family page. Optional `pixi-glyphflow/prebuilt` (`uiSdfPrebuilt`, `charsetSdfPrebuilt`) bakes
 a coarse VGA ASCII page or host-painted charset pages outside the core ESM graph. `culling.lod` drops labels whose projected font height is below one pixel.
-Off-screen residents stay unshaped until the camera reaches them. On-screen text appears in that
-commit. There is no leftover admission wave.
+Off-screen unique residents stay unshaped until the camera reaches them. On-screen text appears
+in that commit. There is no leftover rAF admission wave.
 
 ## Atlas and instances
 

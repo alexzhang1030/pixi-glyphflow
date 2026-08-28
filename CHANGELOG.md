@@ -4,6 +4,9 @@
 
 ### Added
 
+- `TextLayerCullingOptions.offscreenAdmitBudgetBytes` caps compute-cull first-seen admission
+  for labels that sit only in the 0.25-viewport prepare ring. Each intern-hit ring label charges
+  32 bytes. Tight-view labels always finish. Default is 65536. `0` admits the tight view only.
 - Optional `pixi-glyphflow/prebuilt` `charsetSdfPrebuilt` / `mergePrebuilt` / `uniqueInkCharset`:
   host-painted TinySDF pages for a charset (CJK included). First bake encodes; later calls
   remap keys. No CJK bitmaps ship in the package. The homepage demo bakes its language
@@ -14,6 +17,10 @@
 
 ### Performance
 
+- Compute-cull first-seen admission now spends `offscreenAdmitBudgetBytes` on ring intern hits
+  and same-commit ring copies. Tight-view unique raster still finishes in that commit. Deferred
+  ring hits resume on a later ring query, not a leftover rAF. Atlas texel uploads for already-
+  instanced glyphs stay ungated.
 - Atlas pages bind as layers in two texture arrays (R8 sdf/alpha, RGBA8 msdf/color). Shaders
   sample `uAtlasR` / `uAtlasRGBA` by mode and layer. Compact walks split only on blend and z.
   `GLYPH_TEXTURE_BANK_SIZE` is now `2`. Array sources skip Pixi's 2D buffer uploader. WebGPU
@@ -39,7 +46,8 @@
   (text, style). Instance and palette writes stay serial after that wave.
 - Compute-cull no longer rasters a unique miss that only sits in the 0.25-viewport prepare ring.
   Tight-view unique text still finishes in that commit. Ring intern hits and same-commit copies
-  of a tight unique string still admit. There is no leftover rAF wave.
+  of a tight unique string are eligible that turn, then gated by the off-screen admit budget.
+  There is no leftover rAF wave.
 - Draw instances are 8 bytes (`prototypeGlyph`, `paletteIndex`). Shaders fetch unique rect, UV, and
   metadata from an RGBA32F prototype texture. UV is rewritten as f16 pairs and metadata as two
   16-bit integer floats so RGBA32F cannot canonicalize NaN. Prototype width comes from

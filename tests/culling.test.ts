@@ -226,4 +226,55 @@ describe("TextLayer culling and hit bounds", () => {
 
     layer.destroy();
   });
+
+  test("ignores the off-screen admit budget on the cpu-grid tight set", async () => {
+    let layouts = 0;
+    const layer = new TextLayer({
+      renderer: {} as Renderer,
+      culling: {
+        enabled: true,
+        bounds: { x: 0, y: 0, width: 100, height: 100 },
+        offscreenAdmitBudgetBytes: 0,
+      },
+      rendering: {
+        layoutEngine: {
+          async layout() {
+            layouts += 1;
+            return RUN;
+          },
+          destroy() {},
+        },
+        glyphProvider: {
+          async rasterize() {
+            return {
+              mode: "alpha" as const,
+              width: 8,
+              height: 10,
+              pixels: new Uint8Array(80).fill(255),
+            };
+          },
+          destroy() {},
+        },
+        atlasOptions: { pageWidth: 32, pageHeight: 32, maxBytes: 4_096 },
+      },
+    });
+    const first = layer.create({ text: "A", x: 10, y: 10, style: { fontSize: 16 } });
+    const second = layer.create({ text: "B", x: 40, y: 10, style: { fontSize: 16 } });
+    expect(Number(await layer.commit())).toBe(1);
+    expect(layouts).toBe(2);
+    expect(layer.stats).toMatchObject({ visibleLabelCount: 2, glyphCount: 2 });
+    expect(layer.hitTest({ x: 12, y: 12 })).toBe(first);
+    expect(layer.hitTest({ x: 42, y: 12 })).toBe(second);
+    layer.destroy();
+  });
+
+  test("rejects a negative off-screen admit budget", () => {
+    expect(
+      () =>
+        new TextLayer({
+          rendering: false,
+          culling: { offscreenAdmitBudgetBytes: -1 },
+        }),
+    ).toThrow("offscreenAdmitBudgetBytes");
+  });
 });

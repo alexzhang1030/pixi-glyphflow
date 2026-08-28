@@ -5,18 +5,24 @@ import {
   compactVisibleInstances,
   computeCullStructurallyEligible,
   createIndirectArgs,
+  createOffscreenAdmitBudget,
   cullResidency,
+  DEFAULT_OFFSCREEN_ADMIT_BUDGET_BYTES,
   expandPrepareRing,
   expandWorkingSet,
+  OFFSCREEN_ADMIT_LABEL_BYTES,
   packCullRecords,
   planComputeCullStorageBytes,
   resolveCullPath,
   projectedFontHeightPx,
+  selectAdmitBoxes,
   shouldAdmitOffscreenGroup,
   shouldAdmitUnshaped,
   shouldDropSubpixelLod,
   shouldInstanceUnshaped,
+  shouldQueryPrepareRing,
   shouldRefreshResidency,
+  tryAdmitOffscreen,
   workingSetContains,
   writeCullRecordAt,
 } from "../src/culling/computeCull";
@@ -440,6 +446,118 @@ describe("compute cull host reference", () => {
         draw,
         interned: true,
         boxes: [pad],
+      }),
+    ).toBe(true);
+  });
+
+  test("charges off-screen intern hits against the per-frame byte budget", () => {
+    const draw = { x: 0, y: 0, width: 100, height: 100, padding: 0 };
+    const ring = expandPrepareRing(draw);
+    const tight = { minX: 10, minY: 10, maxX: 18, maxY: 20 };
+    const pad = { minX: 110, minY: 10, maxX: 118, maxY: 20 };
+    const far = { minX: 400, minY: 0, maxX: 408, maxY: 10 };
+    const cpu = createOffscreenAdmitBudget({ cullPath: "cpu-grid", budgetBytes: 0 });
+    expect(cpu.remainingBytes).toBe(Number.POSITIVE_INFINITY);
+    expect(tryAdmitOffscreen(cpu)).toBe(true);
+    expect(cpu.deferred).toBe(false);
+    expect(DEFAULT_OFFSCREEN_ADMIT_BUDGET_BYTES / OFFSCREEN_ADMIT_LABEL_BYTES).toBe(2048);
+
+    const budget = createOffscreenAdmitBudget({
+      cullPath: "compute-cull",
+      budgetBytes: OFFSCREEN_ADMIT_LABEL_BYTES,
+    });
+    expect(
+      selectAdmitBoxes({
+        cullPath: "compute-cull",
+        ring,
+        draw,
+        interned: false,
+        boxes: [tight, pad, pad],
+        budget,
+      }),
+    ).toEqual([true, true, false]);
+    expect(budget.deferred).toBe(true);
+    expect(budget.remainingBytes).toBe(0);
+
+    const interned = createOffscreenAdmitBudget({
+      cullPath: "compute-cull",
+      budgetBytes: OFFSCREEN_ADMIT_LABEL_BYTES,
+    });
+    expect(
+      selectAdmitBoxes({
+        cullPath: "compute-cull",
+        ring,
+        draw,
+        interned: true,
+        boxes: [pad, pad, far],
+        budget: interned,
+      }),
+    ).toEqual([true, false, false]);
+    expect(interned.deferred).toBe(true);
+
+    const uniqueRing = createOffscreenAdmitBudget({
+      cullPath: "compute-cull",
+      budgetBytes: OFFSCREEN_ADMIT_LABEL_BYTES * 8,
+    });
+    expect(
+      selectAdmitBoxes({
+        cullPath: "compute-cull",
+        ring,
+        draw,
+        interned: false,
+        boxes: [pad, pad],
+        budget: uniqueRing,
+      }),
+    ).toEqual([false, false]);
+    expect(uniqueRing.deferred).toBe(false);
+    expect(uniqueRing.remainingBytes).toBe(OFFSCREEN_ADMIT_LABEL_BYTES * 8);
+
+    const tightOnly = createOffscreenAdmitBudget({ cullPath: "compute-cull", budgetBytes: 0 });
+    expect(
+      selectAdmitBoxes({
+        cullPath: "compute-cull",
+        ring,
+        draw,
+        interned: true,
+        boxes: [tight, pad],
+        budget: tightOnly,
+      }),
+    ).toEqual([true, false]);
+    expect(tightOnly.deferred).toBe(true);
+
+    const cpuBoxes = createOffscreenAdmitBudget({ cullPath: "cpu-grid", budgetBytes: 0 });
+    expect(
+      selectAdmitBoxes({
+        cullPath: "cpu-grid",
+        ring: undefined,
+        draw,
+        interned: false,
+        boxes: [far, pad],
+        budget: cpuBoxes,
+      }),
+    ).toEqual([true, true]);
+    expect(cpuBoxes.deferred).toBe(false);
+
+    const prepared = expandPrepareRing(draw);
+    expect(
+      shouldQueryPrepareRing({
+        preparedRing: prepared,
+        draw,
+        offscreenDeferred: false,
+      }),
+    ).toBe(false);
+    expect(
+      shouldQueryPrepareRing({
+        preparedRing: prepared,
+        draw,
+        offscreenDeferred: true,
+      }),
+    ).toBe(true);
+    expect(
+      shouldQueryPrepareRing({
+        preparedRing: prepared,
+        draw: { x: 80, y: 0, width: 100, height: 100, padding: 0 },
+        offscreenDeferred: false,
       }),
     ).toBe(true);
   });

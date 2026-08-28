@@ -101,7 +101,8 @@ writes, and remirroring the store.
   `GlyphMesh`, insertion order and z stay. One mesh per unique string is still rejected.
 - Compute-cull ring-only unique misses stay unshaped. Tight-view unique still layouts and
   rasters in the seeing commit. Ring intern hits and same-commit copies of a tight unique
-  string still finish that turn. No leftover admission wave.
+  string are eligible that turn, then gated by `offscreenAdmitBudgetBytes`. Deferred ring
+  hits resume on a later ring query. No leftover rAF admission wave.
 - Unique admit groups prepare in parallel. A tight-view wave of distinct strings is not the
   sum of each string's layout and raster. Writes stay serial after that wave.
 - Same-size TinySDF misses share one FontFace wait and serialize canvas plus EDT. EDT stays
@@ -140,7 +141,8 @@ writes, and remirroring the store.
    share one field. Empty-ink scalars skip generation. EDT is still per unseen physical
    glyph that has ink. Known ASCII can skip that path when the host imports `uiSdfPrebuilt`.
    Known CJK can skip when the host bakes `charsetSdfPrebuilt`. Unseen ink still generates.
-   Do not defer texel uploads for glyphs already instanced.
+   Off-screen intern hits spend `offscreenAdmitBudgetBytes`. Do not defer texel uploads
+   for glyphs already instanced.
 2. **Palette storage buffer.** Wave 3 leftover. Binding cost, not the zoom hitch. Atlas pages
    are already two `sampler2DArray` / `texture_2d_array` textures (R8 and RGBA8). Do not start
    this leftover with a palette SSBO: WebGL 2 has no storage buffers.

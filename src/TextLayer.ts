@@ -8,20 +8,24 @@ import {
 
 import {
   aabbVisible,
+  createOffscreenAdmitBudget,
   cullResidency,
+  DEFAULT_OFFSCREEN_ADMIT_BUDGET_BYTES,
   expandPrepareRing,
   expandWorkingSet,
   CULL_RECORD_STRIDE,
-  shouldAdmitOffscreenGroup,
+  selectAdmitBoxes,
   shouldDropSubpixelLod,
   shouldInstanceUnshaped,
+  shouldQueryPrepareRing,
   shouldRefreshResidency,
+  tryAdmitOffscreen,
   viewportFromBounds,
-  workingSetContains,
   writeCullRecordAt,
   type CullPath,
   type CullRecordDirty,
   type CullViewport,
+  type OffscreenAdmitBudget,
 } from "./culling/computeCull";
 import { SpatialIndex } from "./culling/SpatialIndex";
 import type { BoundsData, MutableBoundsData, PointLike } from "./culling/types";
@@ -127,6 +131,7 @@ export class TextLayer extends Container {
   readonly #cullingPadding: number;
   readonly #computeCull: boolean | "auto";
   readonly #lod: boolean;
+  readonly #offscreenAdmitBudgetBytes: number;
   #lodWorldScaleY = 1;
   #viewportBounds: Readonly<BoundsData> | undefined;
   #instancedViewport: CullViewport | undefined;
@@ -152,6 +157,7 @@ export class TextLayer extends Container {
   #cullRecordEpoch = -1;
   readonly #cullRecordDirtyScratch: DirtyByteRange[] = [];
   #preparedRing: CullViewport | undefined;
+  #offscreenAdmitDeferred = false;
   #laneSlots: Uint32Array;
   #contentSlots: Uint32Array;
   #translateSlots: Uint32Array;
@@ -191,6 +197,7 @@ export class TextLayer extends Container {
     this.#cullingPadding = culling.padding;
     this.#computeCull = culling.computeCull;
     this.#lod = culling.lod;
+    this.#offscreenAdmitBudgetBytes = culling.offscreenAdmitBudgetBytes;
     this.#viewportBounds = culling.bounds;
     this.#dirtyMasks = new Uint8Array(this.#store.capacity);
     this.#positionOnly = new Uint8Array(this.#store.capacity);
@@ -826,18 +833,25 @@ export class TextLayer extends Container {
     let contentText: string | undefined;
     let contentStyle: Readonly<TextStyleOptions> | undefined;
     const admit = createAdmitCollector();
+    const admitBudget = createOffscreenAdmitBudget({
+      cullPath,
+      budgetBytes: this.#offscreenAdmitBudgetBytes,
+    });
+    let scannedPrepareRing = false;
     if (refreshResidency) {
       this.#visibleCount = this.#queryVisible(cullPath, drawViewport);
       this.#visibilityDirty = false;
       if (coordinator !== undefined) {
-        changes = this.#buildRenderChanges(cullPath, drawViewport, admit);
+        changes = this.#buildRenderChanges(cullPath, drawViewport, admit, admitBudget);
+        scannedPrepareRing = true;
       }
     } else if (coordinator !== undefined) {
       if (lodScaleChanged) {
-        changes = this.#buildRenderChanges(cullPath, drawViewport, admit);
+        changes = this.#buildRenderChanges(cullPath, drawViewport, admit, admitBudget);
+        scannedPrepareRing = true;
       } else {
         if (hasLabelChanges) {
-          const dirty = this.#buildResidentDirtyChanges(admit);
+          const dirty = this.#buildResidentDirtyChanges(admit, admitBudget);
           changes = dirty.changes;
           laneCount = dirty.laneCount;
           contentCount = dirty.contentCount;
@@ -845,15 +859,20 @@ export class TextLayer extends Container {
           contentStyle = dirty.contentStyle;
         }
         if (cameraMoved && cullPath === "compute-cull" && drawViewport !== undefined) {
-          const ringEscaped =
-            this.#preparedRing === undefined ||
-            !workingSetContains(this.#preparedRing, drawViewport);
-          const query = ringEscaped ? expandPrepareRing(drawViewport) : drawViewport;
-          changes.push(...this.#buildUnshapedFirstSeen(admit, query));
+          const queryRing = shouldQueryPrepareRing({
+            preparedRing: this.#preparedRing,
+            draw: drawViewport,
+            offscreenDeferred: this.#offscreenAdmitDeferred,
+          });
+          const query = queryRing ? expandPrepareRing(drawViewport) : drawViewport;
+          if (queryRing) scannedPrepareRing = true;
+          changes.push(...this.#buildUnshapedFirstSeen(admit, query, admitBudget));
         }
-        this.#finalizeAdmitDrafts(admit, cullPath, drawViewport, this.#renderEpoch);
+        this.#finalizeAdmitDrafts(admit, cullPath, drawViewport, this.#renderEpoch, admitBudget);
       }
     }
+    if (admitBudget.deferred) this.#offscreenAdmitDeferred = true;
+    else if (scannedPrepareRing) this.#offscreenAdmitDeferred = false;
     const admitGroups = this.#publishAdmitGroups(admit.drafts);
     // Copy the lane at publish time so later intake cannot skew what this revision draws.
     let laneSlots: Uint32Array | undefined;
@@ -1529,7 +1548,10 @@ export class TextLayer extends Container {
     return this.#renderSurface?.prepareCullPath() ?? "cpu-grid";
   }
 
-  #buildResidentDirtyChanges(admit: AdmitCollector): {
+  #buildResidentDirtyChanges(
+    admit: AdmitCollector,
+    budget: OffscreenAdmitBudget,
+  ): {
     changes: LayerRenderChange[];
     laneCount: number;
     contentCount: number;
@@ -1619,7 +1641,7 @@ export class TextLayer extends Container {
       const change = this.#renderChangeForSlot(slot, true);
       if (change !== undefined) changes.push(change);
     }
-    this.#admitObjectRing(objectRing, objectTightPairs, epoch, changes);
+    this.#admitObjectRing(objectRing, objectTightPairs, epoch, changes, budget);
     if (contentMixed && contentCount > 0) {
       for (let index = 0; index < contentCount; index += 1) {
         const slot = this.#contentSlots[index];
@@ -1706,7 +1728,11 @@ export class TextLayer extends Container {
     return !this.#layouts.has(id) && !this.#shaping.has(id) && !this.#trustedRuns.has(id);
   }
 
-  #buildUnshapedFirstSeen(admit: AdmitCollector, query: CullViewport): LayerRenderChange[] {
+  #buildUnshapedFirstSeen(
+    admit: AdmitCollector,
+    query: CullViewport,
+    budget: OffscreenAdmitBudget,
+  ): LayerRenderChange[] {
     const draw = this.#drawViewport();
     if (draw === undefined) return [];
     this.#preparedRing = expandPrepareRing(draw);
@@ -1734,7 +1760,7 @@ export class TextLayer extends Container {
       if (epoch !== 0) this.#renderedEpochs[slot] = epoch;
       changes.push(change);
     }
-    this.#admitObjectRing(objectRing, objectTightPairs, epoch, changes);
+    this.#admitObjectRing(objectRing, objectTightPairs, epoch, changes, budget);
     return changes;
   }
 
@@ -1742,6 +1768,7 @@ export class TextLayer extends Container {
     cullPath: CullPath,
     draw: CullViewport | undefined,
     admit: AdmitCollector,
+    budget: OffscreenAdmitBudget,
   ): LayerRenderChange[] {
     let previousEpoch = this.#renderEpoch;
     if (previousEpoch === 0xffff_ffff) {
@@ -1775,8 +1802,8 @@ export class TextLayer extends Container {
       if (change === undefined) throw new Error("Visible label snapshot is unavailable");
       changes.push(change);
     }
-    this.#finalizeAdmitDrafts(admit, cullPath, draw, nextEpoch);
-    this.#admitObjectRing(objectRing, objectTightPairs, nextEpoch, changes);
+    this.#finalizeAdmitDrafts(admit, cullPath, draw, nextEpoch, budget);
+    this.#admitObjectRing(objectRing, objectTightPairs, nextEpoch, changes, budget);
     for (const state of coordinator?.getDrawStates() ?? []) {
       if (this.#renderedEpochs[state.slot] === nextEpoch) continue;
       const gone = !this.#store.occupiedAt(state.slot);
@@ -1808,6 +1835,7 @@ export class TextLayer extends Container {
     this.#renderEpoch = 0;
     this.#instancedViewport = undefined;
     this.#preparedRing = undefined;
+    this.#offscreenAdmitDeferred = false;
     this.#clearCullRecordIndex();
     this.#cullRecordEpoch = -1;
     this.#visibilityDirty = true;
@@ -1913,9 +1941,11 @@ export class TextLayer extends Container {
     pairs: WeakMap<Readonly<TextStyleOptions>, Set<string>>,
     epoch: number,
     changes: LayerRenderChange[],
+    budget: OffscreenAdmitBudget,
   ): void {
     for (const slot of slots) {
       if (!this.#objectRingAdmits(slot, pairs)) continue;
+      if (!tryAdmitOffscreen(budget)) continue;
       const change = this.#renderChangeForSlot(slot, false, false);
       if (change === undefined) continue;
       if (epoch !== 0) this.#renderedEpochs[slot] = epoch;
@@ -1928,55 +1958,65 @@ export class TextLayer extends Container {
     cullPath: CullPath,
     draw: CullViewport | undefined,
     epoch: number,
+    budget: OffscreenAdmitBudget,
   ): void {
     if (admit.drafts.length === 0) return;
+    const ring = draw === undefined ? undefined : expandPrepareRing(draw);
     const kept: AdmitDraft[] = [];
     for (const draft of admit.drafts) {
-      if (this.#admitDraftSurvives(draft, cullPath, draw)) {
-        kept.push(draft);
-        if (epoch !== 0) {
-          for (const slot of draft.slots) this.#renderedEpochs[slot] = epoch;
+      const pairs: Array<{
+        readonly slot: number;
+        readonly minX: number;
+        readonly minY: number;
+        readonly maxX: number;
+        readonly maxY: number;
+      }> = [];
+      for (const slot of draft.slots) {
+        const box = this.#spatial.get(slot, this.#boundsScratch);
+        if (box === undefined) {
+          admit.collected.delete(slot);
+          continue;
         }
+        pairs.push({
+          slot,
+          minX: box.x,
+          minY: box.y,
+          maxX: box.x + box.width,
+          maxY: box.y + box.height,
+        });
+      }
+      const take = selectAdmitBoxes({
+        cullPath,
+        ring,
+        draw,
+        interned:
+          this.#renderCoordinator?.hasInternedLayout({
+            text: draft.text,
+            style: draft.style,
+          }) ?? false,
+        boxes: pairs,
+        budget,
+      });
+      const slots: number[] = [];
+      for (let index = 0; index < pairs.length; index += 1) {
+        const pair = pairs[index];
+        if (pair === undefined) continue;
+        if (take[index] !== true) {
+          admit.collected.delete(pair.slot);
+          continue;
+        }
+        slots.push(pair.slot);
+        if (epoch !== 0) this.#renderedEpochs[pair.slot] = epoch;
+      }
+      if (slots.length === 0) {
+        admit.byStyle.get(draft.style)?.delete(draft.text);
         continue;
       }
-      admit.byStyle.get(draft.style)?.delete(draft.text);
-      for (const slot of draft.slots) admit.collected.delete(slot);
+      draft.slots = slots;
+      kept.push(draft);
     }
     admit.drafts.length = 0;
     for (const draft of kept) admit.drafts.push(draft);
-  }
-
-  #admitDraftSurvives(
-    draft: AdmitDraft,
-    cullPath: CullPath,
-    draw: CullViewport | undefined,
-  ): boolean {
-    const boxes: Array<{
-      readonly minX: number;
-      readonly minY: number;
-      readonly maxX: number;
-      readonly maxY: number;
-    }> = [];
-    for (const slot of draft.slots) {
-      const box = this.#spatial.get(slot, this.#boundsScratch);
-      if (box === undefined) continue;
-      boxes.push({
-        minX: box.x,
-        minY: box.y,
-        maxX: box.x + box.width,
-        maxY: box.y + box.height,
-      });
-    }
-    return shouldAdmitOffscreenGroup({
-      cullPath,
-      draw,
-      interned:
-        this.#renderCoordinator?.hasInternedLayout({
-          text: draft.text,
-          style: draft.style,
-        }) ?? false,
-      boxes,
-    });
   }
 
   #isSlotEffectivelyVisible(slot: number): boolean {
@@ -2457,9 +2497,17 @@ function resolveCullingOptions(options: false | TextLayerCullingOptions | undefi
   bounds: Readonly<BoundsData> | undefined;
   computeCull: boolean | "auto";
   lod: boolean;
+  offscreenAdmitBudgetBytes: number;
 }> {
   if (options === false) {
-    return { enabled: false, padding: 0, bounds: undefined, computeCull: false, lod: false };
+    return {
+      enabled: false,
+      padding: 0,
+      bounds: undefined,
+      computeCull: false,
+      lod: false,
+      offscreenAdmitBudgetBytes: DEFAULT_OFFSCREEN_ADMIT_BUDGET_BYTES,
+    };
   }
   const padding = options?.padding ?? 0;
   if (!Number.isFinite(padding) || padding < 0) {
@@ -2473,12 +2521,21 @@ function resolveCullingOptions(options: false | TextLayerCullingOptions | undefi
     throw new TypeError("Culling lod must be a boolean");
   }
   if (options?.bounds !== undefined) assertBoundsData(options.bounds);
+  let offscreenAdmitBudgetBytes = DEFAULT_OFFSCREEN_ADMIT_BUDGET_BYTES;
+  if (options?.offscreenAdmitBudgetBytes !== undefined) {
+    const value = options.offscreenAdmitBudgetBytes;
+    if (!Number.isFinite(value) || value < 0) {
+      throw new TypeError("Culling offscreenAdmitBudgetBytes must be a finite non-negative number");
+    }
+    offscreenAdmitBudgetBytes = value;
+  }
 
   return {
     enabled: options?.enabled ?? true,
     padding,
     computeCull,
     lod: options?.lod === true,
+    offscreenAdmitBudgetBytes,
     bounds: options?.bounds === undefined ? undefined : Object.freeze({ ...options.bounds }),
   };
 }
