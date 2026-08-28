@@ -7,6 +7,7 @@ import {
   packedFloatTexelView,
   paletteUploadRects,
   premultiplyRgba8,
+  webglFloatPaletteRects,
   prototypeByteRange,
   prototypeTextureLayout,
   unpackF16,
@@ -94,6 +95,36 @@ describe("paletteUploadRects", () => {
       { x: 0, y: 1, width: 8, height: 1, texel: 8 },
       { x: 0, y: 2, width: 8, height: 1, texel: 16 },
     ]);
+  });
+});
+
+describe("webglFloatPaletteRects", () => {
+  test("expands a mid-row storm band to one full-width row at x = 0", () => {
+    const textureWidth = 1024;
+    const storm = [
+      { offset: 17_920, length: 624 },
+      { offset: 19_136, length: 624 },
+      { offset: 20_352, length: 624 },
+      { offset: 21_568, length: 624 },
+      { offset: 22_784, length: 624 },
+      { offset: 24_000, length: 624 },
+      { offset: 25_216, length: 624 },
+      { offset: 26_432, length: 624 },
+    ];
+    expect(webglFloatPaletteRects(storm, textureWidth)).toEqual([
+      { x: 0, y: 1, width: 1024, height: 1, texel: 1024 },
+    ]);
+    expect(paletteUploadRects(17_920, 624, textureWidth)).toEqual([
+      { x: 96, y: 1, width: 39, height: 1, texel: 1_120 },
+    ]);
+  });
+
+  test("stacks contiguous dirty rows when the stride is 256-byte aligned", () => {
+    const textureWidth = 1024;
+    const texelBytes = 16;
+    expect(
+      webglFloatPaletteRects([{ offset: 0, length: 2 * textureWidth * texelBytes }], textureWidth),
+    ).toEqual([{ x: 0, y: 0, width: 1024, height: 2, texel: 0 }]);
   });
 });
 

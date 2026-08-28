@@ -36,6 +36,7 @@ import {
   packGpuTextureRows,
   paletteUploadRects,
   premultiplyRgba8,
+  webglFloatPaletteRects,
   prototypeByteRange,
   prototypeTextureLayout,
   writeDrawInstance,
@@ -374,7 +375,8 @@ export class RenderSurface {
     }
     if (computeCull === undefined) this.#useCpuCull();
     else this.#refreshComputeCull(computeCull);
-    if (this.#paletteGrew) {
+    const paletteGrew = this.#paletteGrew;
+    if (paletteGrew) {
       this.#refreshPrototypeTexture();
       this.#paletteGrew = false;
     }
@@ -555,6 +557,24 @@ export class RenderSurface {
       this.#bindMeshSources();
       this.#transformUploadBytes += data.byteLength;
       this.#transformWrites += 1;
+      return;
+    }
+    if (isWebGLRenderer(this.#renderer)) {
+      // A bound rgba32float vertex palette rewritten with texSubImage2D/texImage2D blanks
+      // the compositor on ANGLE/SwiftShader. Unbind the mesh sampler and GL units first.
+      for (const surface of this.#meshes.values()) surface.mesh.unbindPaletteTexture();
+      unbindWebGLPalette(this.#renderer, this.#paletteTexture);
+      const uploaded = uploadFloatTextureRanges(
+        this.#renderer,
+        this.#paletteSource,
+        data,
+        stats.textureWidth,
+        ranges,
+      );
+      this.#transformUploadBytes += uploaded.bytes;
+      this.#transformWrites += uploaded.writes;
+      unbindWebGLPalette(this.#renderer, this.#paletteTexture);
+      this.#bindMeshSources();
       return;
     }
     const uploaded = uploadFloatTextureRanges(
@@ -1280,6 +1300,51 @@ function uploadAtlasVolume(
   }
 }
 
+/**
+ * ANGLE / SwiftShader FLOAT uploads also honor leftover UNPACK_ROW_LENGTH / SKIP_*. A 39-texel
+ * mid-row write then reads as a full 1024-texel row from a short copy and poisons the table.
+ */
+function withFloatUnpack(
+  gl: WebGLRenderingContext | WebGL2RenderingContext,
+  write: () => void,
+): void {
+  const previousAlignment = gl.getParameter(gl.UNPACK_ALIGNMENT) as number;
+  const previousFlipY = gl.getParameter(gl.UNPACK_FLIP_Y_WEBGL) as boolean;
+  const previousPremultiply = gl.getParameter(gl.UNPACK_PREMULTIPLY_ALPHA_WEBGL) as boolean;
+  let previousRowLength = 0;
+  let previousSkipPixels = 0;
+  let previousSkipRows = 0;
+  gl.pixelStorei(gl.UNPACK_ALIGNMENT, 4);
+  gl.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL, false);
+  gl.pixelStorei(gl.UNPACK_PREMULTIPLY_ALPHA_WEBGL, false);
+  if (isWebGL2Context(gl)) {
+    previousRowLength = gl.getParameter(gl.UNPACK_ROW_LENGTH) as number;
+    previousSkipPixels = gl.getParameter(gl.UNPACK_SKIP_PIXELS) as number;
+    previousSkipRows = gl.getParameter(gl.UNPACK_SKIP_ROWS) as number;
+    gl.pixelStorei(gl.UNPACK_ROW_LENGTH, 0);
+    gl.pixelStorei(gl.UNPACK_SKIP_PIXELS, 0);
+    gl.pixelStorei(gl.UNPACK_SKIP_ROWS, 0);
+  }
+  try {
+    write();
+  } finally {
+    gl.pixelStorei(gl.UNPACK_ALIGNMENT, previousAlignment);
+    gl.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL, previousFlipY);
+    gl.pixelStorei(gl.UNPACK_PREMULTIPLY_ALPHA_WEBGL, previousPremultiply);
+    if (isWebGL2Context(gl)) {
+      gl.pixelStorei(gl.UNPACK_ROW_LENGTH, previousRowLength);
+      gl.pixelStorei(gl.UNPACK_SKIP_PIXELS, previousSkipPixels);
+      gl.pixelStorei(gl.UNPACK_SKIP_ROWS, previousSkipRows);
+    }
+  }
+}
+
+function isWebGL2Context(
+  gl: WebGLRenderingContext | WebGL2RenderingContext,
+): gl is WebGL2RenderingContext {
+  return "UNPACK_ROW_LENGTH" in gl;
+}
+
 /** WebGL forbids UNPACK_FLIP_Y and UNPACK_PREMULTIPLY_ALPHA on 3D / array uploads. */
 function withAtlasUnpack(gl: WebGL2RenderingContext, write: () => void): void {
   const previousAlignment = gl.getParameter(gl.UNPACK_ALIGNMENT) as number;
@@ -1295,6 +1360,21 @@ function withAtlasUnpack(gl: WebGL2RenderingContext, write: () => void): void {
     gl.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL, previousFlipY);
     gl.pixelStorei(gl.UNPACK_PREMULTIPLY_ALPHA_WEBGL, previousPremultiply);
   }
+}
+
+function unbindWebGLPalette(renderer: WebGLRenderer, texture: Texture): void {
+  renderer.texture.unbind(texture);
+  const gl = renderer.gl;
+  const resource = renderer.texture.getGlSource(texture.source);
+  const combinedUnits = gl.getParameter(gl.MAX_COMBINED_TEXTURE_IMAGE_UNITS) as number;
+  const previous = gl.getParameter(gl.ACTIVE_TEXTURE) as number;
+  for (let unit = 0; unit < combinedUnits; unit += 1) {
+    gl.activeTexture(gl.TEXTURE0 + unit);
+    if (gl.getParameter(gl.TEXTURE_BINDING_2D) === resource.texture) {
+      gl.bindTexture(gl.TEXTURE_2D, null);
+    }
+  }
+  gl.activeTexture(previous);
 }
 
 function initializeTexture(renderer: Renderer, source: BufferImageSource): void {
@@ -1321,31 +1401,26 @@ function uploadFloatTextureRanges(
   if (isWebGLRenderer(renderer)) {
     const gl = renderer.gl;
     const resource = renderer.texture.getGlSource(source);
-    const previousPremultiply = gl.getParameter(gl.UNPACK_PREMULTIPLY_ALPHA_WEBGL) as boolean;
-    gl.bindTexture(resource.target, resource.texture);
-    gl.pixelStorei(gl.UNPACK_PREMULTIPLY_ALPHA_WEBGL, false);
-    try {
-      for (const range of ranges) {
-        for (const rect of paletteUploadRects(range.offset, range.length, textureWidth)) {
-          const texels = rect.width * rect.height;
-          gl.texSubImage2D(
-            resource.target,
-            0,
-            rect.x,
-            rect.y,
-            rect.width,
-            rect.height,
-            resource.format,
-            resource.type,
-            packedFloatTexelView(data, rect.texel, texels),
-          );
-          bytes += texels * FLOAT_TEXEL_BYTES;
-          writes += 1;
-        }
+    const rects = webglFloatPaletteRects(ranges, textureWidth);
+    withFloatUnpack(gl, () => {
+      gl.bindTexture(resource.target, resource.texture);
+      for (const rect of rects) {
+        const texels = rect.width * rect.height;
+        gl.texSubImage2D(
+          resource.target,
+          0,
+          rect.x,
+          rect.y,
+          rect.width,
+          rect.height,
+          resource.format,
+          resource.type,
+          packedFloatTexelView(data, rect.texel, texels),
+        );
+        bytes += texels * FLOAT_TEXEL_BYTES;
+        writes += 1;
       }
-    } finally {
-      gl.pixelStorei(gl.UNPACK_PREMULTIPLY_ALPHA_WEBGL, previousPremultiply);
-    }
+    });
   } else if (isWebGPURenderer(renderer)) {
     const texture = renderer.texture.getGpuSource(source);
     for (const range of ranges) {

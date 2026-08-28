@@ -9,6 +9,13 @@
   `createBindGroup` threw. The storage path now binds `uTransforms` only, and it stays on the
   texture shader until the storage table is registered.
 
+### Changed
+
+- The homepage live demo frames a readable multilingual specimen band, paints that first camera
+  view before the rest of the million-label allocate, and reports `stats.palettePath` next to
+  the cull path. Extra engine numbers sit behind a disclosure. WebGL stays on the texture
+  palette. Published benchmark numbers are unchanged.
+
 ### Added
 
 - `TextLayerCullingOptions.offscreenAdmitBudgetBytes` caps compute-cull first-seen admission
@@ -24,6 +31,11 @@
 
 ### Performance
 
+- WebGL dirty uploads of the `rgba32float` transform table blank after the first allocation:
+  both `texSubImage2D` and a second `texImage2D` of the same GL texture (`glError` 0) wipe the
+  first view. Unbind the palette from each mesh and from GL `TEXTURE_2D` units, dirty-upload
+  the same object with `texSubImage2D`, then rebind through `#bindMeshSources`. WebGPU keeps
+  the tight rectangles.
 - WebGPU owns the 32-byte transform table in a storage buffer when the vertex stage can bind
   it. Position-only storms skip the CPU 32-byte scatter and submit the mover slot list. A
   compute pass writes x/y from the store columns. Camera-only frames do not gather the full

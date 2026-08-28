@@ -6,6 +6,7 @@ import {
   requestComputeCullGpu,
   TextLayer,
   type CullPath,
+  type PalettePath,
   type TextId,
   type TextLabelSpec,
   type TextShapingOptions,
@@ -16,79 +17,39 @@ import { Viewport } from "pixi-viewport";
 import { Application, type TextStyleOptions } from "pixi.js";
 import { computed, onBeforeUnmount, onMounted, ref } from "vue";
 
-const LABEL_COUNT = 1_000_000;
-const MOVING_COUNT = 100_000;
-const COLUMNS = 1_000;
-const COLUMN_SPACING = 152;
-const ROW_SPACING = 30;
-const CHUNK_SIZE = 25_000;
-const STORM_INTERVAL_MS = 100;
-const INITIAL_ZOOM = 0.24;
-const MULTILINGUAL_STACK = "Glyphflow multilingual";
-const SHOWCASE_ROW_INTERVAL = 64;
-const CUSTOM_FONTS = Object.freeze([
-  { family: "Glyphflow CJKV Demo", url: "/fonts/noto-sans-cjkv-demo.ttf" },
-  { family: "Glyphflow Arabic Demo", url: "/fonts/noto-sans-arabic-demo.ttf" },
-  { family: "Glyphflow Devanagari Demo", url: "/fonts/noto-sans-devanagari-demo.ttf" },
-  { family: "Glyphflow Hebrew Demo", url: "/fonts/noto-sans-hebrew-demo.ttf" },
-  { family: "Glyphflow Thai Demo", url: "/fonts/noto-sans-thai-demo.ttf" },
-]);
-const SYSTEM_FONT_FAMILIES = Object.freeze([
-  "system-ui",
-  "PingFang SC",
-  "Hiragino Sans",
-  "Apple SD Gothic Neo",
-  "Geeza Pro",
-  "Kohinoor Devanagari",
-  "Arial Hebrew",
-  "Thonburi",
-  "Arial Unicode MS",
-  "sans-serif",
-]);
-
-interface LanguageSample {
-  readonly text: string;
-  readonly custom: boolean;
-  readonly shaping?: Readonly<TextShapingOptions>;
-}
+import {
+  cameraHome,
+  CHUNK_SIZE,
+  COLUMNS,
+  CULLING_PADDING,
+  CUSTOM_FONTS,
+  DEMO_CHARSETS,
+  FALLBACK_FILL,
+  FIELD_FILL,
+  FIELD_FONT_SIZE,
+  gridIndicesInWorldBounds,
+  HERO_FONT_SIZE,
+  INITIAL_ZOOM,
+  isMoverIndex,
+  LABEL_COUNT,
+  labelPosition,
+  LANGUAGE_SAMPLES,
+  MOVING_COUNT,
+  MULTILINGUAL_STACK,
+  resolveLanguageSample,
+  STORM_INTERVAL_MS,
+  SYSTEM_FONT_FAMILIES,
+  workingSetExpand,
+  worldHeight,
+  worldWidth,
+  type LanguageSample,
+} from "../utils/demoScene";
 
 interface LoadedFontAsset {
   readonly family: string;
   readonly bytes: Uint8Array;
 }
 
-const LANGUAGE_SAMPLES: readonly Readonly<LanguageSample>[] = Object.freeze([
-  sample("简体中文 · 上海字流", true, "zh-CN", "Hans"),
-  sample("繁體中文 · 臺北字型", true, "zh-TW", "Hant"),
-  sample("日本語 · 東京テキスト", true, "ja", "Jpan"),
-  sample("한국어 · 서울글리프", true, "ko", "Kore"),
-  sample("Tiếng Việt · Hà Nội", true, "vi", "Latn"),
-  sample("العربية · مرحبا", true, "ar", "Arab", "rtl"),
-  sample("हिन्दी · नमस्ते", true, "hi", "Deva"),
-  sample("עברית · שלום", true, "he", "Hebr", "rtl"),
-  sample("ไทย · สวัสดี", true, "th", "Thai"),
-  sample("Русский · Привет", true, "ru", "Cyrl"),
-  sample("Ελληνικά · Γεια", true, "el", "Grek"),
-  Object.freeze({ text: "Emoji · 🌏 ✦", custom: false }),
-]);
-const DEMO_CHARSETS: readonly Readonly<{ family: string; charset: string }>[] = Object.freeze([
-  {
-    family: "Glyphflow CJKV Demo",
-    charset: [
-      "简体中文 · 上海字流",
-      "繁體中文 · 臺北字型",
-      "日本語 · 東京テキスト",
-      "한국어 · 서울글리프",
-      "Tiếng Việt · Hà Nội",
-      "Русский · Привет",
-      "Ελληνικά · Γεια",
-    ].join(""),
-  },
-  { family: "Glyphflow Arabic Demo", charset: "العربية · مرحبا" },
-  { family: "Glyphflow Devanagari Demo", charset: "हिन्दी · नमस्ते" },
-  { family: "Glyphflow Hebrew Demo", charset: "עברית · שלום" },
-  { family: "Glyphflow Thai Demo", charset: "ไทย · สวัสดี" },
-]);
 const numberFormat = new Intl.NumberFormat("en-US");
 
 type RendererBackend = "webgl" | "webgpu";
@@ -104,9 +65,10 @@ function resolveDemoBackend(
 
 const canvasHost = ref<HTMLElement>();
 const state = ref<"booting" | "ready" | "error">("booting");
+const firstFrameReady = ref(false);
 const errorMessage = ref("");
 const loadedPercent = ref(0);
-const bootStage = ref("Allocating labels");
+const bootStage = ref("Loading type");
 const requestedBackend = ref<RendererBackend>("webgl");
 const activeBackend = ref<RendererBackend>();
 const webGpuCapability = ref<WebGpuCapability>("checking");
@@ -128,6 +90,7 @@ const fps = ref("0");
 const fontStatus = ref("Loading custom fonts");
 const fontFootprint = ref("0 KiB");
 const cullPath = ref<CullPath>("cpu-grid");
+const palettePath = ref<PalettePath>("texture");
 const rendererName = computed(() => formatRenderer(activeBackend.value ?? requestedBackend.value));
 
 const webGpuCapabilityLabel = computed(() => {
@@ -148,6 +111,12 @@ const webGpuCapabilityLabel = computed(() => {
 const stateLabel = computed(() => {
   if (state.value === "ready") return `${rendererName.value} live`;
   if (state.value === "error") return "Error";
+  return `${bootStage.value} · ${loadedPercent.value}%`;
+});
+
+const bootChip = computed(() => {
+  if (state.value === "error") return errorMessage.value;
+  if (!firstFrameReady.value) return bootStage.value;
   return `${bootStage.value} · ${loadedPercent.value}%`;
 });
 
@@ -256,8 +225,9 @@ function updateRendererQuery(backend: RendererBackend): void {
 }
 
 function resetHud(): void {
+  firstFrameReady.value = false;
   loadedPercent.value = 0;
-  bootStage.value = "Allocating labels";
+  bootStage.value = "Loading type";
   resident.value = "0";
   visible.value = "0";
   pendingGlyphs.value = 0;
@@ -272,6 +242,7 @@ function resetHud(): void {
   fontStatus.value = "Loading custom fonts";
   fontFootprint.value = "0 KiB";
   cullPath.value = "cpu-grid";
+  palettePath.value = "texture";
   allVisible.value = true;
   visibilityPending.value = false;
   rotationDegrees.value = 0;
@@ -289,6 +260,8 @@ async function initialize(backend: RendererBackend, runId: number): Promise<void
     backend === "webgpu"
       ? await requestComputeCullGpu({ powerPreference: "high-performance" })
       : undefined;
+  // Storage-palette bind is a library path. Do not catch a createBindGroup
+  // crash here and rebuild as WebGL or force palettePath: "texture".
   if (backend === "webgpu" && gpu === undefined) {
     throw new Error("WebGPU device is unavailable");
   }
@@ -328,13 +301,14 @@ async function initialize(backend: RendererBackend, runId: number): Promise<void
   );
   host.appendChild(nextApp.canvas);
 
-  const worldWidth = COLUMNS * COLUMN_SPACING;
-  const worldHeight = Math.ceil(LABEL_COUNT / COLUMNS) * ROW_SPACING;
+  const nextWorldWidth = worldWidth();
+  const nextWorldHeight = worldHeight();
+  const home = cameraHome();
   const nextViewport = new Viewport({
     screenWidth: nextApp.screen.width,
     screenHeight: nextApp.screen.height,
-    worldWidth,
-    worldHeight,
+    worldWidth: nextWorldWidth,
+    worldHeight: nextWorldHeight,
     passiveWheel: false,
     events: nextApp.renderer.events,
   });
@@ -350,7 +324,7 @@ async function initialize(backend: RendererBackend, runId: number): Promise<void
     })
     .clampZoom({ minScale: 0.08, maxScale: 3 });
   nextViewport.setZoom(INITIAL_ZOOM, true);
-  nextViewport.moveCenter(worldWidth / 2, worldHeight / 2);
+  nextViewport.moveCenter(home.x, home.y);
   nextApp.stage.addChild(nextViewport);
 
   bootStage.value = "Baking sample glyphs";
@@ -373,6 +347,7 @@ async function initialize(backend: RendererBackend, runId: number): Promise<void
     renderer: nextApp.renderer,
     initialCapacity: LABEL_COUNT,
     rendering: {
+      transformOptions: { initialCapacity: LABEL_COUNT },
       rasterizerOptions: {
         tinySdf: true,
         distanceFieldMinFontSize: 48,
@@ -383,7 +358,7 @@ async function initialize(backend: RendererBackend, runId: number): Promise<void
     },
     culling: {
       bounds: { x: 0, y: 0, width: nextApp.screen.width, height: nextApp.screen.height },
-      padding: 48,
+      padding: CULLING_PADDING,
       computeCull: "auto",
     },
   });
@@ -408,57 +383,61 @@ async function initialize(backend: RendererBackend, runId: number): Promise<void
   });
   binding = nextBinding;
   await nextBinding.whenIdle();
+  if (isStale(runId)) return;
 
+  const styles = createLabelStyles();
   movingIds = new Float64Array(MOVING_COUNT);
   firstPositions = new Float32Array(MOVING_COUNT * 2);
   secondPositions = new Float32Array(MOVING_COUNT * 2);
-  const customStyle: Readonly<TextStyleOptions> = Object.freeze({
-    fontFamily: MULTILINGUAL_STACK,
-    fontSize: 14,
-    fontWeight: "500",
-    fill: 0xe8f6ff,
-  });
-  const fallbackStyle: Readonly<TextStyleOptions> = Object.freeze({
-    fontFamily: MULTILINGUAL_STACK,
-    fontSize: 13,
-    fontWeight: "500",
-    fill: 0x9fb3c0,
-  });
   let movingIndex = 0;
 
+  bootStage.value = "Drawing the first view";
+  const visibleBounds = nextViewport.getVisibleBounds();
+  let firstView = gridIndicesInWorldBounds(
+    visibleBounds,
+    workingSetExpand(visibleBounds, CULLING_PADDING),
+  );
+  if (firstView.length === 0) {
+    firstView = gridIndicesInWorldBounds(
+      { x: home.x - 800, y: home.y - 400, width: 1_600, height: 800 },
+      CULLING_PADDING,
+    );
+  } else if (firstView.length > 20_000) {
+    firstView = gridIndicesInWorldBounds(visibleBounds);
+  }
+  const firstViewSet = new Set(firstView);
+  movingIndex = admitLabelIndices(nextLayer, firstView, styles, movingIndex);
+  loadedPercent.value = Math.round((firstView.length / LABEL_COUNT) * 100);
+  await nextLayer.commit();
+  nextViewport.emit("frame-end", nextViewport);
+  await nextBinding.whenIdle();
+  if (isStale(runId)) return;
+  nextApp.render();
+  firstFrameReady.value = true;
+  updateHud(0);
+  nextApp.start();
+  startRuntime(nextApp, nextViewport, nextWorldWidth, nextWorldHeight, runId);
+
+  bootStage.value = "Filling the million";
   for (let start = 0; start < LABEL_COUNT; start += CHUNK_SIZE) {
     if (isStale(runId)) return;
-    const count = Math.min(CHUNK_SIZE, LABEL_COUNT - start);
-    const specs = Array.from({ length: count }, (_, localIndex): TextLabelSpec => {
-      const index = start + localIndex;
-      const { sample, showcase } = resolveLanguageSample(index);
-      if (sample === undefined) throw new Error("Language sample list is empty");
-      return {
-        text: sample.text,
-        x: (index % COLUMNS) * COLUMN_SPACING,
-        y: Math.floor(index / COLUMNS) * ROW_SPACING,
-        style: sample.custom ? customStyle : fallbackStyle,
-        ...(showcase && sample.shaping !== undefined ? { shaping: sample.shaping } : {}),
-      };
-    });
-    const ids = nextLayer.createMany(specs);
-    for (let localIndex = 0; localIndex < ids.length; localIndex += 1) {
-      const index = start + localIndex;
-      if (index % (LABEL_COUNT / MOVING_COUNT) !== 0 || movingIndex >= MOVING_COUNT) continue;
-      const id = ids[localIndex];
-      if (id === undefined) continue;
-      captureMovingLabel(id, index, movingIndex);
-      movingIndex += 1;
+    const end = Math.min(LABEL_COUNT, start + CHUNK_SIZE);
+    const chunk: number[] = [];
+    for (let index = start; index < end; index += 1) {
+      if (firstViewSet.has(index)) continue;
+      chunk.push(index);
     }
-    loadedPercent.value = Math.round(((start + count) / LABEL_COUNT) * 100);
+    if (chunk.length > 0) {
+      movingIndex = admitLabelIndices(nextLayer, chunk, styles, movingIndex);
+    }
+    loadedPercent.value = Math.round((end / LABEL_COUNT) * 100);
     await nextFrame();
   }
 
-  bootStage.value = "Shaping visible labels";
+  bootStage.value = "Publishing the resident set";
   const initialCommit = nextLayer.commit();
   resident.value = numberFormat.format(nextLayer.stats.labelCount);
   visible.value = numberFormat.format(nextLayer.stats.visibleLabelCount);
-  bootStage.value = `Rasterizing ${visible.value} visible labels`;
   const glyphProgress = window.setInterval(() => {
     const pending = nextLayer.stats.pendingGlyphCount;
     pendingGlyphs.value = pending;
@@ -484,8 +463,88 @@ async function initialize(backend: RendererBackend, runId: number): Promise<void
   if (backend === "webgpu") webGpuCapability.value = "available";
   state.value = "ready";
   updateHud(0);
-  nextApp.start();
-  startRuntime(nextApp, nextViewport, worldWidth, worldHeight, runId);
+  stormTimer = window.setInterval(() => void runPositionStorm(runId), STORM_INTERVAL_MS);
+  void runPositionStorm(runId);
+}
+
+function createLabelStyles(): Readonly<{
+  hero: readonly Readonly<TextStyleOptions>[];
+  field: Readonly<TextStyleOptions>;
+  fallback: Readonly<TextStyleOptions>;
+}> {
+  return Object.freeze({
+    hero: Object.freeze(
+      LANGUAGE_SAMPLES.map((entry) =>
+        Object.freeze({
+          fontFamily: MULTILINGUAL_STACK,
+          fontSize: HERO_FONT_SIZE,
+          fontWeight: "500",
+          fill: entry.fill,
+        }),
+      ),
+    ),
+    field: Object.freeze({
+      fontFamily: MULTILINGUAL_STACK,
+      fontSize: FIELD_FONT_SIZE,
+      fontWeight: "500",
+      fill: FIELD_FILL,
+    }),
+    fallback: Object.freeze({
+      fontFamily: MULTILINGUAL_STACK,
+      fontSize: FIELD_FONT_SIZE,
+      fontWeight: "500",
+      fill: FALLBACK_FILL,
+    }),
+  });
+}
+
+function admitLabelIndices(
+  nextLayer: TextLayer,
+  indices: readonly number[],
+  styles: ReturnType<typeof createLabelStyles>,
+  movingIndex: number,
+): number {
+  if (indices.length === 0) return movingIndex;
+  const specs = indices.map((index) => labelSpec(index, styles));
+  const ids = nextLayer.createMany(specs);
+  for (let localIndex = 0; localIndex < ids.length; localIndex += 1) {
+    const index = indices[localIndex];
+    const id = ids[localIndex];
+    if (index === undefined || id === undefined || !isMoverIndex(index)) continue;
+    if (movingIndex >= MOVING_COUNT) continue;
+    captureMovingLabel(id, index, movingIndex);
+    movingIndex += 1;
+  }
+  return movingIndex;
+}
+
+function labelSpec(index: number, styles: ReturnType<typeof createLabelStyles>): TextLabelSpec {
+  const { sample, showcase, hero } = resolveLanguageSample(index);
+  const position = labelPosition(index);
+  return {
+    text: sample.text,
+    x: position.x,
+    y: position.y,
+    style: resolveLabelStyle(sample, hero, styles),
+    ...(hero || showcase ? shapingFor(sample) : {}),
+  };
+}
+
+function resolveLabelStyle(
+  sample: Readonly<LanguageSample>,
+  hero: boolean,
+  styles: ReturnType<typeof createLabelStyles>,
+): Readonly<TextStyleOptions> {
+  if (!hero) return sample.custom ? styles.field : styles.fallback;
+  const languageIndex = LANGUAGE_SAMPLES.indexOf(sample);
+  return styles.hero[languageIndex] ?? styles.field;
+}
+
+function shapingFor(
+  sample: Readonly<LanguageSample>,
+): Readonly<{ shaping: Readonly<TextShapingOptions> }> | Record<string, never> {
+  if (sample.shaping === undefined) return {};
+  return { shaping: sample.shaping };
 }
 
 function captureMovingLabel(id: TextId, labelIndex: number, movingIndex: number): void {
@@ -493,20 +552,19 @@ function captureMovingLabel(id: TextId, labelIndex: number, movingIndex: number)
   const first = firstPositions;
   const second = secondPositions;
   if (ids === undefined || first === undefined || second === undefined) return;
-  const x = (labelIndex % COLUMNS) * COLUMN_SPACING;
-  const y = Math.floor(labelIndex / COLUMNS) * ROW_SPACING;
+  const position = labelPosition(labelIndex);
   ids[movingIndex] = id;
-  first[movingIndex * 2] = x;
-  first[movingIndex * 2 + 1] = y;
-  second[movingIndex * 2] = x + Math.sin(movingIndex * 0.17) * 110;
-  second[movingIndex * 2 + 1] = y + Math.cos(movingIndex * 0.11) * 72;
+  first[movingIndex * 2] = position.x;
+  first[movingIndex * 2 + 1] = position.y;
+  second[movingIndex * 2] = position.x + Math.sin(movingIndex * 0.17) * 110;
+  second[movingIndex * 2 + 1] = position.y + Math.cos(movingIndex * 0.11) * 72;
 }
 
 function startRuntime(
   nextApp: Application,
   nextViewport: Viewport,
-  worldWidth: number,
-  worldHeight: number,
+  nextWorldWidth: number,
+  nextWorldHeight: number,
   runId: number,
 ): void {
   let frameCount = 0;
@@ -528,13 +586,17 @@ function startRuntime(
     }
   });
 
-  stormTimer = window.setInterval(() => void runPositionStorm(runId), STORM_INTERVAL_MS);
   resizeObserver = new ResizeObserver(() => {
     window.requestAnimationFrame(() => {
       const host = canvasHost.value;
       if (isStale(runId) || host === undefined) return;
       nextApp.renderer.resize(Math.max(host.clientWidth, 320), Math.max(host.clientHeight, 320));
-      nextViewport.resize(nextApp.screen.width, nextApp.screen.height, worldWidth, worldHeight);
+      nextViewport.resize(
+        nextApp.screen.width,
+        nextApp.screen.height,
+        nextWorldWidth,
+        nextWorldHeight,
+      );
       nextViewport.emit("frame-end", nextViewport);
     });
   });
@@ -594,6 +656,7 @@ function updateHud(overrideViewportDuration?: number): void {
   drawCalls.value = stats.drawCalls;
   atlasTextures.value = stats.atlasTextureCount;
   cullPath.value = stats.cullPath;
+  palettePath.value = stats.palettePath;
   viewportDuration.value = `${(
     overrideViewportDuration ?? nextBinding.stats.lastDurationMs
   ).toFixed(2)} ms`;
@@ -633,13 +696,11 @@ function applyRotation(): void {
 function resetCamera(): void {
   const nextViewport = viewport;
   if (nextViewport === undefined) return;
+  const home = cameraHome();
   nextViewport.rotation = 0;
   rotationDegrees.value = 0;
   nextViewport.setZoom(INITIAL_ZOOM, true);
-  nextViewport.moveCenter(
-    (COLUMNS * COLUMN_SPACING) / 2,
-    (LABEL_COUNT / COLUMNS / 2) * ROW_SPACING,
-  );
+  nextViewport.moveCenter(home.x, home.y);
   emitCameraChange(nextViewport, true);
 }
 
@@ -722,45 +783,6 @@ function nextFrame(): Promise<void> {
   return new Promise((resolve) => window.requestAnimationFrame(() => resolve()));
 }
 
-function sample(
-  text: string,
-  custom: boolean,
-  language: string,
-  script: string,
-  direction: "ltr" | "rtl" = "ltr",
-): Readonly<LanguageSample> {
-  return Object.freeze({
-    text,
-    custom,
-    shaping: Object.freeze({
-      direction,
-      language,
-      script,
-      features: Object.freeze(["kern", "liga"]),
-      ...(custom ? { variations: Object.freeze({ wght: 560 }) } : {}),
-    }),
-  });
-}
-
-function resolveLanguageSample(
-  index: number,
-): Readonly<{ sample: Readonly<LanguageSample> | undefined; showcase: boolean }> {
-  const row = Math.floor(index / COLUMNS);
-  const column = index % COLUMNS;
-  const showcaseStart = Math.floor((COLUMNS - LANGUAGE_SAMPLES.length) / 2);
-  const showcaseIndex = column - showcaseStart;
-  const showcase =
-    row % SHOWCASE_ROW_INTERVAL === 0 &&
-    showcaseIndex >= 0 &&
-    showcaseIndex < LANGUAGE_SAMPLES.length;
-  return Object.freeze({
-    sample: showcase
-      ? LANGUAGE_SAMPLES[showcaseIndex]
-      : LANGUAGE_SAMPLES[index % LANGUAGE_SAMPLES.length],
-    showcase,
-  });
-}
-
 async function installDemoFaces(fonts: readonly Readonly<LoadedFontAsset>[]): Promise<void> {
   await Promise.all(
     fonts.map(async (font) => {
@@ -800,6 +822,8 @@ async function loadCustomFonts(): Promise<readonly Readonly<LoadedFontAsset>[]> 
     :data-demo-error="state === 'error' ? errorMessage : ''"
     :data-renderer-backend="activeBackend"
     :data-cull-path="cullPath"
+    :data-palette-path="palettePath"
+    :data-first-frame="firstFrameReady"
     :data-pending-glyphs="pendingGlyphs"
     :data-draw-calls="drawCalls"
     :data-atlas-textures="atlasTextures"
@@ -808,8 +832,8 @@ async function loadCustomFonts(): Promise<readonly Readonly<LoadedFontAsset>[]> 
   >
     <header class="demo-header">
       <div>
-        <p class="demo-kicker">LIVE WEBGL / WEBGPU · CUSTOM CJKV FONT</p>
-        <h2 id="demo-title">Multilingual viewport pressure test</h2>
+        <p class="demo-kicker">WEBGL · WEBGPU</p>
+        <h2 id="demo-title">A million labels, live</h2>
       </div>
       <div class="demo-header-actions">
         <fieldset class="renderer-picker">
@@ -853,17 +877,22 @@ async function loadCustomFonts(): Promise<readonly Readonly<LoadedFontAsset>[]> 
       aria-label="Interactive glyph viewport. Use arrow keys to pan, plus and minus to zoom, and zero to reset."
       @keydown="handleKeyboard"
     >
-      <div v-if="state !== 'ready'" class="demo-loading">
-        <p>{{ state === "error" ? "Renderer setup failed" : bootStage }}</p>
-        <span>{{
-          state === "error" ? errorMessage : `${loadedPercent}% of labels allocated`
-        }}</span>
+      <div v-if="state === 'error'" class="demo-loading">
+        <p>Renderer setup failed</p>
+        <span>{{ errorMessage }}</span>
+      </div>
+      <div v-else-if="!firstFrameReady" class="demo-loading demo-loading-quiet">
+        <p>{{ bootStage }}</p>
+        <span>Placing the first labels</span>
+      </div>
+      <div v-else-if="state === 'booting'" class="demo-boot-chip" aria-live="polite">
+        {{ bootChip }}
       </div>
       <div class="canvas-corner-label" aria-hidden="true">DRAG · ⌘/CTRL + WHEEL · PINCH</div>
     </div>
 
     <div class="demo-readout">
-      <dl class="demo-metrics">
+      <dl class="demo-metrics demo-metrics-primary">
         <div>
           <dt>Resident</dt>
           <dd data-testid="resident-count">{{ resident }}</dd>
@@ -873,56 +902,70 @@ async function loadCustomFonts(): Promise<readonly Readonly<LoadedFontAsset>[]> 
           <dd data-testid="visible-count">{{ visible }}</dd>
         </div>
         <div>
-          <dt>Moving / 100 ms</dt>
-          <dd>{{ numberFormat.format(MOVING_COUNT) }}</dd>
+          <dt>Storm</dt>
+          <dd data-testid="storm-commit">{{ updateDuration }}</dd>
         </div>
         <div>
-          <dt>Revision</dt>
-          <dd data-testid="revision-count">{{ revision }}</dd>
-        </div>
-        <div>
-          <dt>Position commit</dt>
-          <dd>{{ updateDuration }}</dd>
-        </div>
-        <div>
-          <dt>Show / hide commit</dt>
-          <dd data-testid="visibility-duration">{{ visibilityDuration }}</dd>
-        </div>
-        <div>
-          <dt>Viewport commit</dt>
-          <dd>{{ viewportDuration }}</dd>
-        </div>
-        <div>
-          <dt>Submitted glyphs</dt>
-          <dd>{{ glyphs }}</dd>
-        </div>
-        <div>
-          <dt>Draw calls / atlas</dt>
-          <dd>
-            <span data-testid="draw-call-count">{{ numberFormat.format(drawCalls) }}</span>
-            /
-            <span data-testid="atlas-texture-count">{{ numberFormat.format(atlasTextures) }}</span>
-          </dd>
-        </div>
-        <div>
-          <dt>Renderer / FPS</dt>
-          <dd>
-            <span data-testid="renderer-adapter">{{ rendererName }}</span> · {{ fps }} FPS
-          </dd>
+          <dt>Renderer</dt>
+          <dd data-testid="renderer-adapter">{{ rendererName }}</dd>
         </div>
         <div>
           <dt>Cull path</dt>
           <dd data-testid="cull-path">{{ cullPath }}</dd>
         </div>
         <div>
-          <dt>Font pipeline</dt>
-          <dd data-testid="custom-font-status">{{ fontStatus }}</dd>
+          <dt>Palette path</dt>
+          <dd data-testid="palette-path">{{ palettePath }}</dd>
         </div>
         <div>
-          <dt>Font / samples</dt>
-          <dd>{{ fontFootprint }} · {{ LANGUAGE_SAMPLES.length }} samples</dd>
+          <dt>FPS</dt>
+          <dd data-testid="demo-fps">{{ fps }}</dd>
         </div>
       </dl>
+
+      <details class="demo-engine">
+        <summary>More engine stats</summary>
+        <dl class="demo-metrics demo-metrics-secondary">
+          <div>
+            <dt>Moving / 100 ms</dt>
+            <dd>{{ numberFormat.format(MOVING_COUNT) }}</dd>
+          </div>
+          <div>
+            <dt>Revision</dt>
+            <dd data-testid="revision-count">{{ revision }}</dd>
+          </div>
+          <div>
+            <dt>Show / hide commit</dt>
+            <dd data-testid="visibility-duration">{{ visibilityDuration }}</dd>
+          </div>
+          <div>
+            <dt>Viewport commit</dt>
+            <dd>{{ viewportDuration }}</dd>
+          </div>
+          <div>
+            <dt>Submitted glyphs</dt>
+            <dd>{{ glyphs }}</dd>
+          </div>
+          <div>
+            <dt>Draw calls / atlas</dt>
+            <dd>
+              <span data-testid="draw-call-count">{{ numberFormat.format(drawCalls) }}</span>
+              /
+              <span data-testid="atlas-texture-count">{{
+                numberFormat.format(atlasTextures)
+              }}</span>
+            </dd>
+          </div>
+          <div>
+            <dt>Font pipeline</dt>
+            <dd data-testid="custom-font-status">{{ fontStatus }}</dd>
+          </div>
+          <div>
+            <dt>Font / samples</dt>
+            <dd>{{ fontFootprint }} · {{ LANGUAGE_SAMPLES.length }} samples</dd>
+          </div>
+        </dl>
+      </details>
 
       <div class="demo-controls">
         <button type="button" :aria-pressed="stormEnabled" @click="toggleStorm">

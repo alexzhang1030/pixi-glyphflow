@@ -29,11 +29,14 @@ test("serves the docs, runs the viewport, and fits every target width", async ({
     backend === "webgpu" ? "WebGPU" : "WebGL 2",
   );
   await expectCullPath(page, backend === "webgpu" ? "compute-cull" : "cpu-grid");
+  await expectPalettePath(page, backend === "webgl" ? "texture" : undefined);
   await expect(page.getByTestId("resident-count")).toHaveText("1,000,000");
+  await expect.poll(() => readMetric(page, "visible-count")).toBeGreaterThan(50);
   await expect(page.getByTestId("custom-font-status")).toHaveText("5 custom fonts ready");
   await expect(page.getByTestId("draw-call-count")).toHaveText("1");
   await expect(page.getByTestId("atlas-texture-count")).toHaveText(/^[2-8]$/);
   await expect(demo.locator("canvas")).toBeVisible();
+  await expect(demo).toHaveAttribute("data-first-frame", "true");
 
   const movementButton = page.getByRole("button", { name: "Pause movement" });
   await movementButton.click();
@@ -109,6 +112,7 @@ test("rebuilds the pressure test across WebGL 2 and an available WebGPU adapter"
   await expectDemoReady(page);
   await expect(demo).toHaveAttribute("data-renderer-backend", "webgl");
   await expectCullPath(page, "cpu-grid");
+  await expectPalettePath(page, "texture");
   await expect(capability).toHaveText(/WebGPU (available|unavailable)/);
 
   if ((await capability.textContent())?.includes("unavailable") === true) {
@@ -123,10 +127,13 @@ test("rebuilds the pressure test across WebGL 2 and an available WebGPU adapter"
   await expect(demo).toHaveAttribute("data-demo-state", "ready");
   await expect(page.getByTestId("renderer-adapter")).toHaveText("WebGPU");
   await expectCullPath(page, "compute-cull");
+  await expectPalettePath(page);
   await expect(page.getByTestId("resident-count")).toHaveText("1,000,000");
 
   const initialRevision = await readMetric(page, "revision-count");
-  await expect.poll(() => readMetric(page, "revision-count")).toBeGreaterThan(initialRevision);
+  await expect
+    .poll(() => readMetric(page, "revision-count"), { timeout: 15_000 })
+    .toBeGreaterThan(initialRevision);
   await page.getByRole("button", { name: "Pause movement" }).click();
 
   await page.getByRole("button", { name: "Hide all labels" }).click();
@@ -149,6 +156,7 @@ test("rebuilds the pressure test across WebGL 2 and an available WebGPU adapter"
   await expectDemoReady(page);
   await expect(page.getByTestId("renderer-adapter")).toHaveText("WebGL 2");
   await expectCullPath(page, "cpu-grid");
+  await expectPalettePath(page, "texture");
   await expect(page.getByTestId("resident-count")).toHaveText("1,000,000");
   expect(consoleErrors).toEqual([]);
 });
@@ -191,6 +199,7 @@ test("keeps the fully zoomed-out WebGPU pressure test within its uniform budget"
   await expectDemoReady(page);
   await expect(demo).toHaveAttribute("data-renderer-backend", "webgpu");
   await expectCullPath(page, "compute-cull");
+  await expectPalettePath(page);
   const canvas = demo.locator(".demo-canvas");
   await canvas.focus();
   for (let step = 0; step < 8; step += 1) {
@@ -227,6 +236,16 @@ async function expectDemoReady(page: Page): Promise<void> {
 async function expectCullPath(page: Page, path: "compute-cull" | "cpu-grid"): Promise<void> {
   await expect(page.getByTestId("glyphflow-demo")).toHaveAttribute("data-cull-path", path);
   await expect(page.getByTestId("cull-path")).toHaveText(path);
+}
+
+async function expectPalettePath(page: Page, path?: "texture" | "storage"): Promise<void> {
+  const demo = page.getByTestId("glyphflow-demo");
+  const value = await demo.getAttribute("data-palette-path");
+  expect(value === "texture" || value === "storage").toBe(true);
+  await expect(page.getByTestId("palette-path")).toHaveText(value ?? "");
+  if (path !== undefined) {
+    await expect(demo).toHaveAttribute("data-palette-path", path);
+  }
 }
 
 async function readMetric(page: Page, testId: string): Promise<number> {

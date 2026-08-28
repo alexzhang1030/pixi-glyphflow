@@ -186,6 +186,58 @@ export function paletteUploadRects(
   return rects;
 }
 
+/**
+ * WebGL `texSubImage2D` of `rgba32float` poisons the table when the write is a mid-row slice (`x
+ * !== 0`, odd texel width). Expand every dirty byte range to complete rows at `x = 0` and stack
+ * contiguous rows when the stride is 256-byte aligned. Copy through `packedFloatTexelView`.
+ */
+export function webglFloatPaletteRects(
+  ranges: readonly Readonly<{ readonly offset: number; readonly length: number }>[],
+  textureWidth: number,
+): PaletteUploadRect[] {
+  if (!Number.isSafeInteger(textureWidth) || textureWidth <= 0) {
+    throw new TypeError("webglFloatPaletteRects textureWidth must be a positive safe integer");
+  }
+  const dirtyRows: number[] = [];
+  const seen = new Set<number>();
+  for (const range of ranges) {
+    if (range.length <= 0) continue;
+    const startTexel = range.offset / FLOAT_TEXEL_BYTES;
+    const endTexel = (range.offset + range.length) / FLOAT_TEXEL_BYTES;
+    if (endTexel <= startTexel) continue;
+    const firstRow = Math.floor(startTexel / textureWidth);
+    const lastRow = Math.floor((endTexel - 1) / textureWidth);
+    for (let row = firstRow; row <= lastRow; row += 1) {
+      if (seen.has(row)) continue;
+      seen.add(row);
+      dirtyRows.push(row);
+    }
+  }
+  dirtyRows.sort((left, right) => left - right);
+  const rowBytes = textureWidth * FLOAT_TEXEL_BYTES;
+  const canStackRows = rowBytes % WEBGPU_BYTES_PER_ROW_ALIGNMENT === 0;
+  const rects: PaletteUploadRect[] = [];
+  let index = 0;
+  while (index < dirtyRows.length) {
+    const y = dirtyRows[index] ?? 0;
+    let height = 1;
+    if (canStackRows) {
+      while (index + height < dirtyRows.length && dirtyRows[index + height] === y + height) {
+        height += 1;
+      }
+    }
+    rects.push({
+      x: 0,
+      y,
+      width: textureWidth,
+      height,
+      texel: y * textureWidth,
+    });
+    index += height;
+  }
+  return rects;
+}
+
 export interface PrototypeTextureLayout {
   readonly width: number;
   readonly height: number;
@@ -214,7 +266,8 @@ export function allocatePrototypePixels(width: number, height: number): Float32A
 
 /**
  * WebGL `texSubImage2D` ignores `byteOffset` on a FLOAT `Float32Array` view (ANGLE / SwiftShader
- * read from the start of the underlying buffer). Copy any non-zero-offset range before upload.
+ * read from the start of the underlying buffer). Copy any non-zero-offset range before upload. Pair
+ * with `webglFloatPaletteRects` so the write is also a full-width row at `x = 0`.
  */
 export function packedFloatTexelView(
   data: Float32Array,
