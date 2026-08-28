@@ -633,6 +633,15 @@ export class RenderSurface {
       this.#transformWrites += 1;
       return;
     }
+    // WebGL rgba32float texSubImage2D blanks this compositor after the first texImage2D,
+    // even as one packed 1024×1 row at x=0 with UNPACK reset and glError 0. Reallocate
+    // the existing texture. Pixi source.update() is still texSubImage2D when sizes match.
+    if (isWebGLRenderer(this.#renderer)) {
+      const uploaded = reallocateWebGLFloatTexture(this.#renderer, this.#paletteSource, data);
+      this.#transformUploadBytes += uploaded.bytes;
+      this.#transformWrites += uploaded.writes;
+      return;
+    }
     const uploaded = uploadFloatTextureRanges(
       this.#renderer,
       this.#paletteSource,
@@ -1497,6 +1506,61 @@ function withAtlasUnpack(gl: WebGL2RenderingContext, write: () => void): void {
     gl.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL, previousFlipY);
     gl.pixelStorei(gl.UNPACK_PREMULTIPLY_ALPHA_WEBGL, previousPremultiply);
   }
+}
+
+function reallocateWebGLFloatTexture(
+  renderer: WebGLRenderer,
+  source: BufferImageSource,
+  data: Float32Array,
+): Readonly<{ bytes: number; writes: number }> {
+  const gl = renderer.gl;
+  const resource = renderer.texture.getGlSource(source);
+  // #region agent log
+  const uploadLog = (globalThis as { __GLYPHFLOW_UPLOAD_LOGS?: number }).__GLYPHFLOW_UPLOAD_LOGS ?? 0;
+  if (uploadLog < 4) {
+    (globalThis as { __GLYPHFLOW_UPLOAD_LOGS?: number }).__GLYPHFLOW_UPLOAD_LOGS = uploadLog + 1;
+    agentLog("N", "RenderSurface.ts:reallocateWebGLFloatTexture", "webgl float texImage2D enter", {
+      runId: "hyp-N",
+      label: source.label,
+      w: source.width,
+      h: source.height,
+      bytes: data.byteLength,
+      glWidth: resource.width,
+      glHeight: resource.height,
+      sameResource: source.resource === data,
+    });
+  }
+  // #endregion
+  withFloatUnpack(gl, () => {
+    gl.bindTexture(resource.target, resource.texture);
+    gl.texImage2D(
+      resource.target,
+      0,
+      resource.internalFormat,
+      source.width,
+      source.height,
+      0,
+      resource.format,
+      resource.type,
+      data,
+    );
+  });
+  resource.width = source.width;
+  resource.height = source.height;
+  // #region agent log
+  if (uploadLog < 4) {
+    agentLog("N", "RenderSurface.ts:reallocateWebGLFloatTexture", "webgl float texImage2D exit", {
+      runId: "hyp-N",
+      label: source.label,
+      writes: 1,
+      bytes: data.byteLength,
+      glError: gl.getError(),
+      glWidth: resource.width,
+      glHeight: resource.height,
+    });
+  }
+  // #endregion
+  return { bytes: data.byteLength, writes: 1 };
 }
 
 function initializeTexture(renderer: Renderer, source: BufferImageSource): void {

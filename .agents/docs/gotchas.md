@@ -25,13 +25,14 @@ A dirty proto upload for store glyph 1 then writes glyph 0 (often cleared, `isAc
 the live texel. `packedFloatTexelView` copies the range first. Do not pass `data.subarray(...)`
 straight to `texSubImage2D`.
 
-A position storm's first dirty palette write is also the first `texSubImage2D` of that table.
-The first commit only `initializeTexture`s (full `texImage2D`). Sixteen sparse movers publish
-eight 624-byte bands (39 texels at `x = 96` on row 1). A mid-row FLOAT write on this WebGL
-device blanks the canvas while CPU slots stay live. Expand those ranges to complete rows at
-`x = 0` (`webglFloatPaletteRects`) and reset `UNPACK_ROW_LENGTH` / `SKIP_*`. Do not upload the
-39-texel slice. Banded dirty collapse may still span neighbors; the CPU buffer is the source
-of truth, so a full-row copy is safe on the texture path.
+A position storm's first dirty palette write is the first GPU rewrite after
+`initializeTexture` (full `texImage2D`). Sixteen sparse movers publish eight 624-byte bands.
+`texSubImage2D` of those bands blanks the canvas while CPU slots stay live — including a packed
+1024-wide row at `x = 0` with `UNPACK_*` reset and `glError` 0. WebGL `rgba32float` palette
+dirties must `texImage2D` the existing texture from the CPU buffer. Do not use `texSubImage2D`.
+Do not call `source.update()` here: Pixi's buffer uploader takes `texSubImage2D` when the GL
+size already matches. Do not create a new `BufferImageSource` / `Texture`. WebGPU keeps dirty
+rectangles. Proto dirty rects still go through `uploadFloatTextureRanges`.
 
 The first proto `initializeTexture` uploads whatever `highWater` is at that moment (often glyph 0
 only). Three appearance glyphs still fit in one 1024-wide row, so the texture size does not grow
@@ -365,8 +366,9 @@ happen to resolve to the same color stay two writes.
 `writeTexture`. WebGPU requires `bytesPerRow % 256 === 0` when `height > 1`. The default 1024
 texel width is 16 KiB per row and is aligned. Narrow palettes (unit tests use width 8) stay
 row-by-row so WebGL and WebGPU share the same rectangles. Do not pad `bytesPerRow` — the CPU
-buffer has no row padding. WebGL `rgba32float` dirty writes expand every band to those full
-rows at `x = 0` before the copy; a mid-row 39-texel storm slice blanks the table.
+buffer has no row padding. WebGL `rgba32float` palette dirties skip those rects and
+`texImage2D` the existing texture. A packed full-width `texSubImage2D` still blanks this
+compositor.
 
 ## Spatial queries with dense results must not pay the grid sort
 
