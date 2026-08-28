@@ -187,9 +187,9 @@ export function paletteUploadRects(
 }
 
 /**
- * WebGL `texSubImage2D` of `rgba32float` poisons the table when the write is a mid-row slice
- * (`x !== 0`, odd texel width). Expand every dirty byte range to complete rows at `x = 0` and
- * stack contiguous rows when the stride is 256-byte aligned. Copy through `packedFloatTexelView`.
+ * WebGL `texSubImage2D` of `rgba32float` poisons the table when the write is a mid-row slice (`x
+ * !== 0`, odd texel width). Expand every dirty byte range to complete rows at `x = 0` and stack
+ * contiguous rows when the stride is 256-byte aligned. Copy through `packedFloatTexelView`.
  */
 export function webglFloatPaletteRects(
   ranges: readonly Readonly<{ readonly offset: number; readonly length: number }>[],
@@ -266,8 +266,8 @@ export function allocatePrototypePixels(width: number, height: number): Float32A
 
 /**
  * WebGL `texSubImage2D` ignores `byteOffset` on a FLOAT `Float32Array` view (ANGLE / SwiftShader
- * read from the start of the underlying buffer). Copy any non-zero-offset range before upload.
- * Pair with `webglFloatPaletteRects` so the write is also a full-width row at `x = 0`.
+ * read from the start of the underlying buffer). Copy any non-zero-offset range before upload. Pair
+ * with `webglFloatPaletteRects` so the write is also a full-width row at `x = 0`.
  */
 export function packedFloatTexelView(
   data: Float32Array,

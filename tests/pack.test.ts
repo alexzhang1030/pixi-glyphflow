@@ -123,10 +123,7 @@ describe("webglFloatPaletteRects", () => {
     const textureWidth = 1024;
     const texelBytes = 16;
     expect(
-      webglFloatPaletteRects(
-        [{ offset: 0, length: 2 * textureWidth * texelBytes }],
-        textureWidth,
-      ),
+      webglFloatPaletteRects([{ offset: 0, length: 2 * textureWidth * texelBytes }], textureWidth),
     ).toEqual([{ x: 0, y: 0, width: 1024, height: 2, texel: 0 }]);
   });
 });

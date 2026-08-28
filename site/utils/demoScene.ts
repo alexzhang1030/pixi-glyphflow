@@ -1,7 +1,7 @@
 export const LABEL_COUNT = 1_000_000;
 export const MOVING_COUNT = 100_000;
 export const COLUMNS = 1_000;
-export const ROWS = LABEL_COUNT / COLUMNS;
+export const ROWS: number = LABEL_COUNT / COLUMNS;
 export const COLUMN_SPACING = 228;
 export const ROW_SPACING = 42;
 export const CHUNK_SIZE = 25_000;
@@ -14,9 +14,9 @@ export const FIELD_FONT_SIZE = 12;
 export const FIELD_FILL = 0x5f7382;
 export const FALLBACK_FILL = 0x556878;
 export const MULTILINGUAL_STACK = "Glyphflow multilingual";
-export const MOVER_STRIDE = LABEL_COUNT / MOVING_COUNT;
+export const MOVER_STRIDE: number = LABEL_COUNT / MOVING_COUNT;
 
-export const CUSTOM_FONTS = Object.freeze([
+export const CUSTOM_FONTS: readonly Readonly<{ family: string; url: string }>[] = Object.freeze([
   { family: "Glyphflow CJKV Demo", url: "/fonts/noto-sans-cjkv-demo.ttf" },
   { family: "Glyphflow Arabic Demo", url: "/fonts/noto-sans-arabic-demo.ttf" },
   { family: "Glyphflow Devanagari Demo", url: "/fonts/noto-sans-devanagari-demo.ttf" },
@@ -24,7 +24,7 @@ export const CUSTOM_FONTS = Object.freeze([
   { family: "Glyphflow Thai Demo", url: "/fonts/noto-sans-thai-demo.ttf" },
 ]);
 
-export const SYSTEM_FONT_FAMILIES = Object.freeze([
+export const SYSTEM_FONT_FAMILIES: readonly string[] = Object.freeze([
   "system-ui",
   "PingFang SC",
   "Hiragino Sans",
@@ -100,7 +100,7 @@ export const DEMO_CHARSETS: readonly Readonly<{ family: string; charset: string 
     { family: "Glyphflow Thai Demo", charset: "ไทย · สวัสดี" },
   ]);
 
-export const HERO_BAND_START_ROW = Math.floor((ROWS - LANGUAGE_SAMPLES.length) / 2);
+export const HERO_BAND_START_ROW: number = Math.floor((ROWS - LANGUAGE_SAMPLES.length) / 2);
 
 export function worldWidth(): number {
   return COLUMNS * COLUMN_SPACING;
