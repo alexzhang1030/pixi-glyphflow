@@ -171,9 +171,12 @@ those HarfBuzz glyphs as a local SDF from the canvas mask and skips `@zappar/msd
 changes pixels. `prebuilt` serves packed pages before TinySDF or MSDF. Record keys come from
 `prebuiltGlyphKey` and omit font revision so a re-registered family keeps the same page. A miss
 with a non-zero glyph id retries `glyphId: 0` when `glyphText` is a single Unicode scalar, so a
-family page can ignore HarfBuzz ids. Ligatures stay on the exact key. The
-renderer stores the
-physical-to-logical raster scale so layout, stroke, and shadow dimensions remain stable.
+family page can ignore HarfBuzz ids. Ligatures stay on the exact key. A miss whose physical
+size (`max(fontSize, distanceFieldMinFontSize)`) matches a baked field's
+`fontSize * (rasterScale ?? 1)` crops that field and interns it, so a 14px bake serves a 13px
+or 32px first sight without starting TinySDF or MSDF. Sizes above the minimum still generate.
+The renderer stores the physical-to-logical raster scale so layout, stroke, and shadow
+dimensions remain stable.
 `createMsdfGenerator` supplies explicit worker and WebAssembly URLs for production bundlers. Each
 worker serializes font loading and atlas generation; separate workers execute in parallel.
 

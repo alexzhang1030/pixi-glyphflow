@@ -175,10 +175,14 @@ export class RasterGlyphProvider {
   }
 
   async #createRaster(request: RasterGlyphRequest): Promise<Readonly<GlyphRaster>> {
+    if (request.mode === "sdf" || request.mode === "msdf") {
+      const interned = await this.#peekPhysical(request);
+      if (interned !== undefined) return interned;
+    }
     const baked = this.#lookupPrebuilt(request);
     if (baked !== undefined) {
       this.#prebuiltHits += 1;
-      return baked;
+      return this.#adoptPrebuilt(request, baked);
     }
     if (request.mode === "alpha" || request.mode === "color") {
       this.#canvasRasters += 1;
@@ -477,11 +481,46 @@ export class RasterGlyphProvider {
     return generatorPromise;
   }
 
+  async #peekPhysical(request: RasterGlyphRequest): Promise<Readonly<GlyphRaster> | undefined> {
+    const rasterFontSize = Math.max(request.fontSize, this.#distanceFieldMinFontSize);
+    const physicalKey = physicalDistanceFieldKey(request, rasterFontSize);
+    const cached = this.#physical.get(physicalKey);
+    if (cached !== undefined) return applyPhysicalScale(cached, rasterFontSize / request.fontSize);
+    const pending = this.#physicalPending.get(physicalKey);
+    if (pending === undefined) return undefined;
+    return applyPhysicalScale(await pending, rasterFontSize / request.fontSize);
+  }
+
+  #adoptPrebuilt(request: RasterGlyphRequest, baked: Readonly<GlyphRaster>): Readonly<GlyphRaster> {
+    if (request.mode !== "sdf" && request.mode !== "msdf") return baked;
+    const rasterFontSize = Math.max(request.fontSize, this.#distanceFieldMinFontSize);
+    const scale = baked.metrics?.rasterScale ?? 1;
+    if (Math.round(request.fontSize * scale) !== Math.round(rasterFontSize)) return baked;
+    const physicalKey = physicalDistanceFieldKey(request, rasterFontSize);
+    const existing = this.#physical.get(physicalKey);
+    if (existing !== undefined) {
+      return applyPhysicalScale(existing, rasterFontSize / request.fontSize);
+    }
+    const physical = unscalePrebuiltPhysical(baked, scale);
+    this.#physical.set(physicalKey, physical);
+    while (this.#physical.size > this.#cacheSize) {
+      const oldest = this.#physical.keys().next().value as string | undefined;
+      if (oldest === undefined) break;
+      this.#physical.delete(oldest);
+    }
+    return applyPhysicalScale(physical, rasterFontSize / request.fontSize);
+  }
+
   #lookupPrebuilt(request: RasterGlyphRequest): Readonly<GlyphRaster> | undefined {
     const exact = this.#prebuilt?.lookup(prebuiltGlyphKey(request));
     if (exact !== undefined) return exact;
-    if (request.glyphId === 0 || !isSingleUnicodeScalar(request.glyphText)) return undefined;
-    return this.#prebuilt?.lookup(prebuiltGlyphKey({ ...request, glyphId: 0 }));
+    if (request.glyphId !== 0 && isSingleUnicodeScalar(request.glyphText)) {
+      const zero = this.#prebuilt?.lookup(prebuiltGlyphKey({ ...request, glyphId: 0 }));
+      if (zero !== undefined) return zero;
+    }
+    if (request.mode !== "sdf" && request.mode !== "msdf") return undefined;
+    const physicalFontSize = Math.max(request.fontSize, this.#distanceFieldMinFontSize);
+    return this.#prebuilt?.lookupPhysical(request, physicalFontSize);
   }
 
   #assertActive(): void {
@@ -584,6 +623,22 @@ interface PhysicalRaster {
   readonly fieldRange?: number;
 }
 
+function physicalDistanceFieldKey(request: RasterGlyphRequest, rasterFontSize: number): string {
+  switch (request.mode) {
+    case "sdf":
+      return physicalTinySdfKey(request, rasterFontSize);
+    case "msdf":
+      return physicalMsdfKey(request, rasterFontSize);
+    case "alpha":
+    case "color":
+      throw new TypeError("Physical intern is only for distance fields");
+    default: {
+      const _exhaustive: never = request.mode;
+      return _exhaustive;
+    }
+  }
+}
+
 /** TinySDF paints `glyphText`. Logical size and HarfBuzz id do not change the field. */
 function physicalTinySdfKey(request: RasterGlyphRequest, rasterFontSize: number): string {
   return [
@@ -607,6 +662,27 @@ function physicalMsdfKey(request: RasterGlyphRequest, rasterFontSize: number): s
     request.glyphText,
     String(rasterFontSize),
   ].join("\u0000");
+}
+
+function unscalePrebuiltPhysical(
+  baked: Readonly<GlyphRaster>,
+  scale: number,
+): Readonly<PhysicalRaster> {
+  const metrics = baked.metrics;
+  return {
+    mode: baked.mode,
+    width: baked.width,
+    height: baked.height,
+    pixels: baked.pixels,
+    ...(metrics === undefined
+      ? {}
+      : {
+          bearingX: metrics.bearingX * scale,
+          bearingY: metrics.bearingY * scale,
+          advance: metrics.advance * scale,
+          fieldRange: (metrics.fieldRange ?? 0) * scale,
+        }),
+  };
 }
 
 function applyPhysicalScale(

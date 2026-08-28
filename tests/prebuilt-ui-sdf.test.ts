@@ -50,7 +50,13 @@ describe("pixi-glyphflow/prebuilt", () => {
       prebuilt: uiSdfPrebuilt({ family: "HUD" }),
       canvasRasterizer() {
         canvasCalls += 1;
-        throw new Error("canvas must not run for a uiSdf hit");
+        return Promise.resolve({
+          mode: "alpha",
+          width: 8,
+          height: 8,
+          pixels: new Uint8Array(64).fill(255),
+          metrics: { bearingX: 0, bearingY: 6, advance: 8 },
+        });
       },
       async createMsdfGenerator() {
         generatorStarts += 1;
@@ -79,6 +85,18 @@ describe("pixi-glyphflow/prebuilt", () => {
       tinySdfRasters: 0,
       distanceFieldRasters: 0,
     });
+
+    const larger = await provider.rasterize({
+      family: "HUD",
+      fontRevision: font.revision,
+      glyphId: 65,
+      glyphText: "A",
+      fontSize: 32,
+      mode: "sdf",
+    });
+    expect(larger.width).not.toBe(raster.width);
+    expect(canvasCalls).toBe(1);
+    expect(provider.stats.tinySdfRasters).toBe(1);
 
     await provider.destroy();
     registry.destroy();

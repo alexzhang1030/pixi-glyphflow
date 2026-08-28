@@ -17,6 +17,10 @@
 
 ### Performance
 
+- Prebuilt distance-field pages rematch by physical size. A `charsetSdfPrebuilt` bake at 14px
+  crops a 13px or 32px first sight of the same glyph and interns the field, instead of starting
+  TinySDF or MSDF. Sizes above `distanceFieldMinFontSize` still generate. On-screen unique ink
+  still finishes in that commit.
 - Position-only storms write store x/y once. `SpatialIndex` aliases those columns as the origin
   and keeps a local box, so it does not store a second world min/max. Intake only rebuckets on a
   cell-boundary crossing. `writePositions` records one dirty span when the slot column is dense.

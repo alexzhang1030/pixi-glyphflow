@@ -182,7 +182,10 @@ Prebuilt MSDF/SDF pages provide deterministic startup and stable cache contents.
 `rasterizerOptions.prebuilt` so `RasterGlyphProvider` crops those glyphs before TinySDF or MSDF.
 Keys are `prebuiltGlyphKey` identities and omit font revision. A request whose `glyphText` is one
 Unicode scalar also matches a page keyed with `glyphId: 0`, so HarfBuzz ids do not miss a
-family-wide alphabet. Ligatures stay exact-key only. `pixi-glyphflow/prebuilt` exports
+family-wide alphabet. Ligatures stay exact-key only. A request whose physical size matches a
+baked field (`fontSize * (rasterScale ?? 1)`) crops that field even when the logical size in
+the key differs, so a 14px `charsetSdfPrebuilt` bake serves 13px and 32px first sights.
+`pixi-glyphflow/prebuilt` exports
 `uiSdfPrebuilt` for a coarse VGA 8×8 SDF of printable ASCII at 16 px, and `charsetSdfPrebuilt`
 for host-painted TinySDF pages of any charset (including CJK). Import that side entry; do
 not put those pages on the core `pixi-glyphflow` graph. Dynamic providers cover the long

@@ -73,8 +73,9 @@ export function uniqueInkCharset(text: string): string {
 
 /**
  * TinySDF pages for a host charset. First bake for a family + physical size + weight + charset
- * encodes; later calls remap keys and logical `rasterScale`. Pages stay out of the core graph. Does
- * not ship CJK bitmaps — the host paints, typically after `FontFace.load`.
+ * encodes; later calls remap keys and logical `rasterScale`. A bake at one clamp-equivalent logical
+ * size is enough: `RasterGlyphProvider` rematches the physical field. Pages stay out of the core
+ * graph. Does not ship CJK bitmaps — the host paints, typically after `FontFace.load`.
  */
 export async function charsetSdfPrebuilt(
   options: CharsetSdfPrebuiltOptions,

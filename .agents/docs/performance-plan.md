@@ -154,7 +154,8 @@ LRU, 52-bit keys, the 48 MiB store (test-pinned, 44.9 MiB measured), the sparse 
 17. **Optional UI SDF side export — LANDED.** `pixi-glyphflow/prebuilt` (`uiSdfPrebuilt`) bakes
     a coarse VGA 8×8 SDF of U+0020–U+007E at 16 px. First call encodes; later calls remap keys.
     `RasterGlyphProvider` retries a miss with `glyphId: 0` when `glyphText` is one Unicode
-    scalar so HarfBuzz ids crop that page. Ligatures stay exact-key only. Default pages stay
+    scalar so HarfBuzz ids crop that page. Ligatures stay exact-key only. A native 16 px page
+    does not rematch onto a 32 px request. Default pages stay
     out of `src/index.ts` and the core gzip graph. This is not production typography.
 18. **Physical distance-field intern — LANDED.** TinySDF and MSDF intern the field at
     `max(fontSize, distanceFieldMinFontSize)`. A 16px and 32px miss of the same glyph share
@@ -171,12 +172,17 @@ LRU, 52-bit keys, the 48 MiB store (test-pinned, 44.9 MiB measured), the sparse 
     at `max(fontSize, distanceFieldMinFontSize)`, skips empty-ink scalars, and remaps keys
     on later calls. `mergePrebuilt` concatenates family pages. No CJK bitmaps ship in the
     core gzip graph. The homepage demo bakes its language samples after `FontFace.load`.
+    A bake at one clamp-equivalent logical size crops the others and interns the field.
     Unseen ink still generates.
 21. **Atlas texture array — LANDED.** Two `sampler2DArray` / `texture_2d_array` textures hold
     R8 (sdf/alpha) and RGBA8 (msdf/color) pages as layers. Instance metadata low bits are
     the same-format layer. Compact walks no longer split on `floor(page/8)`. Pixi buffer
     uploaders stay 2D; the surface allocates the array and writes `texSubImage3D` /
     `writeTexture` at `z = layer`. Palette SSBO is still not started.
+22. **Prebuilt physical rematch — LANDED.** A bake keyed at one logical size that stores
+    `rasterScale` crops any first sight whose physical size matches. The crop interns into
+    the TinySDF/MSDF field table. A 64px miss still generates. `uiSdfPrebuilt` at 16 px
+    does not serve 32 px. On-screen unique ink still finishes in that commit.
 
 **Regressions and traps the audits confirmed:**
 

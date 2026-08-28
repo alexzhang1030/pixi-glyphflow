@@ -134,7 +134,9 @@ storage budgets stay until a human accepts new numbers.
 - Put stable UI alphabets on `rasterizerOptions.prebuilt` pages. Do not ship those pages in the
   core bundle. `pixi-glyphflow/prebuilt` (`uiSdfPrebuilt`, `charsetSdfPrebuilt`) is the optional
   side export; import it from that entry, not from `pixi-glyphflow`. Empty-ink scalars skip
-  generation. Known CJK can be a crop when the host bakes that charset.
+  generation. Known CJK can be a crop when the host bakes that charset. A bake at one logical
+  size that clamps to `distanceFieldMinFontSize` also serves the other clamp-equivalent sizes
+  on first sight. Unseen ink and sizes above the minimum still generate in that commit.
 - `culling.lod` drops labels whose projected font height is below one pixel. Leave it off unless
   the product accepts missing subpixel text.
 - Read diagnostics at telemetry cadence.
