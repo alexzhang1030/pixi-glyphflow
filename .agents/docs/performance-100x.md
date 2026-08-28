@@ -14,7 +14,7 @@ Use the homepage fixture: 1,000,000 labels, zoom 0.24, 100,000 movers every 100 
 | Moment | What the user sees | Current order of cost | 100× target |
 | --- | --- | --- | --- |
 | Camera inside a prepared working set | Same pixels, view moves | Viewport uniform + compute dispatch | Already near the floor. Aim for ≤ 0.3 ms CPU. |
-| Position storm inside that set | 100k labels move | Palette x/y + AABB patch | ≤ 1 ms if we stop walking draw states. |
+| Position storm inside that set | 100k labels move | Palette x/y + grid rebucket | ≤ 1 ms if we stop walking draw states. |
 | Zoom or pan onto new labels | New text appears at once | Layout + raster + instance write for first-seen | Tight view only, cache hits stay sync. Aim ≤ 16 ms for a few thousand labels sharing a handful of strings. |
 | First miss of a new ideograph | New CJK glyph | `@zappar/msdf-generator` | TinySDF / prebake. One miss must not be a frame. |
 
@@ -107,9 +107,11 @@ writes, and remirroring the store.
   sum of each string's layout and raster. Writes stay serial after that wave.
 - Same-size TinySDF misses share one FontFace wait and serialize canvas plus EDT. EDT stays
   per glyph. A miss burst does not start N `FontFace.load()` calls for one family.
-- Position storms slide spatial AABBs through `translateMany`. Size is unchanged, so the
-  size class stays. Only a cell-boundary crossing rebuckets. `updatePositions` and
-  same-text `updateTextPositions` collect packed deltas and call it once.
+- Position storms write store x/y once. `SpatialIndex` aliases those columns as the origin
+  and keeps a local box, so world AABB is derived. Intake only rebuckets on a cell-boundary
+  crossing. `writePositions` records one dirty span when the slot column is dense. A camera
+  refresh still uses that lane for rendered movers. Standalone `translateMany` still slides
+  owned origins.
 - Unique admit groups that share a `style.fill` identity write one `writeFills` column.
   Instance writes stay per string. Distinct fills stay separate writes.
 - Optional `pixi-glyphflow/prebuilt` (`uiSdfPrebuilt`) bakes a coarse VGA 8×8 SDF of printable

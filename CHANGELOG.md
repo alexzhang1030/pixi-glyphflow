@@ -17,6 +17,10 @@
 
 ### Performance
 
+- Position-only storms write store x/y once. `SpatialIndex` aliases those columns as the origin
+  and keeps a local box, so it does not store a second world min/max. Intake only rebuckets on a
+  cell-boundary crossing. `writePositions` records one dirty span when the slot column is dense.
+  A camera residency refresh keeps rendered movers on that lane instead of per-label snapshots.
 - Compute-cull first-seen admission now spends `offscreenAdmitBudgetBytes` on ring intern hits
   and same-commit ring copies. Tight-view unique raster still finishes in that commit. Deferred
   ring hits resume on a later ring query, not a leftover rAF. Atlas texel uploads for already-

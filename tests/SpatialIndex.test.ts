@@ -149,6 +149,39 @@ describe("SpatialIndex", () => {
     index.destroy();
   });
 
+  test("derives world bounds from aliased origin columns without rewriting a second x/y copy", () => {
+    const index = new SpatialIndex({ initialCapacity: 4 });
+    const originX = new Float32Array([0, 40, 0, 0]);
+    const originY = new Float32Array([0, 40, 0, 0]);
+    index.bindOrigins(originX, originY);
+    index.set(0, { x: 0, y: 0, width: 10, height: 10 });
+    index.set(1, { x: 40, y: 40, width: 10, height: 10 });
+    const output = new Uint32Array(4);
+
+    originX[0] = 20;
+    expect(index.rehashCurrent(0)).toBe(true);
+    expect(index.get(0)).toEqual({ x: 20, y: 0, width: 10, height: 10 });
+    expect(index.hitTest({ x: 21, y: 1 })).toBe(0);
+    expect(index.hitTest({ x: 1, y: 1 })).toBeUndefined();
+
+    // Crossing the 64-wide cell must rebucket from the new origin, not a mirrored AABB.
+    originX[0] = 100;
+    expect(index.rehashCurrent(0)).toBe(true);
+    expect(index.get(0)).toEqual({ x: 100, y: 0, width: 10, height: 10 });
+    expect(index.query({ x: 98, y: 0, width: 20, height: 20 }, output)).toBe(1);
+    expect(output[0]).toBe(0);
+    expect(index.query({ x: 0, y: 0, width: 20, height: 20 }, output)).toBe(0);
+
+    // translateMany must not add deltas on top of an origin that already moved.
+    originX[1] = 80;
+    expect(index.translateMany(new Uint32Array([1]), 1, new Float32Array([40, 0]))).toBe(1);
+    expect(index.get(1)).toEqual({ x: 80, y: 40, width: 10, height: 10 });
+
+    expect(() => index.bindOrigins(new Float32Array(1), new Float32Array(2))).toThrow(TypeError);
+
+    index.destroy();
+  });
+
   test("places occupied slots from packed origins and a shared local box", () => {
     const index = new SpatialIndex({ initialCapacity: 8 });
     index.set(0, { x: 0, y: 0, width: 8, height: 10 }, 1, true);

@@ -160,8 +160,7 @@ export class TextLayer extends Container {
   #offscreenAdmitDeferred = false;
   #laneSlots: Uint32Array;
   #contentSlots: Uint32Array;
-  #translateSlots: Uint32Array;
-  #translateDeltas: Float32Array;
+  #boundOriginX: Float32Array | undefined;
   readonly #boundsScratch: MutableBoundsData = { x: 0, y: 0, width: 0, height: 0 };
   // Broadcast mutations reuse one text/style reference across the batch; estimating once
   // per identity pair removes an O(text) scan per label from bulk intake.
@@ -205,8 +204,7 @@ export class TextLayer extends Container {
     this.#bulkSlots = new Uint32Array(this.#store.capacity);
     this.#laneSlots = new Uint32Array(this.#store.capacity);
     this.#contentSlots = new Uint32Array(this.#store.capacity);
-    this.#translateSlots = new Uint32Array(this.#store.capacity);
-    this.#translateDeltas = new Float32Array(this.#store.capacity * 2);
+    this.#syncSpatialOrigins();
     this.#visibleSlots = new Uint32Array(this.#store.capacity);
     this.#visibleMember = new Uint8Array(this.#store.capacity);
     this.#renderedEpochs = new Uint32Array(this.#store.capacity);
@@ -293,6 +291,7 @@ export class TextLayer extends Container {
     const shaping = normalizeShapingOptions(spec.shaping);
     const label = normalizeLabel(spec, this.#labelScratch);
     const id = this.#store.create(label);
+    this.#syncSpatialOrigins();
     if (spec.group !== undefined) this.#associateGroup(id, spec.group);
     if (layout !== undefined) this.#layouts.set(id, layout);
     if (shaping !== undefined) this.#shaping.set(id, shaping);
@@ -313,6 +312,7 @@ export class TextLayer extends Container {
     const layouts = specs.map((spec) => normalizeLayoutOptions(spec.layout));
     const shapings = specs.map((spec) => normalizeShapingOptions(spec.shaping));
     this.#store.reserve(specs.length);
+    this.#syncSpatialOrigins();
     this.#spatial.reserve(this.#store.capacity);
 
     const ids: TextId[] = [];
@@ -533,19 +533,10 @@ export class TextLayer extends Container {
     positions: Float32Array | Float64Array,
   ): number {
     this.#assertActive();
-    this.#ensureTranslateCapacity(ids.length);
-    let moved = 0;
-    const changed = this.#store.updatePositions(
-      ids,
-      positions,
-      (slot, x, y, previousX, previousY) => {
-        this.#translateSlots[moved] = slot;
-        this.#translateDeltas[moved * 2] = x - previousX;
-        this.#translateDeltas[moved * 2 + 1] = y - previousY;
-        moved += 1;
-      },
-    );
-    if (moved > 0) this.#spatial.translateMany(this.#translateSlots, moved, this.#translateDeltas);
+    this.#syncSpatialOrigins();
+    const changed = this.#store.updatePositions(ids, positions, (slot) => {
+      this.#spatial.rehashCurrent(slot);
+    });
     this.#recordMutation(TextDirty.Transform, changed);
 
     return changed;
@@ -558,30 +549,22 @@ export class TextLayer extends Container {
     positions: Float32Array | Float64Array,
   ): number {
     this.#assertActive();
+    this.#syncSpatialOrigins();
     const hasTrustedRuns = this.#trustedRuns.size > 0;
-    this.#ensureTranslateCapacity(ids.length);
-    let moved = 0;
     const result = this.#store.updateTextPositions(
       ids,
       texts,
       positions,
-      (slot, index, contentChanged, previousX, previousY) => {
+      (slot, index, contentChanged) => {
         if (contentChanged && hasTrustedRuns) {
           const id = ids[index];
           if (id !== undefined) this.#trustedRuns.delete(id as TextId);
         }
         const id = ids[index];
         if (id === undefined) throw new Error("Updated label identity is unavailable");
-        // Same text and style: keep the last world AABB and slide it. Re-estimating
-        // would replace post-layout run bounds with the intake heuristic.
+        // Same text: local box stays. The store origin already moved, so only rebucket.
         if (!contentChanged) {
-          if (!this.#store.copyBoundsLabelAt(slot, this.#labelScratch)) {
-            throw new Error("Updated label disappeared from its store");
-          }
-          this.#translateSlots[moved] = slot;
-          this.#translateDeltas[moved * 2] = this.#labelScratch.x - previousX;
-          this.#translateDeltas[moved * 2 + 1] = this.#labelScratch.y - previousY;
-          moved += 1;
+          this.#spatial.rehashCurrent(slot);
           return;
         }
         // Rendered unit-transform labels get run bounds at commit (content lane or
@@ -599,7 +582,6 @@ export class TextLayer extends Container {
         }
       },
     );
-    if (moved > 0) this.#spatial.translateMany(this.#translateSlots, moved, this.#translateDeltas);
     this.#recordMutation(result.mask, result.changed);
 
     return result.changed;
@@ -669,7 +651,9 @@ export class TextLayer extends Container {
   /** Shrink unused reserved CPU capacity while preserving every current identity. */
   compact(): Readonly<TextCompactionResult> {
     this.#assertActive();
-    return this.#store.compact();
+    const result = this.#store.compact();
+    this.#syncSpatialOrigins();
+    return result;
   }
 
   /** Stamp a caller-validated positioned run with this layer and the label source revision. */
@@ -842,12 +826,16 @@ export class TextLayer extends Container {
       this.#visibleCount = this.#queryVisible(cullPath, drawViewport);
       this.#visibilityDirty = false;
       if (coordinator !== undefined) {
-        changes = this.#buildRenderChanges(cullPath, drawViewport, admit, admitBudget);
+        const built = this.#buildRenderChanges(cullPath, drawViewport, admit, admitBudget);
+        changes = built.changes;
+        laneCount = built.laneCount;
         scannedPrepareRing = true;
       }
     } else if (coordinator !== undefined) {
       if (lodScaleChanged) {
-        changes = this.#buildRenderChanges(cullPath, drawViewport, admit, admitBudget);
+        const built = this.#buildRenderChanges(cullPath, drawViewport, admit, admitBudget);
+        changes = built.changes;
+        laneCount = built.laneCount;
         scannedPrepareRing = true;
       } else {
         if (hasLabelChanges) {
@@ -970,9 +958,9 @@ export class TextLayer extends Container {
       if (commitResult !== undefined) {
         for (const change of changes) {
           if (change.snapshot === undefined) continue;
-          // Position-only movers already slid their AABB at intake. Content-plus-xy
+          // Position-only movers already moved the store origin at intake. Content-plus-xy
           // that stayed on the object path (anchors, mixed text, shaping) still
-          // replaced that box with an estimate and must take the laid-out run.
+          // replaced the local box with an estimate and must take the laid-out run.
           if (change.positionOnly === true && (change.mask & TextDirty.Content) === 0) continue;
           const run = coordinator.getRun(change.slot);
           const current = this.#store.snapshotAt(change.slot);
@@ -1278,11 +1266,11 @@ export class TextLayer extends Container {
     return transformedLabelBounds(label, this.#estimateScratch, this.#boundsScratch);
   }
 
-  #ensureTranslateCapacity(count: number): void {
-    if (this.#translateSlots.length >= count) return;
-    const capacity = nextPowerOfTwo(count);
-    this.#translateSlots = new Uint32Array(capacity);
-    this.#translateDeltas = new Float32Array(capacity * 2);
+  #syncSpatialOrigins(): void {
+    const x = this.#store.xColumn;
+    if (x === this.#boundOriginX) return;
+    this.#spatial.bindOrigins(x, this.#store.yColumn);
+    this.#boundOriginX = x;
   }
 
   #ensureScratchCapacity(): void {
@@ -1769,7 +1757,7 @@ export class TextLayer extends Container {
     draw: CullViewport | undefined,
     admit: AdmitCollector,
     budget: OffscreenAdmitBudget,
-  ): LayerRenderChange[] {
+  ): { changes: LayerRenderChange[]; laneCount: number } {
     let previousEpoch = this.#renderEpoch;
     if (previousEpoch === 0xffff_ffff) {
       this.#renderedEpochs.fill(0);
@@ -1778,6 +1766,7 @@ export class TextLayer extends Container {
     const nextEpoch = previousEpoch + 1;
     const coordinator = this.#renderCoordinator;
     const changes: LayerRenderChange[] = [];
+    let laneCount = 0;
     const ring = draw === undefined ? undefined : expandPrepareRing(draw);
     this.#preparedRing = cullPath === "compute-cull" ? ring : undefined;
     const objectRing: number[] = [];
@@ -1797,6 +1786,15 @@ export class TextLayer extends Container {
       }
       this.#renderedEpochs[slot] = nextEpoch;
       if (!hasRun) this.#rememberContentPair(objectTightPairs, slot);
+      if (
+        (wasRendered || hasRun) &&
+        this.#positionOnly[slot] === 1 &&
+        dirtyMask === TextDirty.Transform
+      ) {
+        this.#laneSlots[laneCount] = slot;
+        laneCount += 1;
+        continue;
+      }
       if (wasRendered && dirtyMask === TextDirty.None) continue;
       const change = this.#renderChangeForSlot(slot, wasRendered, hasRun);
       if (change === undefined) throw new Error("Visible label snapshot is unavailable");
@@ -1816,7 +1814,7 @@ export class TextLayer extends Container {
     }
     this.#renderEpoch = nextEpoch;
 
-    return changes;
+    return { changes, laneCount };
   }
 
   #clearDirtyMasks(): void {

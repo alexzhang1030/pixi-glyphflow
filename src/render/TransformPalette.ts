@@ -123,12 +123,14 @@ export class TransformPalette {
     return true;
   }
 
-  /** Patch x/y texels for a sorted slot column without per-label objects or validation. */
+  /** Patch x/y texels for a slot column without per-label objects or validation. */
   writePositions(slots: Uint32Array, count: number, xy: Float32Array): number {
     this.#assertActive();
     const data = this.#data;
     const occupied = this.#occupied;
     let written = 0;
+    let minSlot = 0xffff_ffff;
+    let maxSlot = 0;
     for (let index = 0; index < count; index += 1) {
       const slot = slots[index] ?? 0;
       if (slot >= this.#capacity || occupied[slot] !== 1) continue;
@@ -138,11 +140,38 @@ export class TransformPalette {
       if (data[offset] === nextX && data[offset + 1] === nextY) continue;
       data[offset] = nextX;
       data[offset + 1] = nextY;
-      this.#dirty.record(slot * TRANSFORM_PALETTE_STRIDE, 16);
+      if (slot < minSlot) minSlot = slot;
+      if (slot > maxSlot) maxSlot = slot;
       written += 1;
+    }
+    if (written > 0) {
+      this.#recordPositionDirty(minSlot, maxSlot, written, slots, count, occupied);
     }
 
     return written;
+  }
+
+  #recordPositionDirty(
+    minSlot: number,
+    maxSlot: number,
+    written: number,
+    slots: Uint32Array,
+    count: number,
+    occupied: Uint8Array,
+  ): void {
+    const spanSlots = maxSlot - minSlot + 1;
+    if (spanSlots <= written * 4) {
+      this.#dirty.record(
+        minSlot * TRANSFORM_PALETTE_STRIDE,
+        (maxSlot - minSlot) * TRANSFORM_PALETTE_STRIDE + 16,
+      );
+      return;
+    }
+    for (let index = 0; index < count; index += 1) {
+      const slot = slots[index] ?? 0;
+      if (slot >= this.#capacity || occupied[slot] !== 1) continue;
+      this.#dirty.record(slot * TRANSFORM_PALETTE_STRIDE, 16);
+    }
   }
 
   /**

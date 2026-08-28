@@ -115,6 +115,56 @@ describe("TextLayer commit and maintenance", () => {
     layer.destroy();
   });
 
+  test("keeps a position storm on the columnar lane when the camera also moves", async () => {
+    let layouts = 0;
+    const transforms = new TransformPalette({ initialCapacity: 8, textureWidth: 8 });
+    const layer = new TextLayer({
+      renderer: {} as Renderer,
+      culling: { enabled: true, bounds: { x: 0, y: 0, width: 200, height: 200 } },
+      rendering: {
+        transforms,
+        layoutEngine: {
+          layout() {
+            layouts += 1;
+            return RUN;
+          },
+          destroy() {},
+        },
+        glyphProvider: {
+          async rasterize() {
+            return alphaRaster();
+          },
+          destroy() {},
+        },
+        atlasOptions: { pageWidth: 32, pageHeight: 32, maxBytes: 4_096 },
+      },
+    });
+    const ids = layer.createMany([
+      { text: "A", x: 1, y: 1 },
+      { text: "A", x: 2, y: 2 },
+      { text: "A", x: 3, y: 3 },
+    ]);
+    await layer.commit();
+    transforms.consumeDirty();
+    expect(layouts).toBe(1);
+
+    const first = ids[0];
+    const third = ids[2];
+    if (first === undefined || third === undefined) throw new Error("Fixture ids missing");
+    layer.updatePositions(new Float64Array([first, third]), new Float32Array([40, 50, 60, 70]));
+    layer.setViewportBounds({ x: 10, y: 10, width: 200, height: 200 });
+    await layer.commit();
+
+    expect(layouts).toBe(1);
+    expect(Array.from(transforms.data.subarray(0, 2))).toEqual([40, 50]);
+    expect(Array.from(transforms.data.subarray(16, 18))).toEqual([60, 70]);
+    expect(layer.getBoundsFor(first)).toMatchObject({ x: 40, y: 50, width: 8, height: 10 });
+    expect(layer.hitTest({ x: 41, y: 51 })).toBe(first);
+    expect(layer.stats.transformOnlyLabels).toBe(2);
+
+    layer.destroy();
+  });
+
   test("keeps non-zero anchors on the object path during a content storm", async () => {
     let layouts = 0;
     const transforms = new TransformPalette({ initialCapacity: 8, textureWidth: 8 });

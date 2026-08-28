@@ -214,7 +214,7 @@ The 1.1.0 suite already meets the formal million-label frame budgets. The next p
   shared prototype instance ranges, the first-seen admit lane, the broadcast content lane,
   spatial `placeMany`, the prototype-fetch instance mesh, compute-cull ring-only unique
   deferral, parallel admit-group prepare, and TinySDF same-size miss batch plus FontFace intern
-  are in source. Position storms slide AABBs through `translateMany` (size class stays).
+  are in source. Position storms write store x/y once and rebucket a derived spatial origin.
   Unique admit groups that share a fill write one palette column. Optional
   `pixi-glyphflow/prebuilt` (`uiSdfPrebuilt`) bakes a coarse ASCII SDF outside the core
   graph. Physical TinySDF/MSDF fields intern at `distanceFieldMinFontSize` so clamped

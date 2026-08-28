@@ -296,6 +296,16 @@ export class TextStore {
     return slot < this.#highWater && this.#occupied(slot);
   }
 
+  /** Live x column. SpatialIndex may alias this as the label origin. @internal */
+  get xColumn(): Float32Array {
+    return this.#x;
+  }
+
+  /** Live y column. SpatialIndex may alias this as the label origin. @internal */
+  get yColumn(): Float32Array {
+    return this.#y;
+  }
+
   /** Copy x/y columns for a slot list into packed pairs without snapshots. @internal */
   positionsInto(slots: Uint32Array, count: number, xy: Float32Array): void {
     for (let index = 0; index < count; index += 1) {

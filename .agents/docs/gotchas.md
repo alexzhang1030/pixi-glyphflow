@@ -191,7 +191,9 @@ crop. Do not put those pages on `src/index.ts`.
 
 `culling.lod` uses `fontSize * scaleY * worldScaleY`. Zoom inside a working set does not remirror
 the instance store unless a label crosses the one-pixel line. Position storms stay on palette
-patches. Do not treat every camera frame as a residency refresh when LOD is on.
+patches. A camera move that does refresh residency still keeps rendered position-only movers on
+`writePositions`. Do not rebuild per-label snapshots for those slots. Do not treat every camera
+frame as a residency refresh when LOD is on.
 
 ## Stamp the rendered epoch on unchanged visible labels
 
@@ -274,10 +276,13 @@ put first-seen unrendered slots on that lane: they still need a full palette wri
 
 `cloneMany` writes dest ranges from one source and bumps `segmentEpoch` once. Atlas key retain
 adds the column's extra refs in one pass; dests that already share the prototype key array are
-skipped. `placeMany` derives world AABBs from packed x/y plus the shared run box and keeps z and
-visibility. Do not call `spatial.set` per content-lane slot. Position-only storms use
-`translateMany`: packed deltas, one rebucket pass, size class unchanged. Do not call
-`spatial.translate` per mover. Spill (oversize or unhashed) still goes through `#cellFor`.
+skipped. `placeMany` writes the shared local box and rehashes. World AABB is origin plus that
+box. `TextLayer` aliases `TextStore` x/y as the origin, so a position storm writes x/y once.
+`rehashCurrent` only rebuckets. Do not call `spatial.set` per content-lane slot. Do not call
+`spatial.translate` per mover. Bind origins before insert, or only to grown copies of the same
+values. Spill (oversize or unhashed) still goes through `#cellFor`. Standalone `translateMany`
+still slides owned origins. Aliased origins already moved with the store, so `translateMany`
+must not add the delta again.
 
 Duplicate strings share one instance block. Do not bake dest palette indices into those bytes —
 scatter and the CPU compact mesh write `paletteIndex` from the cull record or draw span (`slot`).

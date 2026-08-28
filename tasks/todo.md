@@ -416,6 +416,14 @@
   - Verify: bun test tests/glyph-providers.test.ts tests/GlyphAtlas.test.ts tests/computeCull.test.ts tests/culling.test.ts && bun run typecheck
   - Files: src/culling/computeCull.ts, src/TextLayer.ts, src/types.ts, src/atlas/RasterGlyphProvider.ts, src/atlas/PrebuiltGlyphProvider.ts, src/prebuilt
 
+- [x] Task 12.32: Derive spatial bounds from store origins on position storms.
+  - Acceptance: `TextLayer` aliases `TextStore` x/y into `SpatialIndex`. Position-only storms
+    write x/y once and only rebucket. `writePositions` records one dirty span for a dense
+    slot column. Camera residency refresh keeps rendered movers on that lane. Hit tests and
+    on-screen palette rows stay correct in that commit. Published budgets stay.
+  - Verify: bun test tests/SpatialIndex.test.ts tests/TransformPalette.test.ts tests/TextLayer.commit.test.ts tests/culling.test.ts && bun run typecheck
+  - Files: src/culling/SpatialIndex.ts, src/TextLayer.ts, src/store/TextStore.ts, src/render/TransformPalette.ts
+
 - [ ] Task 12.8: Optional extreme quality tracks (Wave 5).
   - Acceptance: Outline (Slug), collision, SIMD shaping, and SharedArrayBuffer rings land only as opt-in modes with their own workloads and pixel tolerances.
   - Verify: focused tests plus a named benchmark workload per enabled track
