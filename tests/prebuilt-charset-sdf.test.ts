@@ -1,8 +1,9 @@
 import { describe, expect, test } from "bun:test";
 import { readFile } from "node:fs/promises";
 import { resolve } from "node:path";
+import type { Renderer } from "pixi.js";
 
-import { FontRegistry } from "../src";
+import { FontRegistry, TextLayer, type PositionedRun } from "../src";
 import { RasterGlyphProvider } from "../src/advanced";
 import { TINY_SDF_RADIUS } from "../src/atlas/tinySdf";
 import {
@@ -96,6 +97,144 @@ describe("charsetSdfPrebuilt", () => {
     registry.destroy();
   });
 
+  test("crops clamp-size first sights and still generates unseen ink that commit", async () => {
+    const pages = await charsetSdfPrebuilt({
+      family: "CJK",
+      charset: "上",
+      fontSize: 14,
+      rasterize: () => paint("上"),
+    });
+    const registry = new FontRegistry();
+    const font = await registry.register({ family: "CJK", source: new Uint8Array([1, 2]) });
+    let canvasCalls = 0;
+    const provider = new RasterGlyphProvider(registry, {
+      prebuilt: pages,
+      distanceFieldMinFontSize: 48,
+      canvasRasterizer() {
+        canvasCalls += 1;
+        return Promise.resolve({
+          mode: "alpha",
+          width: 4,
+          height: 4,
+          pixels: new Uint8Array(16).fill(255),
+          metrics: { bearingX: 0, bearingY: 4, advance: 4 },
+        });
+      },
+      async createMsdfGenerator() {
+        throw new Error("MSDF generator must not start for a charsetSdf rematch");
+      },
+    });
+    const base = {
+      family: "CJK",
+      fontRevision: font.revision,
+      glyphId: 842,
+      glyphText: "上",
+      mode: "sdf",
+    } as const;
+
+    const thirteen = await provider.rasterize({ ...base, fontSize: 13 });
+    const thirtyTwo = await provider.rasterize({ ...base, fontSize: 32 });
+    expect(thirteen.pixels).toBe(thirtyTwo.pixels);
+    expect(thirteen.metrics?.rasterScale).toBe(48 / 13);
+    expect(thirtyTwo.metrics?.rasterScale).toBe(48 / 32);
+    expect(thirteen.metrics?.fieldRange ?? 0).toBeCloseTo(TINY_SDF_RADIUS / (48 / 13), 10);
+    expect(thirtyTwo.metrics?.fieldRange ?? 0).toBeCloseTo(TINY_SDF_RADIUS / (48 / 32), 10);
+    expect(canvasCalls).toBe(0);
+    expect(provider.stats).toMatchObject({
+      prebuiltHits: 1,
+      tinySdfRasters: 0,
+      distanceFieldRasters: 0,
+    });
+
+    const sixtyFour = await provider.rasterize({ ...base, fontSize: 64 });
+    expect(sixtyFour.pixels).not.toBe(thirteen.pixels);
+    expect(canvasCalls).toBe(1);
+    expect(provider.stats.tinySdfRasters).toBe(1);
+
+    const unseen = await provider.rasterize({
+      ...base,
+      glyphId: 99,
+      glyphText: "永",
+      fontSize: 13,
+    });
+    expect(unseen.mode).toBe("sdf");
+    expect(canvasCalls).toBe(2);
+    expect(provider.stats.tinySdfRasters).toBe(2);
+
+    await provider.destroy();
+    registry.destroy();
+  });
+
+  test("first-seen unique at a clamp size finishes that commit as a crop", async () => {
+    const pages = await charsetSdfPrebuilt({
+      family: "CJK",
+      charset: "上",
+      fontSize: 14,
+      rasterize: () => paint("上"),
+    });
+    const registry = new FontRegistry();
+    const font = await registry.register({ family: "CJK", source: new Uint8Array([1, 2]) });
+    let canvasCalls = 0;
+    const provider = new RasterGlyphProvider(registry, {
+      prebuilt: pages,
+      distanceFieldMinFontSize: 48,
+      canvasRasterizer() {
+        canvasCalls += 1;
+        return Promise.resolve({
+          mode: "alpha",
+          width: 8,
+          height: 8,
+          pixels: new Uint8Array(64).fill(255),
+          metrics: { bearingX: 0, bearingY: 6, advance: 7 },
+        });
+      },
+      async createMsdfGenerator() {
+        throw new Error("MSDF generator must not start on a first-seen rematch");
+      },
+    });
+    const layer = new TextLayer({
+      renderer: {} as Renderer,
+      rendering: {
+        rasterizerOptions: { tinySdf: true },
+        layoutEngine: {
+          layout(_slot, _revision, input) {
+            return harfbuzzScalar(input.text, font.revision);
+          },
+          destroy() {},
+        },
+        glyphProvider: provider,
+        atlasOptions: { pageWidth: 32, pageHeight: 32, maxBytes: 8_192 },
+      },
+    });
+
+    layer.create({
+      text: "上",
+      style: { fontFamily: "CJK", fontSize: 13, fontWeight: "normal" },
+    });
+    await layer.commit();
+    expect(layer.stats.glyphCount).toBe(1);
+    expect(canvasCalls).toBe(0);
+    expect(provider.stats).toMatchObject({
+      prebuiltHits: 1,
+      tinySdfRasters: 0,
+      distanceFieldRasters: 0,
+    });
+
+    layer.create({
+      text: "永",
+      x: 20,
+      style: { fontFamily: "CJK", fontSize: 13, fontWeight: "normal" },
+    });
+    await layer.commit();
+    expect(layer.stats.glyphCount).toBe(2);
+    expect(canvasCalls).toBe(1);
+    expect(provider.stats.tinySdfRasters).toBe(1);
+
+    layer.destroy();
+    await provider.destroy();
+    registry.destroy();
+  });
+
   test("merges family pages and stays out of the core graph", async () => {
     const first = await charsetSdfPrebuilt({
       family: "CJK",
@@ -131,6 +270,27 @@ describe("charsetSdfPrebuilt", () => {
     }
   });
 });
+
+function harfbuzzScalar(text: string, fontRevision: number): Readonly<PositionedRun> {
+  const glyphText = [...text][0] ?? text;
+  return Object.freeze({
+    source: "harfbuzz",
+    text,
+    fontFamily: "CJK",
+    fontRevision,
+    direction: "ltr",
+    glyphCount: 1,
+    glyphIds: new Uint32Array([text === "上" ? 842 : 99]),
+    glyphKeys: Object.freeze([glyphText]),
+    clusters: new Uint32Array([0]),
+    x: new Float32Array([0]),
+    y: new Float32Array([8]),
+    xAdvance: new Float32Array([8]),
+    yAdvance: new Float32Array([0]),
+    lineIndices: new Uint32Array([0]),
+    bounds: Object.freeze({ x: 0, y: 0, width: 8, height: 10 }),
+  });
+}
 
 function paint(_glyphText: string): CharsetSdfPaint {
   const pixels = new Uint8Array(64);

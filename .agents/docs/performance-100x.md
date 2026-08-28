@@ -125,8 +125,12 @@ writes, and remirroring the store.
   raster and instance quads. Layout advance and label AABBs stay. Trusted runs, ligatures,
   and shared-cluster marks still generate. An empty TinySDF mask skips both EDTs.
 - Optional `charsetSdfPrebuilt` bakes a host charset with the same TinySDF path. The homepage
-  demo paints its language samples after `FontFace.load` so those CJK misses are crops. No
-  CJK bitmaps ship in the package.
+  demo paints its language samples after `FontFace.load` so those CJK misses are crops. A
+  bake at one logical size that clamps to `distanceFieldMinFontSize` also crops the other
+  clamp-equivalent sizes and interns the field. No CJK bitmaps ship in the package.
+- Prebuilt lookup rematches by physical size. A 14px bake of a known CJK scalar crops a
+  13px or 32px HarfBuzz miss and interns the field. Unseen ink and sizes above the
+  minimum still generate in that commit.
 - Atlas pages bind as layers in two texture arrays. `vMode` selects R or RGBA. Compact
   walks split only on blend and z. Growing an array reallocates and recopies layers.
   Array sources skip Pixi's 2D buffer uploader. WebGPU glyph rects pad `bytesPerRow` to
@@ -136,15 +140,16 @@ writes, and remirroring the store.
 ## Remaining slices, in order
 
 1. **Tight-view unique raster.** A pan onto fresh unique text that is already on screen still
-   layouts and rasters those glyphs in that commit. Admit groups no longer wait on each other
+   layouts those strings in that commit. Admit groups no longer wait on each other
    during prepare. Shared-fill unique groups write one palette column. Layout count is still
    one per unseen string. TinySDF no longer starts one canvas plus FontFace load per glyph
    across a miss burst. Same-glyph logical sizes that clamp to `distanceFieldMinFontSize`
-   share one field. Empty-ink scalars skip generation. EDT is still per unseen physical
-   glyph that has ink. Known ASCII can skip that path when the host imports `uiSdfPrebuilt`.
-   Known CJK can skip when the host bakes `charsetSdfPrebuilt`. Unseen ink still generates.
-   Off-screen intern hits spend `offscreenAdmitBudgetBytes`. Do not defer texel uploads
-   for glyphs already instanced.
+   share one field, including a prebuilt bake keyed at a different clamp size. Empty-ink
+   scalars skip generation. EDT is still per unseen physical glyph that has ink. Known
+   ASCII can skip that path when the host imports `uiSdfPrebuilt`. Known CJK can skip when
+   the host bakes `charsetSdfPrebuilt` once at any clamp-equivalent size. Unseen ink and
+   sizes above the minimum still generate. Off-screen intern hits spend
+   `offscreenAdmitBudgetBytes`. Do not defer texel uploads for glyphs already instanced.
 2. **Palette storage buffer.** Wave 3 leftover. Binding cost, not the zoom hitch. Atlas pages
    are already two `sampler2DArray` / `texture_2d_array` textures (R8 and RGBA8). Do not start
    this leftover with a palette SSBO: WebGL 2 has no storage buffers.

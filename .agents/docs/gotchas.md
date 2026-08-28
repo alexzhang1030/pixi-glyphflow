@@ -176,7 +176,11 @@ bytes under the same family name is a product mistake, not a cache miss.
 
 HarfBuzz `glyphId` values are font-specific. A family page keyed with `glyphId: 0` still hits
 when the request is a single Unicode scalar. Ligatures and multi-scalar `glyphText` stay
-exact-key only. Do not put default pages on `src/index.ts` or `src/advanced/index.ts`.
+exact-key only. A distance-field page also hits when `fontSize * (rasterScale ?? 1)` equals
+`max(request.fontSize, distanceFieldMinFontSize)`. A 14px charset bake therefore crops a 13px
+or 32px first sight. Do not rematch a native-size page (no `rasterScale`, or a different
+physical size) onto a larger request — `uiSdfPrebuilt` at 16 px must not serve 32 px. Do not
+put default pages on `src/index.ts` or `src/advanced/index.ts`.
 `pixi-glyphflow/prebuilt` (`uiSdfPrebuilt`) is a side export: first call encodes a public-domain
 VGA 8×8 set at 16 px only (`rasterScale` cannot be below 1). Later calls remap keys. This is
 not production typography and is not wired into the homepage CJK demo.
@@ -185,7 +189,9 @@ not production typography and is not wired into the homepage CJK demo.
 Paint after `FontFace.load` or inject `rasterize`. Empty-ink scalars are omitted. Logical sizes
 that clamp to `distanceFieldMinFontSize` store `rasterScale`. `mergePrebuilt` concatenates
 family pages. The homepage demo bakes its language samples this way so first-seen CJK is a
-crop. Do not put those pages on `src/index.ts`.
+crop. A host that bakes once at 14 px does not need a second bake for 13 px. Do not put those
+pages on `src/index.ts`. Adopted prebuilt crops intern into the physical field table so a
+later clamp size is a lookup, not a second crop.
 
 ## LOD remirrors only when labels cross one pixel
 

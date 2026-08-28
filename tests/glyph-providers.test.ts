@@ -319,6 +319,79 @@ describe("glyph providers", () => {
     registry.destroy();
   });
 
+  test("rematches a prebuilt field across clamp-equivalent logical sizes", async () => {
+    const registry = new FontRegistry();
+    const font = await registry.register({ family: "Fixture", source: new Uint8Array([1, 2]) });
+    const pixels = new Uint8Array([9, 8, 7, 255]);
+    let generatorStarts = 0;
+    const provider = new RasterGlyphProvider(registry, {
+      distanceFieldMinFontSize: 48,
+      prebuilt: {
+        pages: [{ id: "latin", mode: "msdf", width: 1, height: 1, pixels }],
+        glyphs: [
+          {
+            key: prebuiltGlyphKey({
+              family: "Fixture",
+              glyphId: 0,
+              glyphText: "A",
+              fontSize: 16,
+              fontWeight: "normal",
+              mode: "msdf",
+            }),
+            pageId: "latin",
+            x: 0,
+            y: 0,
+            width: 1,
+            height: 1,
+            metrics: {
+              bearingX: 1,
+              bearingY: 4,
+              advance: 5,
+              fieldRange: 2,
+              rasterScale: 3,
+            },
+          },
+        ],
+      },
+      async createMsdfGenerator() {
+        generatorStarts += 1;
+        throw new Error("MSDF generator must not start for a clamp-size prebuilt rematch");
+      },
+    });
+    const base = {
+      family: "Fixture",
+      fontRevision: font.revision,
+      glyphId: 65,
+      glyphText: "A",
+      mode: "msdf",
+    } as const;
+
+    const thirtyTwo = await provider.rasterize({ ...base, fontSize: 32 });
+    const sixteen = await provider.rasterize({ ...base, fontSize: 16 });
+    expect(thirtyTwo.pixels).toBe(sixteen.pixels);
+    expect(thirtyTwo.pixels).toEqual(pixels);
+    expect(thirtyTwo.metrics).toMatchObject({
+      rasterScale: 1.5,
+      bearingX: 2,
+      bearingY: 8,
+      advance: 10,
+    });
+    expect(sixteen.metrics).toMatchObject({
+      rasterScale: 3,
+      bearingX: 1,
+      bearingY: 4,
+      advance: 5,
+    });
+    expect(generatorStarts).toBe(0);
+    expect(provider.stats).toMatchObject({
+      prebuiltHits: 1,
+      distanceFieldRasters: 0,
+    });
+
+    await provider.destroy();
+    registry.destroy();
+  });
+
   test("retries a single-scalar prebuilt miss with glyphId 0", async () => {
     const registry = new FontRegistry();
     const font = await registry.register({ family: "Fixture", source: new Uint8Array([1, 2]) });

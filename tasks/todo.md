@@ -341,6 +341,15 @@
   - Verify: bun test tests/RenderCoordinator.test.ts tests/GlyphInstanceStore.test.ts tests/TextLayer.commit.test.ts tests/TextStore.test.ts tests/culling.test.ts
   - Files: src/render/RenderCoordinator.ts, src/render/GlyphInstanceStore.ts, src/store/TextStore.ts, src/TextLayer.ts
 
+- [x] Task 12.25: Rematch prebuilt fields across clamp-equivalent logical sizes.
+  - Acceptance: A `charsetSdfPrebuilt` bake at one logical size that clamps to
+    `distanceFieldMinFontSize` crops a first-seen miss at another clamp size and interns
+    the field. `uiSdfPrebuilt` at 16 px does not serve 32 px. Unseen ink and sizes above
+    the minimum still generate in that commit. Published budgets stay. Default pages stay
+    out of the core ESM graph.
+  - Verify: bun test tests/prebuilt-charset-sdf.test.ts tests/prebuilt-ui-sdf.test.ts tests/glyph-providers.test.ts && bun run docs:check
+  - Files: src/atlas/RasterGlyphProvider.ts, src/atlas/PrebuiltGlyphProvider.ts
+
 - [x] Task 12.24: Optional charset TinySDF prebake.
   - Acceptance: `charsetSdfPrebuilt` bakes host text at the physical TinySDF size, skips
     empty-ink scalars, and remaps keys on later calls. `mergePrebuilt` concatenates family
