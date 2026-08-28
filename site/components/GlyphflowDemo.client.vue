@@ -317,16 +317,11 @@ async function initialize(backend: RendererBackend, runId: number): Promise<void
       __GLYPHFLOW_WORK_LOGS?: number;
     }
   ).__GLYPHFLOW_AGENT_DEBUG = true;
-  (
-    globalThis as typeof globalThis & { __GLYPHFLOW_BIND_LOGS?: number }
-  ).__GLYPHFLOW_BIND_LOGS = 0;
-  (
-    globalThis as typeof globalThis & { __GLYPHFLOW_RANGE_LOGS?: number }
-  ).__GLYPHFLOW_RANGE_LOGS = 0;
+  (globalThis as typeof globalThis & { __GLYPHFLOW_BIND_LOGS?: number }).__GLYPHFLOW_BIND_LOGS = 0;
+  (globalThis as typeof globalThis & { __GLYPHFLOW_RANGE_LOGS?: number }).__GLYPHFLOW_RANGE_LOGS =
+    0;
   (globalThis as typeof globalThis & { __GLYPHFLOW_POS_LOGS?: number }).__GLYPHFLOW_POS_LOGS = 0;
-  (
-    globalThis as typeof globalThis & { __GLYPHFLOW_WORK_LOGS?: number }
-  ).__GLYPHFLOW_WORK_LOGS = 0;
+  (globalThis as typeof globalThis & { __GLYPHFLOW_WORK_LOGS?: number }).__GLYPHFLOW_WORK_LOGS = 0;
   nextApp.canvas.addEventListener("webglcontextlost", (event) => {
     const lost = event as WebGLContextEvent;
     agentLog("A", "GlyphflowDemo.client.vue:webglcontextlost", "webglcontextlost", {
@@ -714,8 +709,18 @@ async function runPositionStorm(runId: number): Promise<void> {
     stormCommits.value += 1;
     updateDuration.value = `${(performance.now() - startedAt).toFixed(2)} ms`;
     // #region agent log
-    if (stormCommits.value === 1 && app !== undefined && viewport !== undefined) {
-      logDemoSnapshot("I", "first-held-storm", app, viewport, nextLayer);
+    if (
+      (stormCommits.value === 1 || stormCommits.value === 2) &&
+      app !== undefined &&
+      viewport !== undefined
+    ) {
+      logDemoSnapshot(
+        "O",
+        stormCommits.value === 1 ? "first-held-storm" : "storm-plus-1",
+        app,
+        viewport,
+        nextLayer,
+      );
     }
     // #endregion
   } finally {
@@ -933,7 +938,10 @@ function meshSnapshot(child: Container): Record<string, unknown> {
     culled?: boolean;
     localDisplayStatus?: number;
     groupAlpha?: number;
-    geometry?: { instanceCount?: number; bounds?: { x: number; y: number; width: number; height: number } };
+    geometry?: {
+      instanceCount?: number;
+      bounds?: { x: number; y: number; width: number; height: number };
+    };
     shader?: {
       resources?: { uPrototype?: { uid?: number }; uTransformTexture?: { uid?: number } };
       groups?: Record<string, { resources: unknown }>;

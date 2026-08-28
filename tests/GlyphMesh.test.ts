@@ -143,6 +143,11 @@ describe("GlyphMesh", () => {
     });
     mesh.setPaletteTexture(Texture.WHITE, 2, 4);
     expect(mesh.shader?.resources.uPrototype).toBe(prototypeTexture.source);
+    mesh.unbindPaletteTexture();
+    expect(mesh.shader?.resources.uTransformTexture).toBe(Texture.EMPTY.source);
+    expect(mesh.shader?.resources.uPrototype).toBe(prototypeTexture.source);
+    mesh.setPaletteTexture(Texture.WHITE, 2, 4);
+    expect(mesh.shader?.resources.uTransformTexture).toBe(Texture.WHITE.source);
     mesh.destroy();
   });
 

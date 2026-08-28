@@ -7,8 +7,8 @@ import {
   Mesh,
   Shader,
   ShaderStage,
+  Texture,
   TextureStyle,
-  type Texture,
 } from "pixi.js";
 
 import type { PalettePath } from "./paletteStorage";
@@ -217,6 +217,11 @@ export class GlyphMesh extends Mesh<Geometry, Shader> {
     this.#ownedShader.resources.glyphUniforms.uniforms.uPaletteWidth = width;
     this.#ownedShader.resources.glyphUniforms.uniforms.uEffectBase = effectBase;
     this.#bindPrototype();
+  }
+
+  /** Drop the live palette sampler so a later GPU rewrite is not a bound vertex texture. */
+  unbindPaletteTexture(): void {
+    this.#ownedShader.resources.uTransformTexture = Texture.EMPTY.source;
   }
 
   setPaletteStorage(buffer: Buffer): void {

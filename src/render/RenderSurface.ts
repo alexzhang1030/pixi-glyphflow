@@ -370,7 +370,8 @@ export class RenderSurface {
     const transformRanges = this.#coordinator.transforms.consumeDirty();
     const instanceRanges = this.#coordinator.instances.consumeDirty();
     // #region agent log
-    const rangeLog = (globalThis as { __GLYPHFLOW_RANGE_LOGS?: number }).__GLYPHFLOW_RANGE_LOGS ?? 0;
+    const rangeLog =
+      (globalThis as { __GLYPHFLOW_RANGE_LOGS?: number }).__GLYPHFLOW_RANGE_LOGS ?? 0;
     if (rangeLog < 6) {
       (globalThis as { __GLYPHFLOW_RANGE_LOGS?: number }).__GLYPHFLOW_RANGE_LOGS = rangeLog + 1;
       agentLog("I", "RenderSurface.ts:apply", "transform ranges", {
@@ -633,27 +634,63 @@ export class RenderSurface {
       this.#transformWrites += 1;
       return;
     }
-    // Experiment M: consume dirty transform ranges (already taken in apply) but do
-    // not rewrite the WebGL palette GPU image. texSubImage2D and a second texImage2D
-    // of the same GL object both blank after the first initializeTexture. Keep
-    // reallocateWebGLFloatTexture for N logs / a later unbind-upload-rebind trial.
-    // #bindMeshSources stays in apply() so this run splits upload vs bind.
     if (isWebGLRenderer(this.#renderer)) {
+      const meshCount = this.#meshes.size;
+      for (const surface of this.#meshes.values()) surface.mesh.unbindPaletteTexture();
+      const unbound = unbindWebGLPalette(this.#renderer, this.#paletteTexture);
       // #region agent log
-      const skipLog = (globalThis as { __GLYPHFLOW_M_LOGS?: number }).__GLYPHFLOW_M_LOGS ?? 0;
-      if (skipLog < 4) {
-        (globalThis as { __GLYPHFLOW_M_LOGS?: number }).__GLYPHFLOW_M_LOGS = skipLog + 1;
-        agentLog("M", "RenderSurface.ts:#syncPaletteTexture", "webgl palette gpu rewrite skipped", {
-          runId: "hyp-M",
-          helper: reallocateWebGLFloatTexture.name,
-          label: this.#paletteSource.label,
-          rangeCount: ranges.length,
-          rangeBytes: ranges.reduce((sum, range) => sum + range.length, 0),
-          w: this.#paletteSource.width,
-          h: this.#paletteSource.height,
-          bytes: data.byteLength,
-          paletteInitialized: this.#paletteInitialized,
-        });
+      const rewriteLog = (globalThis as { __GLYPHFLOW_O_LOGS?: number }).__GLYPHFLOW_O_LOGS ?? 0;
+      if (rewriteLog < 4) {
+        (globalThis as { __GLYPHFLOW_O_LOGS?: number }).__GLYPHFLOW_O_LOGS = rewriteLog + 1;
+        agentLog(
+          "O",
+          "RenderSurface.ts:#syncPaletteTexture",
+          "webgl palette unbind before rewrite",
+          {
+            runId: "hyp-O",
+            helper: reallocateWebGLFloatTexture.name,
+            label: this.#paletteSource.label,
+            meshCount,
+            rangeCount: ranges.length,
+            rangeBytes: ranges.reduce((sum, range) => sum + range.length, 0),
+            w: this.#paletteSource.width,
+            h: this.#paletteSource.height,
+            bytes: data.byteLength,
+            paletteInitialized: this.#paletteInitialized,
+            glUnits: unbound.glUnits,
+            vertexUnits: unbound.vertexUnits,
+            combinedUnits: unbound.combinedUnits,
+            slots: paletteSlotSamples(data),
+          },
+        );
+      }
+      // #endregion
+      const uploaded = uploadFloatTextureRanges(
+        this.#renderer,
+        this.#paletteSource,
+        data,
+        stats.textureWidth,
+        ranges,
+      );
+      this.#transformUploadBytes += uploaded.bytes;
+      this.#transformWrites += uploaded.writes;
+      unbindWebGLPalette(this.#renderer, this.#paletteTexture);
+      this.#bindMeshSources();
+      // #region agent log
+      if (rewriteLog < 4) {
+        const mesh = this.#meshes.get(0)?.mesh;
+        agentLog(
+          "O",
+          "RenderSurface.ts:#syncPaletteTexture",
+          "webgl palette rebind after rewrite",
+          {
+            runId: "hyp-O",
+            writes: uploaded.writes,
+            bytes: uploaded.bytes,
+            rebound: mesh?.shader?.resources.uTransformTexture === this.#paletteSource,
+            meshCount: this.#meshes.size,
+          },
+        );
       }
       // #endregion
       return;
@@ -1524,6 +1561,28 @@ function withAtlasUnpack(gl: WebGL2RenderingContext, write: () => void): void {
   }
 }
 
+function unbindWebGLPalette(
+  renderer: WebGLRenderer,
+  texture: Texture,
+): Readonly<{ glUnits: number[]; vertexUnits: number; combinedUnits: number }> {
+  renderer.texture.unbind(texture);
+  const gl = renderer.gl;
+  const resource = renderer.texture.getGlSource(texture.source);
+  const combinedUnits = gl.getParameter(gl.MAX_COMBINED_TEXTURE_IMAGE_UNITS) as number;
+  const vertexUnits = gl.getParameter(gl.MAX_VERTEX_TEXTURE_IMAGE_UNITS) as number;
+  const previous = gl.getParameter(gl.ACTIVE_TEXTURE) as number;
+  const glUnits: number[] = [];
+  for (let unit = 0; unit < combinedUnits; unit += 1) {
+    gl.activeTexture(gl.TEXTURE0 + unit);
+    if (gl.getParameter(gl.TEXTURE_BINDING_2D) === resource.texture) {
+      gl.bindTexture(gl.TEXTURE_2D, null);
+      glUnits.push(unit);
+    }
+  }
+  gl.activeTexture(previous);
+  return { glUnits, vertexUnits, combinedUnits };
+}
+
 function reallocateWebGLFloatTexture(
   renderer: WebGLRenderer,
   source: BufferImageSource,
@@ -1532,7 +1591,8 @@ function reallocateWebGLFloatTexture(
   const gl = renderer.gl;
   const resource = renderer.texture.getGlSource(source);
   // #region agent log
-  const uploadLog = (globalThis as { __GLYPHFLOW_UPLOAD_LOGS?: number }).__GLYPHFLOW_UPLOAD_LOGS ?? 0;
+  const uploadLog =
+    (globalThis as { __GLYPHFLOW_UPLOAD_LOGS?: number }).__GLYPHFLOW_UPLOAD_LOGS ?? 0;
   if (uploadLog < 4) {
     (globalThis as { __GLYPHFLOW_UPLOAD_LOGS?: number }).__GLYPHFLOW_UPLOAD_LOGS = uploadLog + 1;
     agentLog("N", "RenderSurface.ts:reallocateWebGLFloatTexture", "webgl float texImage2D enter", {
@@ -1616,11 +1676,12 @@ function uploadFloatTextureRanges(
     const resource = renderer.texture.getGlSource(source);
     const rects = webglFloatPaletteRects(ranges, textureWidth);
     // #region agent log
-    const uploadLog = (globalThis as { __GLYPHFLOW_UPLOAD_LOGS?: number }).__GLYPHFLOW_UPLOAD_LOGS ?? 0;
+    const uploadLog =
+      (globalThis as { __GLYPHFLOW_UPLOAD_LOGS?: number }).__GLYPHFLOW_UPLOAD_LOGS ?? 0;
     if (uploadLog < 4) {
       (globalThis as { __GLYPHFLOW_UPLOAD_LOGS?: number }).__GLYPHFLOW_UPLOAD_LOGS = uploadLog + 1;
       agentLog("L", "RenderSurface.ts:uploadFloatTextureRanges", "webgl float rects", {
-        runId: "post-fix",
+        runId: "hyp-O",
         label: source.label,
         rangeCount: ranges.length,
         rangeBytes: ranges.reduce((sum, range) => sum + range.length, 0),
@@ -1656,7 +1717,7 @@ function uploadFloatTextureRanges(
     // #region agent log
     if (uploadLog < 4) {
       agentLog("L", "RenderSurface.ts:uploadFloatTextureRanges", "webgl float upload exit", {
-        runId: "post-fix",
+        runId: "hyp-O",
         label: source.label,
         writes,
         bytes,

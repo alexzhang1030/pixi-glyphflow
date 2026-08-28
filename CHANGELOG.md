@@ -26,8 +26,9 @@
 
 - WebGL dirty uploads of the `rgba32float` transform table blank after the first allocation:
   both `texSubImage2D` and a second `texImage2D` of the same GL texture (`glError` 0) wipe the
-  first view. Experiment M consumes those dirty ranges and skips the WebGL palette GPU rewrite
-  so upload can be split from `#bindMeshSources`. WebGPU keeps the tight rectangles.
+  first view. Experiment O unbinds the palette from each mesh and from GL `TEXTURE_2D` units,
+  dirty-`texSubImage2D`s the same object, then rebinds through `#bindMeshSources`. WebGPU keeps
+  the tight rectangles.
 - WebGPU owns the 32-byte transform table in a storage buffer when the vertex stage can bind
   it. Position-only storms skip the CPU 32-byte scatter and submit the mover slot list. A
   compute pass writes x/y from the store columns. Camera-only frames do not gather the full
