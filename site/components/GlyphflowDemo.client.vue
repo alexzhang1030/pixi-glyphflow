@@ -51,6 +51,8 @@ interface LoadedFontAsset {
 }
 
 const numberFormat = new Intl.NumberFormat("en-US");
+/** Debug hold so Playwright can screenshot ready before the first storm apply. */
+const STORM_HOLD_MS = 4_000;
 
 type RendererBackend = "webgl" | "webgpu";
 type WebGpuCapability = "checking" | "available" | "unavailable";
@@ -74,6 +76,8 @@ const requestedBackend = ref<RendererBackend>("webgl");
 const activeBackend = ref<RendererBackend>();
 const webGpuCapability = ref<WebGpuCapability>("checking");
 const stormEnabled = ref(true);
+const stormPhase = ref<"idle" | "hold" | "active">("idle");
+const stormCommits = ref(0);
 const allVisible = ref(true);
 const visibilityPending = ref(false);
 const rotationDegrees = ref(0);
@@ -129,6 +133,7 @@ let binding: ViewportBinding | undefined;
 let resizeObserver: ResizeObserver | undefined;
 let intersectionObserver: IntersectionObserver | undefined;
 let stormTimer: number | undefined;
+let stormHoldTimer: number | undefined;
 let movingIds: Float64Array | undefined;
 let firstPositions: Float32Array | undefined;
 let secondPositions: Float32Array | undefined;
@@ -248,6 +253,8 @@ function resetHud(): void {
   allVisible.value = true;
   visibilityPending.value = false;
   rotationDegrees.value = 0;
+  stormPhase.value = "idle";
+  stormCommits.value = 0;
 }
 
 function isStale(runId: number): boolean {
@@ -302,8 +309,24 @@ async function initialize(backend: RendererBackend, runId: number): Promise<void
   host.appendChild(nextApp.canvas);
   // #region agent log
   (
-    globalThis as typeof globalThis & { __GLYPHFLOW_AGENT_DEBUG?: boolean }
+    globalThis as typeof globalThis & {
+      __GLYPHFLOW_AGENT_DEBUG?: boolean;
+      __GLYPHFLOW_BIND_LOGS?: number;
+      __GLYPHFLOW_RANGE_LOGS?: number;
+      __GLYPHFLOW_POS_LOGS?: number;
+      __GLYPHFLOW_WORK_LOGS?: number;
+    }
   ).__GLYPHFLOW_AGENT_DEBUG = true;
+  (
+    globalThis as typeof globalThis & { __GLYPHFLOW_BIND_LOGS?: number }
+  ).__GLYPHFLOW_BIND_LOGS = 0;
+  (
+    globalThis as typeof globalThis & { __GLYPHFLOW_RANGE_LOGS?: number }
+  ).__GLYPHFLOW_RANGE_LOGS = 0;
+  (globalThis as typeof globalThis & { __GLYPHFLOW_POS_LOGS?: number }).__GLYPHFLOW_POS_LOGS = 0;
+  (
+    globalThis as typeof globalThis & { __GLYPHFLOW_WORK_LOGS?: number }
+  ).__GLYPHFLOW_WORK_LOGS = 0;
   nextApp.canvas.addEventListener("webglcontextlost", (event) => {
     const lost = event as WebGLContextEvent;
     agentLog("A", "GlyphflowDemo.client.vue:webglcontextlost", "webglcontextlost", {
@@ -490,6 +513,22 @@ async function initialize(backend: RendererBackend, runId: number): Promise<void
   if (backend === "webgpu") webGpuCapability.value = "available";
   state.value = "ready";
   updateHud(0);
+  // Experiment H: hold the first storm so a ready screenshot can beat the 100ms interval.
+  stormPhase.value = "hold";
+  // #region agent log
+  logDemoSnapshot("H", "ready-before-storm", nextApp, nextViewport, nextLayer);
+  // #endregion
+  stormHoldTimer = window.setTimeout(() => {
+    if (isStale(runId)) return;
+    stormPhase.value = "active";
+    // #region agent log
+    agentLog("H", "GlyphflowDemo.client.vue:storm-hold-released", "storm-hold-released", {
+      holdMs: STORM_HOLD_MS,
+    });
+    // #endregion
+    stormTimer = window.setInterval(() => void runPositionStorm(runId), STORM_INTERVAL_MS);
+    void runPositionStorm(runId);
+  }, STORM_HOLD_MS);
 }
 
 function createLabelStyles(): Readonly<{
@@ -620,7 +659,6 @@ function startRuntime(
     }
   });
 
-  stormTimer = window.setInterval(() => void runPositionStorm(runId), STORM_INTERVAL_MS);
   resizeObserver = new ResizeObserver(() => {
     window.requestAnimationFrame(() => {
       const host = canvasHost.value;
@@ -673,7 +711,13 @@ async function runPositionStorm(runId: number): Promise<void> {
     nextLayer.updatePositions(ids, useSecondPositions ? second : first);
     useSecondPositions = !useSecondPositions;
     await nextLayer.commit();
+    stormCommits.value += 1;
     updateDuration.value = `${(performance.now() - startedAt).toFixed(2)} ms`;
+    // #region agent log
+    if (stormCommits.value === 1 && app !== undefined && viewport !== undefined) {
+      logDemoSnapshot("I", "first-held-storm", app, viewport, nextLayer);
+    }
+    // #endregion
   } finally {
     if (!isStale(runId)) stormPending = false;
   }
@@ -785,6 +829,7 @@ function emitCameraChange(nextViewport: Viewport, zoomed: boolean): void {
 
 function cleanup(): void {
   if (stormTimer !== undefined) window.clearInterval(stormTimer);
+  if (stormHoldTimer !== undefined) window.clearTimeout(stormHoldTimer);
   resizeObserver?.disconnect();
   intersectionObserver?.disconnect();
   binding?.destroy();
@@ -793,6 +838,7 @@ function cleanup(): void {
   app?.destroy(true);
   computeCullGpuDevice?.destroy();
   stormTimer = undefined;
+  stormHoldTimer = undefined;
   resizeObserver = undefined;
   intersectionObserver = undefined;
   binding = undefined;
@@ -1022,6 +1068,9 @@ async function loadCustomFonts(): Promise<readonly Readonly<LoadedFontAsset>[]> 
     :data-cull-path="cullPath"
     :data-palette-path="palettePath"
     :data-first-frame="firstFrameReady"
+    :data-storm-phase="stormPhase"
+    :data-storm-commits="stormCommits"
+    :data-storm-hold-ms="STORM_HOLD_MS"
     :data-ticker-frames="tickerFrames"
     :data-pending-glyphs="pendingGlyphs"
     :data-draw-calls="drawCalls"

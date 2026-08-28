@@ -131,7 +131,9 @@ test("rebuilds the pressure test across WebGL 2 and an available WebGPU adapter"
   await expect(page.getByTestId("resident-count")).toHaveText("1,000,000");
 
   const initialRevision = await readMetric(page, "revision-count");
-  await expect.poll(() => readMetric(page, "revision-count")).toBeGreaterThan(initialRevision);
+  await expect
+    .poll(() => readMetric(page, "revision-count"), { timeout: 15_000 })
+    .toBeGreaterThan(initialRevision);
   await page.getByRole("button", { name: "Pause movement" }).click();
 
   await page.getByRole("button", { name: "Hide all labels" }).click();

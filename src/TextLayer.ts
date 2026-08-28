@@ -912,6 +912,13 @@ export class TextLayer extends Container {
         needsComputeDispatch,
         visibleCount: this.#visibleCount,
       });
+      if (this.#lastCommitDirtyLabels > 1_000) {
+        agentLog("H", "TextLayer.ts:commit", "skip apply palette sample", {
+          pendingDirtyRanges: coordinator?.transforms.stats.pendingDirtyRanges ?? -1,
+          activeLabels: coordinator?.transforms.stats.activeLabels ?? -1,
+          slots: paletteSlotSamples(coordinator?.transforms.data),
+        });
+      }
       // #endregion
       if (this.#visibleCount === 0) this.#renderSurface?.dropIdleMeshes();
       this.#lastCommitDurationMs = performance.now() - start;
@@ -1056,6 +1063,21 @@ export class TextLayer extends Container {
         refreshedCull: result === undefined && computeUpdate !== undefined,
         lastUploadMs: surface?.stats.lastUploadMs ?? 0,
       });
+      const workLog = (globalThis as { __GLYPHFLOW_WORK_LOGS?: number }).__GLYPHFLOW_WORK_LOGS ?? 0;
+      if (workLog < 6) {
+        (globalThis as { __GLYPHFLOW_WORK_LOGS?: number }).__GLYPHFLOW_WORK_LOGS = workLog + 1;
+        agentLog("I", "TextLayer.ts:commit", "apply work shape", {
+          dirtyLabels: this.#lastCommitDirtyLabels,
+          changes: changes.length,
+          laneCount,
+          contentCount,
+          admitGroups: admitGroups.length,
+          appliedLabels: result?.appliedLabels ?? 0,
+          drawOrderChanged: result?.drawOrderChanged ?? false,
+          atlasUploads: result?.atlasUploads ?? 0,
+          slots: paletteSlotSamples(coordinator.transforms.data),
+        });
+      }
       // #endregion
       if (result !== undefined) surface?.apply(result, computeUpdate);
       else if (computeUpdate !== undefined) surface?.refreshComputeCull(computeUpdate);
@@ -2771,6 +2793,29 @@ function growTypedArray<T extends Uint8Array | Uint32Array>(source: T, capacity:
   target.set(source);
 
   return target;
+}
+
+function paletteSlotSamples(data: Float32Array | undefined, count = 4): unknown[] {
+  if (data === undefined) return [];
+  const samples: unknown[] = [];
+  const slots = Math.floor(data.length / 8);
+  for (let slot = 0; slot < slots && samples.length < count; slot += 1) {
+    const offset = slot * 8;
+    const x = data[offset] ?? 0;
+    const y = data[offset + 1] ?? 0;
+    const sx = data[offset + 2] ?? 0;
+    if (x === 0 && y === 0 && sx === 0) continue;
+    samples.push({
+      slot,
+      x,
+      y,
+      sx,
+      sy: data[offset + 3] ?? 0,
+      fill: data[offset + 6] ?? 0,
+      pack: data[offset + 7] ?? 0,
+    });
+  }
+  return samples;
 }
 
 function agentLog(
