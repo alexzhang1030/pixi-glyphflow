@@ -52,11 +52,13 @@ texel uploads for already-instanced glyphs stay ungated. The default is 65536 (2
 labels). `0` admits the tight view only. The CPU grid ignores the cap because its visible set
 is already the tight view.
 
-PixiJS creates WebGPU devices with the 128 MiB core `maxStorageBufferBindingSize`. Compute cull
-binds record storage and an 8-byte-per-visible-glyph compact draw buffer. `requestComputeCullGpu()`
-requests the adapter's storage and buffer limits and returns `{ adapter, device }` for
-`Application.init({ gpu })`. If a live buffer still exceeds the device limit, the layer uses
-`cpu-grid`.
+PixiJS creates WebGPU devices with the 128 MiB core `maxStorageBufferBindingSize` and zero
+vertex-stage storage bindings. Compute cull binds record storage and an 8-byte-per-visible-glyph
+compact draw buffer. The WebGPU palette path binds the 32-byte transform table as a storage
+buffer. `requestComputeCullGpu()` requests the adapter's storage, buffer, and vertex-storage
+limits and returns `{ adapter, device }` for `Application.init({ gpu })`. If a live compute-cull
+buffer still exceeds the device limit, the layer uses `cpu-grid`. If the live device still
+reports `maxStorageBuffersInVertexStage` 0, `TextLayerStats.palettePath` stays `"texture"`.
 
 `showAll()` and `hideAll()` return the number of labels whose `visible` state changed. Repeated calls
 return `0` and preserve revision state. One following `commit()` publishes the complete visibility
@@ -181,8 +183,11 @@ dimensions remain stable.
 worker serializes font loading and atlas generation; separate workers execute in parallel.
 
 `TextLayerStats.cullPath` is either `"compute-cull"` or `"cpu-grid"` and names the path used by the
-latest draw preparation. The root entry exports the `CullPath` type and `requestComputeCullGpu`.
-Compute shader and pass internals are not root exports.
+latest draw preparation. `TextLayerStats.palettePath` is either `"storage"` or `"texture"` and
+names the transform table used by that draw. WebGPU storage skips a CPU gather of the full
+palette on a position-only or camera-only commit. WebGL stays on `"texture"`. The root entry
+exports the `CullPath` and `PalettePath` types and `requestComputeCullGpu`. Compute shader and
+pass internals are not root exports.
 
 ## `pixi-glyphflow/prebuilt`
 

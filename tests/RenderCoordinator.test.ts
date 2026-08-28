@@ -462,6 +462,65 @@ describe("RenderCoordinator", () => {
     registry.destroy();
   });
 
+  test("skips the CPU position scatter when the storage palette will patch", async () => {
+    const registry = new FontRegistry();
+    await registry.register({ family: "Fixture" });
+    const coordinator = new RenderCoordinator({
+      registry,
+      layoutEngine: {
+        layout(_slot, _revision, input) {
+          return run(input.text);
+        },
+        destroy() {},
+      },
+      glyphProvider: {
+        async rasterize(): Promise<GlyphRaster> {
+          return {
+            mode: "alpha",
+            width: 4,
+            height: 6,
+            pixels: new Uint8Array(24).fill(255),
+            metrics: { bearingX: 0, bearingY: 5, advance: 4 },
+          };
+        },
+        destroy() {},
+      },
+      atlasOptions: { pageWidth: 64, pageHeight: 64, maxBytes: 4_096 },
+      instanceOptions: { initialCapacity: 32 },
+      transformOptions: { initialCapacity: 16, textureWidth: 16 },
+    });
+    const firstSeen = Array.from({ length: 4 }, (_, slot) => ({
+      slot,
+      mask: CONTENT | TRANSFORM | STYLE,
+      snapshot: label(1, slot * 10, 0, "AB"),
+    }));
+    await coordinator.commit(1, firstSeen);
+    coordinator.transforms.consumeDirty();
+    const slots = new Uint32Array([0, 1, 2, 3]);
+    const xy = new Float32Array([1, 2, 3, 4, 5, 6, 7, 8]);
+
+    const content = await coordinator.applyContentLane({
+      slots,
+      count: 4,
+      xy,
+      text: "CD",
+      style: { fontFamily: "Fixture", fontSize: 16, fill: 0xffffff },
+      writePalettePositions: false,
+    });
+    expect(content.appliedLabels).toBe(4);
+    expect(coordinator.transforms.consumeDirty()).toEqual([]);
+    expect(Array.from(coordinator.transforms.data.subarray(0, 2))).toEqual([0, 0]);
+
+    const noted = coordinator.notePositionLane(4);
+    expect(noted.appliedLabels).toBe(4);
+    expect(coordinator.stats.transformOnlyLabels).toBe(4);
+    expect(coordinator.transforms.consumeDirty()).toEqual([]);
+    expect(Array.from(coordinator.transforms.data.subarray(0, 2))).toEqual([0, 0]);
+
+    coordinator.destroy();
+    registry.destroy();
+  });
+
   test("admits first-seen duplicates with one layout and shared prototype bytes", async () => {
     const registry = new FontRegistry();
     await registry.register({ family: "Fixture" });

@@ -97,6 +97,8 @@ export interface ContentLaneInput {
   readonly xy: Float32Array;
   readonly text: string;
   readonly style: Readonly<TextStyleOptions>;
+  /** Storage palette patches x/y on the GPU; skip the CPU 32-byte scatter. */
+  readonly writePalettePositions?: boolean;
 }
 
 interface PreparedAdmitColumn {
@@ -387,6 +389,14 @@ export class RenderCoordinator {
     return this.#result(0, false, written, EMPTY_ATLAS_COMMIT, false);
   }
 
+  /** Count a position storm that the GPU storage table will patch. */
+  notePositionLane(count: number): Readonly<RenderCommitResult> {
+    this.#assertActive();
+    this.#transformOnlyLabels += count;
+    this.#appliedLabels += count;
+    return this.#result(0, false, count, EMPTY_ATLAS_COMMIT, false);
+  }
+
   /**
    * Broadcast text-plus-position: layout once, share the prototype range, patch palette x/y. Draw
    * states stay; callers must already have a palette row per slot (rendered labels).
@@ -416,7 +426,9 @@ export class RenderCoordinator {
     const atlasCommit = this.atlas.commitFrame();
     const writeStart = performance.now();
     this.#writeInstanceColumn(input.slots, input.count, prepared.run, prepared.snapshot);
-    this.transforms.writePositions(input.slots, input.count, input.xy);
+    if (input.writePalettePositions !== false) {
+      this.transforms.writePositions(input.slots, input.count, input.xy);
+    }
     this.#lastInstanceWriteMs = performance.now() - writeStart;
     this.#shapedLabels += input.count;
     this.#appliedLabels += input.count;

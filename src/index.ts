@@ -4,6 +4,7 @@ export { requestComputeCullGpu } from "./culling/requestComputeCullGpu";
 export type { ComputeCullGpu } from "./culling/requestComputeCullGpu";
 export type {
   CullPath,
+  PalettePath,
   TextGroupId,
   TextId,
   TextCompactionResult,

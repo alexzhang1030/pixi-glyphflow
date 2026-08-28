@@ -433,6 +433,15 @@
   - Verify: bun test tests/SpatialIndex.test.ts tests/TransformPalette.test.ts tests/TextLayer.commit.test.ts tests/culling.test.ts && bun run typecheck
   - Files: src/culling/SpatialIndex.ts, src/TextLayer.ts, src/store/TextStore.ts, src/render/TransformPalette.ts
 
+- [x] Task 12.33: Own WebGPU label transforms in a storage buffer.
+  - Acceptance: WebGPU with vertex storage skips the CPU 32-byte palette gather on a
+    position-only or camera-only commit. CPU submits the mover slot list. WebGL and
+    devices without vertex storage keep the texture path. Hit-test and 1M residency stay.
+    Public `TextLayer` contract stays. Published budgets stay. Default baked pages stay
+    out of the core ESM graph.
+  - Verify: bun test tests/paletteStorage.test.ts tests/GlyphMesh.test.ts tests/TransformPalette.test.ts tests/RenderCoordinator.test.ts tests/TextLayer.test.ts tests/TextLayer.commit.test.ts && bun run typecheck && bun run docs:check
+  - Files: src/render/paletteStorage.ts, src/render/PaletteStoragePass.ts, src/render/RenderSurface.ts, src/render/GlyphMesh.ts, src/render/shaders.ts, src/TextLayer.ts, src/culling/requestComputeCullGpu.ts
+
 - [ ] Task 12.8: Optional extreme quality tracks (Wave 5).
   - Acceptance: Outline (Slug), collision, SIMD shaping, and SharedArrayBuffer rings land only as opt-in modes with their own workloads and pixel tolerances.
   - Verify: focused tests plus a named benchmark workload per enabled track

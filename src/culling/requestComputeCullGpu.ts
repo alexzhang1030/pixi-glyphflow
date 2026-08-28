@@ -9,6 +9,24 @@ export interface ComputeCullGpu {
   readonly device: GPUDevice;
 }
 
+export function computeCullDeviceLimits(adapter: {
+  readonly limits: {
+    readonly maxStorageBufferBindingSize: number;
+    readonly maxBufferSize: number;
+    readonly maxStorageBuffersInVertexStage?: number;
+  };
+}): GPUDeviceDescriptor["requiredLimits"] {
+  const limits: Record<string, number> = {
+    maxStorageBufferBindingSize: adapter.limits.maxStorageBufferBindingSize,
+    maxBufferSize: adapter.limits.maxBufferSize,
+  };
+  const vertexStorage = adapter.limits.maxStorageBuffersInVertexStage ?? 0;
+  if (vertexStorage > 0) {
+    limits.maxStorageBuffersInVertexStage = vertexStorage;
+  }
+  return limits;
+}
+
 export async function requestComputeCullGpu(
   options: GPURequestAdapterOptions = {},
 ): Promise<ComputeCullGpu | undefined> {
@@ -22,10 +40,7 @@ export async function requestComputeCullGpu(
   }
   const device = await adapter.requestDevice({
     requiredFeatures,
-    requiredLimits: {
-      maxStorageBufferBindingSize: adapter.limits.maxStorageBufferBindingSize,
-      maxBufferSize: adapter.limits.maxBufferSize,
-    },
+    requiredLimits: computeCullDeviceLimits(adapter),
   });
   return { adapter, device };
 }

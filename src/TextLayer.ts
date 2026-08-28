@@ -30,6 +30,7 @@ import {
 import { SpatialIndex } from "./culling/SpatialIndex";
 import type { BoundsData, MutableBoundsData, PointLike } from "./culling/types";
 import { FontRegistry } from "./FontRegistry";
+import { shouldWriteCpuPalettePositions } from "./render/paletteStorage";
 import {
   RenderCoordinator,
   type AdmitLaneGroup,
@@ -862,14 +863,18 @@ export class TextLayer extends Container {
     if (admitBudget.deferred) this.#offscreenAdmitDeferred = true;
     else if (scannedPrepareRing) this.#offscreenAdmitDeferred = false;
     const admitGroups = this.#publishAdmitGroups(admit.drafts);
+    const palettePath = this.#renderSurface?.preparePalettePath() ?? "texture";
+    const writeCpuPalette = shouldWriteCpuPalettePositions(palettePath);
     // Copy the lane at publish time so later intake cannot skew what this revision draws.
     let laneSlots: Uint32Array | undefined;
     let laneXy: Float32Array | undefined;
     if (laneCount > 0) {
       laneSlots = this.#laneSlots.slice(0, laneCount);
       laneSlots.sort();
-      laneXy = new Float32Array(laneCount * 2);
-      this.#store.positionsInto(laneSlots, laneCount, laneXy);
+      if (writeCpuPalette) {
+        laneXy = new Float32Array(laneCount * 2);
+        this.#store.positionsInto(laneSlots, laneCount, laneXy);
+      }
     }
     let contentSlots: Uint32Array | undefined;
     let contentXy: Float32Array | undefined;
@@ -935,6 +940,7 @@ export class TextLayer extends Container {
           xy: contentXy,
           text: contentText,
           style: contentStyle,
+          writePalettePositions: writeCpuPalette,
         });
         this.#lastLayoutMs += coordinator.stats.lastLayoutMs;
         this.#lastInstanceWriteMs += coordinator.stats.lastInstanceWriteMs;
@@ -948,10 +954,34 @@ export class TextLayer extends Container {
         this.#lastPaletteWriteMs += coordinator.stats.lastPaletteWriteMs;
       }
       let laneResult: RenderCommitResult | undefined;
-      if (laneSlots !== undefined && laneXy !== undefined) {
+      if (laneSlots !== undefined && laneCount > 0) {
         const laneStart = performance.now();
-        laneResult = coordinator.applyPositionLane(laneSlots, laneCount, laneXy);
+        laneResult =
+          writeCpuPalette && laneXy !== undefined
+            ? coordinator.applyPositionLane(laneSlots, laneCount, laneXy)
+            : coordinator.notePositionLane(laneCount);
         this.#lastPaletteWriteMs += performance.now() - laneStart;
+      }
+      if (this.#renderSurface !== undefined && palettePath === "storage") {
+        this.#renderSurface.bindOriginColumns(this.#store.xColumn, this.#store.yColumn);
+        const moveCount = laneCount + (writeCpuPalette ? 0 : contentCount);
+        if (moveCount > 0) {
+          const moveSlots = new Uint32Array(moveCount);
+          let write = 0;
+          if (laneSlots !== undefined) {
+            moveSlots.set(laneSlots.subarray(0, laneCount), write);
+            write += laneCount;
+          }
+          if (!writeCpuPalette && contentSlots !== undefined && contentCount > 0) {
+            moveSlots.set(contentSlots.subarray(0, contentCount), write);
+          }
+          this.#renderSurface.queuePaletteMoves({
+            slots: moveSlots,
+            count: moveCount,
+            originX: this.#store.xColumn,
+            originY: this.#store.yColumn,
+          });
+        }
       }
       const result = mergeRenderResults(commitResult, contentResult, admitResult, laneResult);
       const spatialWriteStart = performance.now();
@@ -1104,6 +1134,7 @@ export class TextLayer extends Container {
       cullingQueries: spatial.queries,
       rendererAdapter: this.#renderer === undefined ? "detached" : (surface?.adapter ?? "unknown"),
       cullPath: surface?.cullPath ?? "cpu-grid",
+      palettePath: surface?.palettePath ?? "texture",
       drawCalls: surface?.meshes ?? 0,
       submittedGlyphs: surface?.submittedGlyphs ?? 0,
       atlasTextureCount: surface?.atlasTextures ?? 0,

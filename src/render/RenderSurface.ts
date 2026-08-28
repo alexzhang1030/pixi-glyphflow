@@ -40,6 +40,8 @@ import {
   writeDrawInstance,
   writePrototypeGlyphs,
 } from "./pack";
+import { resolvePalettePath, type PalettePath } from "./paletteStorage";
+import { PaletteStoragePass, type PaletteMoveUpload } from "./PaletteStoragePass";
 import type { RenderCommitResult, RenderCoordinator, RenderDrawState } from "./RenderCoordinator";
 import {
   GLYPH_DRAW_STRIDE,
@@ -118,6 +120,7 @@ export interface RenderComputeCullUpdate {
 export interface RenderSurfaceStats {
   readonly adapter: "webgl" | "webgpu" | "unknown";
   readonly cullPath: CullPath;
+  readonly palettePath: PalettePath;
   readonly meshes: number;
   readonly atlasTextures: number;
   readonly submittedGlyphs: number;
@@ -161,6 +164,12 @@ export class RenderSurface {
   #lastUploadMs = 0;
   #cullPass: ComputeCullPass | undefined;
   #cullPath: CullPath = "cpu-grid";
+  #palettePass: PaletteStoragePass | undefined;
+  #palettePath: PalettePath = "texture";
+  #queuedMoves: PaletteMoveUpload | undefined;
+  #originX: Float32Array | undefined;
+  #originY: Float32Array | undefined;
+  #storageSynced = false;
   #computeEligible = true;
   readonly #computeCull: boolean | "auto";
   #lastCullViewport: CullViewport | undefined;
@@ -202,6 +211,46 @@ export class RenderSurface {
     return "compute-cull";
   }
 
+  preparePalettePath(): PalettePath {
+    const previous = this.#palettePath;
+    if (!isWebGPURenderer(this.#renderer)) {
+      this.#palettePath = "texture";
+      return this.#adoptPalettePath(previous);
+    }
+    const device = this.#renderer.gpu?.device;
+    if (device === undefined) {
+      this.#palettePath = "texture";
+      return this.#adoptPalettePath(previous);
+    }
+    const path = resolvePalettePath({
+      adapter: "webgpu",
+      maxStorageBuffersInVertexStage: device.limits.maxStorageBuffersInVertexStage ?? 0,
+      maxStorageBufferBindingSize: device.limits.maxStorageBufferBindingSize,
+      paletteBytes: this.#coordinator.transforms.data.byteLength,
+    });
+    if (path === "texture") {
+      this.#palettePath = "texture";
+      return this.#adoptPalettePath(previous);
+    }
+    const pass = this.#palettePass ?? new PaletteStoragePass(this.#renderer);
+    if (!pass.initialize()) {
+      this.#palettePath = "texture";
+      return this.#adoptPalettePath(previous);
+    }
+    this.#palettePass = pass;
+    this.#palettePath = "storage";
+    return this.#adoptPalettePath(previous);
+  }
+
+  queuePaletteMoves(move: PaletteMoveUpload): void {
+    this.#queuedMoves = move;
+  }
+
+  bindOriginColumns(originX: Float32Array, originY: Float32Array): void {
+    this.#originX = originX;
+    this.#originY = originY;
+  }
+
   dropIdleMeshes(): void {
     this.#assertActive();
     if (this.#coordinator.getDrawStates().length !== 0) return;
@@ -211,9 +260,43 @@ export class RenderSurface {
   refreshComputeCull(update: Readonly<RenderComputeCullUpdate>): CullPath {
     this.#assertActive();
     const uploadStart = performance.now();
+    this.flushPaletteStorage();
     const path = this.#refreshComputeCull(update);
     this.#lastUploadMs = performance.now() - uploadStart;
     return path;
+  }
+
+  /** Upload dirty fill records and patch mover x/y on the storage table. Texture path no-ops. */
+  flushPaletteStorage(): void {
+    if (this.preparePalettePath() !== "storage") {
+      this.#queuedMoves = undefined;
+      return;
+    }
+    const pass = this.#palettePass;
+    if (pass === undefined) return;
+    const data = this.#coordinator.transforms.data;
+    const ensured = pass.ensureTransforms(data.byteLength);
+    if (!ensured.ok) {
+      this.#fallbackPaletteToTexture();
+      this.#syncPaletteTexture(data, [{ offset: 0, length: data.byteLength }]);
+      return;
+    }
+    if (ensured.replaced) {
+      this.#storageSynced = false;
+      for (const surface of this.#meshes.values()) {
+        surface.mesh.setPaletteStorage(pass.transformBuffer);
+      }
+    }
+    if (!this.#storageSynced) {
+      this.#transformUploadBytes += pass.uploadAllTransforms(data);
+      this.#transformWrites += 1;
+      this.#storageSynced = true;
+    }
+    const moves = this.#queuedMoves;
+    this.#queuedMoves = undefined;
+    if (moves === undefined || moves.count <= 0) return;
+    this.#transformUploadBytes += pass.dispatchMoves(moves);
+    this.#transformWrites += 1;
   }
 
   #refreshComputeCull(update: Readonly<RenderComputeCullUpdate>): CullPath {
@@ -263,6 +346,7 @@ export class RenderSurface {
     const transformRanges = this.#coordinator.transforms.consumeDirty();
     const instanceRanges = this.#coordinator.instances.consumeDirty();
     this.#syncPalette(transformRanges);
+    this.flushPaletteStorage();
     this.#syncPrototype(instanceRanges);
     const needsComputeRebuild = this.#needsComputeMeshRebuild(computeCull);
     const needDrawRebuild =
@@ -290,6 +374,7 @@ export class RenderSurface {
     return Object.freeze({
       adapter: rendererKind(this.#renderer),
       cullPath: this.#cullPath,
+      palettePath: this.#palettePath,
       meshes: this.#meshes.size,
       atlasTextures: this.#pages.size,
       submittedGlyphs: this.#submittedGlyphs,
@@ -317,6 +402,11 @@ export class RenderSurface {
     this.#cullPass?.destroy();
     this.#cullPass = undefined;
     this.#cullPath = "cpu-grid";
+    this.#palettePass?.destroy();
+    this.#palettePass = undefined;
+    this.#palettePath = "texture";
+    this.#queuedMoves = undefined;
+    this.#storageSynced = false;
     this.#lastCullViewport = undefined;
     this.#paletteTexture.destroy(true);
     this.#paletteData = new Float32Array();
@@ -425,6 +515,14 @@ export class RenderSurface {
 
   #syncPalette(ranges: readonly Readonly<DirtyByteRange>[]): void {
     const data = this.#coordinator.transforms.data;
+    if (this.preparePalettePath() === "storage") {
+      this.#syncPaletteStorage(data, ranges);
+      if (this.#palettePath === "storage") return;
+    }
+    this.#syncPaletteTexture(data, ranges);
+  }
+
+  #syncPaletteTexture(data: Float32Array, ranges: readonly Readonly<DirtyByteRange>[]): void {
     const stats = this.#coordinator.transforms.stats;
     if (data !== this.#paletteData) {
       const oldTexture = this.#paletteTexture;
@@ -458,11 +556,52 @@ export class RenderSurface {
     this.#transformWrites += uploaded.writes;
   }
 
+  #syncPaletteStorage(data: Float32Array, ranges: readonly Readonly<DirtyByteRange>[]): void {
+    const grew = data !== this.#paletteData;
+    if (grew) {
+      this.#paletteData = data;
+      this.#storageSynced = false;
+      if (this.#originX !== undefined && this.#originY !== undefined) {
+        this.#coordinator.transforms.refreshOrigins(this.#originX, this.#originY);
+      }
+    }
+    if (!this.#storageSynced || ranges.length === 0) return;
+    const pass = this.#palettePass;
+    if (pass === undefined) return;
+    if (!pass.ensureTransforms(data.byteLength).ok) {
+      this.#fallbackPaletteToTexture();
+      return;
+    }
+    this.#transformUploadBytes += pass.uploadTransforms(data, ranges);
+    this.#transformWrites += 1;
+  }
+
+  #adoptPalettePath(previous: PalettePath): PalettePath {
+    if (previous !== this.#palettePath && this.#meshes.size > 0) {
+      this.#destroyMeshes();
+    }
+    return this.#palettePath;
+  }
+
+  #fallbackPaletteToTexture(): void {
+    if (this.#originX !== undefined && this.#originY !== undefined) {
+      this.#coordinator.transforms.refreshOrigins(this.#originX, this.#originY);
+    }
+    this.#queuedMoves = undefined;
+    this.#storageSynced = false;
+    this.#paletteInitialized = false;
+    this.#palettePath = "texture";
+    if (this.#meshes.size > 0) this.#destroyMeshes();
+  }
+
   #bindMeshSources(): void {
     const stats = this.#coordinator.transforms.stats;
     const textures = this.#atlasTextures();
+    const storage =
+      this.#palettePath === "storage" ? this.#palettePass?.transformBuffer : undefined;
     for (const surface of this.#meshes.values()) {
       surface.mesh.setPaletteTexture(this.#paletteTexture, stats.textureWidth, stats.effectBase);
+      if (storage !== undefined) surface.mesh.setPaletteStorage(storage);
       surface.mesh.setPrototypeTexture(this.#protoTexture, this.#protoWidth);
       if (surface.atlasGeneration !== this.#atlasGeneration) {
         surface.atlasGeneration = this.#atlasGeneration;
@@ -806,6 +945,9 @@ export class RenderSurface {
       textures,
       paletteTexture: this.#paletteTexture,
       paletteWidth: paletteStats.textureWidth,
+      palettePath: this.#palettePath,
+      paletteStorage:
+        this.#palettePath === "storage" ? this.#palettePass?.transformBuffer : undefined,
       prototypeTexture: this.#protoTexture,
       prototypeWidth: this.#protoWidth,
       effectBase: paletteStats.effectBase,

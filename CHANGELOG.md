@@ -17,6 +17,13 @@
 
 ### Performance
 
+- WebGPU owns the 32-byte transform table in a storage buffer when the vertex stage can bind
+  it. Position-only storms skip the CPU 32-byte scatter and submit the mover slot list. A
+  compute pass writes x/y from the store columns. Camera-only frames do not gather the full
+  palette. WebGL and devices with `maxStorageBuffersInVertexStage` 0 keep the texture path.
+  `requestComputeCullGpu()` requests that vertex-storage limit. `TextLayerStats.palettePath`
+  reports `"storage"` or `"texture"`. Published budgets stay. Hit-test still uses the aliased
+  store columns.
 - Prebuilt distance-field pages rematch by physical size. A `charsetSdfPrebuilt` bake at 14px
   crops a 13px or 32px first sight of the same glyph and interns the field, instead of starting
   TinySDF or MSDF. Sizes above `distanceFieldMinFontSize` still generate. On-screen unique ink
@@ -32,7 +39,7 @@
 - Atlas pages bind as layers in two texture arrays (R8 sdf/alpha, RGBA8 msdf/color). Shaders
   sample `uAtlasR` / `uAtlasRGBA` by mode and layer. Compact walks split only on blend and z.
   `GLYPH_TEXTURE_BANK_SIZE` is now `2`. Array sources skip Pixi's 2D buffer uploader. WebGPU
-  glyph rects pad `bytesPerRow` to 256. Palette storage buffers are still not started.
+  glyph rects pad `bytesPerRow` to 256.
 - Empty-ink scalars (White_Space except Ogham U+1680, plus default ignorables) skip raster
   and instance quads. Layout advance and label AABBs stay. Trusted runs, ligatures, and
   shared-cluster marks still generate. An empty TinySDF mask skips both EDTs.
