@@ -51,20 +51,20 @@ export class PrebuiltGlyphProvider {
         throw new RangeError(`Prebuilt glyph falls outside page bounds: ${record.key}`);
       }
       const parsed = parsePrebuiltGlyphKey(record.key);
-      const physicalSize =
+      const source: GlyphSource =
         parsed === undefined
-          ? undefined
-          : parsed.fontSize * (record.metrics?.rasterScale ?? 1);
-      const source: GlyphSource = {
-        page,
-        record,
-        ...(parsed === undefined
-          ? {}
+          ? { page, record }
           : {
-              ...parsed,
-              physicalSize,
-            }),
-      };
+              page,
+              record,
+              family: parsed.family,
+              glyphId: parsed.glyphId,
+              glyphText: parsed.glyphText,
+              fontSize: parsed.fontSize,
+              fontWeight: parsed.fontWeight,
+              mode: parsed.mode,
+              physicalSize: parsed.fontSize * (record.metrics?.rasterScale ?? 1),
+            };
       this.#glyphs.set(record.key, source);
       if (parsed === undefined) continue;
       const identity = prebuiltIdentityKey(parsed);
@@ -87,9 +87,9 @@ export class PrebuiltGlyphProvider {
   }
 
   /**
-   * Crop a page whose physical field matches `physicalFontSize`. `charsetSdfPrebuilt` keys the
-   * bake logical size (14) while TinySDF intern is `max(fontSize, 48)`. A 13px or 32px first
-   * sight of that glyph is still that field.
+   * Crop a page whose physical field matches `physicalFontSize`. `charsetSdfPrebuilt` keys the bake
+   * logical size (14) while TinySDF intern is `max(fontSize, 48)`. A 13px or 32px first sight of
+   * that glyph is still that field.
    */
   lookupPhysical(
     request: Pick<
@@ -215,7 +215,9 @@ export function prebuiltGlyphKey(
 }
 
 function prebuiltIdentityKey(
-  request: Pick<RasterGlyphRequest, "family" | "glyphId" | "glyphText" | "fontWeight" | "mode">,
+  request: Pick<RasterGlyphRequest, "family" | "glyphId" | "glyphText" | "mode"> & {
+    readonly fontWeight?: string;
+  },
 ): string {
   return [
     request.family,

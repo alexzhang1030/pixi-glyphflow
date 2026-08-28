@@ -185,9 +185,8 @@ export interface RasterGlyphProviderOptions {
    * Serve known glyphs from packed pages before TinySDF or MSDF. Record keys use `prebuiltGlyphKey`
    * and omit font revision. A miss with a non-zero glyph id retries `glyphId: 0` when `glyphText`
    * is a single Unicode scalar so a family page can ignore HarfBuzz ids. A later miss whose
-   * physical size (`max(fontSize, distanceFieldMinFontSize)`) matches a baked field's
-   * `fontSize * (rasterScale ?? 1)` crops that field and interns it. Sizes above the minimum
-   * still generate.
+   * physical size (`max(fontSize, distanceFieldMinFontSize)`) matches a baked field's `fontSize *
+   * (rasterScale ?? 1)` crops that field and interns it. Sizes above the minimum still generate.
    */
   readonly prebuilt?: PrebuiltGlyphProviderOptions;
 }

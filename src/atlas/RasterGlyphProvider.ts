@@ -491,10 +491,7 @@ export class RasterGlyphProvider {
     return applyPhysicalScale(await pending, rasterFontSize / request.fontSize);
   }
 
-  #adoptPrebuilt(
-    request: RasterGlyphRequest,
-    baked: Readonly<GlyphRaster>,
-  ): Readonly<GlyphRaster> {
+  #adoptPrebuilt(request: RasterGlyphRequest, baked: Readonly<GlyphRaster>): Readonly<GlyphRaster> {
     if (request.mode !== "sdf" && request.mode !== "msdf") return baked;
     const rasterFontSize = Math.max(request.fontSize, this.#distanceFieldMinFontSize);
     const scale = baked.metrics?.rasterScale ?? 1;

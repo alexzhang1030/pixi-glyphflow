@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { readFile } from "node:fs/promises";
 import { resolve } from "node:path";
+
 import type { Renderer } from "pixi.js";
 
 import { FontRegistry, TextLayer, type PositionedRun } from "../src";
