@@ -276,6 +276,22 @@ describe("TransformPalette", () => {
 
     palette.destroy();
   });
+
+  test("refreshes occupied origins without dirtying the CPU table", () => {
+    const palette = new TransformPalette({ initialCapacity: 2, textureWidth: 4 });
+    palette.writeFills(new Uint32Array([0, 1]), 2, new Float32Array([1, 2, 3, 4]), 0xffffff);
+    palette.consumeDirty();
+    const scale = palette.data[2];
+
+    expect(
+      palette.refreshOrigins(new Float32Array([40, 80, 99]), new Float32Array([50, 90, 99])),
+    ).toBe(2);
+    expect(Array.from(palette.data.subarray(0, 4))).toEqual([40, 50, scale ?? 1, 1]);
+    expect(Array.from(palette.data.subarray(8, 10))).toEqual([80, 90]);
+    expect(palette.consumeDirty()).toEqual([]);
+
+    palette.destroy();
+  });
 });
 
 function halves(value: number): readonly [number, number] {

@@ -75,7 +75,8 @@ await layer.commit();
 ```
 
 Million-label WebGPU compute cull needs a device whose storage-buffer binding limit is above the
-128 MiB WebGPU default. Request that device before `Application.init`:
+128 MiB WebGPU default. The palette storage path also needs
+`maxStorageBuffersInVertexStage >= 1`. Request that device before `Application.init`:
 
 ```ts
 import { Application } from "pixi.js";

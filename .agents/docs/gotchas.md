@@ -47,8 +47,12 @@ PixiJS `requestDevice()` does not raise `maxStorageBufferBindingSize`. The core 
 268,435,456 bytes. Binding it fails even when the adapter allows ~4 GiB.
 
 Call `requestComputeCullGpu()` and pass `{ gpu }` into `Application.init`. The helper copies the
-adapter's `maxStorageBufferBindingSize` and `maxBufferSize`. If a buffer still exceeds the live
-device limit, compute cull falls back to `cpu-grid` instead of submitting an invalid bind group.
+adapter's `maxStorageBufferBindingSize` and `maxBufferSize`. It also copies
+`maxStorageBuffersInVertexStage` when that adapter limit is greater than 0. The WebGPU core
+default for vertex storage bindings is 0. Without the raise, the vertex stage cannot bind the
+palette storage buffer and the layer stays on the texture path. If a compute-cull buffer still
+exceeds the live device limit, that pass falls back to `cpu-grid` instead of submitting an
+invalid bind group.
 
 ## WGSL rejects `from` as an identifier
 
@@ -77,8 +81,25 @@ R8 (sdf/alpha) and RGBA8 (msdf/color) cannot share one array. Growing an array m
 leaves the replaced `AtlasArray` in that frame's dirty set. `getGlSource` on the destroyed
 source reads `source.style === null` and throws `addressModeU`. Skip destroyed arrays;
 rebind live meshes to the next source before `texture.destroy(true)`. Bind `uSampler` to an
-owned `TextureStyle`, not `source.style`. Do not start leftover #2 with a palette SSBO:
-WebGL 2 has no storage buffers.
+owned `TextureStyle`, not `source.style`. WebGL 2 has no storage buffers; keep the transform
+table as a texture there. Do not build a second feature-complete stack.
+
+## WebGPU palette storage cannot bind unless vertex storage is requested
+
+PixiJS `requestDevice()` leaves `maxStorageBuffersInVertexStage` at the core default of 0.
+`requestComputeCullGpu()` raises it when the adapter allows at least one vertex storage binding.
+`resolvePalettePath` stays on `"texture"` when the live device still reports 0, when the adapter
+is WebGL, or when the palette byte length exceeds `maxStorageBufferBindingSize`.
+
+The storage table uses the same 32-byte fill records as the texture (`array<vec4<f32>>`, two
+`vec4`s per slot). Position storms skip `writePositions`. The CPU submits the mover slot list
+and a dirty origin-column span (or per-slot origin writes when the span is sparse). A compute
+`patch_xy` writes `transforms[slot * 2].xy` from the store x/y columns. Camera-only frames
+submit neither a slot list nor a palette gather.
+
+A storage-buffer rebuild or geometric grow must `refreshOrigins` from the live store columns
+before a full upload. Mover-only storms leave CPU texels stale. Uploading that table without
+the refresh clobbers GPU-patched x/y. Hit-test keeps using the aliased store columns.
 
 ## Compute culling needs a larger CPU working set than its draw set
 

@@ -3,9 +3,11 @@ import type { BLEND_MODES, PointData, Renderer, TextStyleOptions } from "pixi.js
 import type { CullPath } from "./culling/computeCull";
 import type { BoundsData, MutableBoundsData, PointLike } from "./culling/types";
 import type { TextDirection, TextWritingMode } from "./layout/types";
+import type { PalettePath } from "./render/paletteStorage";
 import type { RenderCoordinatorOptions } from "./render/RenderCoordinator";
 
 export type { CullPath } from "./culling/computeCull";
+export type { PalettePath } from "./render/paletteStorage";
 
 declare const textIdBrand: unique symbol;
 declare const textGroupIdBrand: unique symbol;
@@ -193,6 +195,7 @@ export interface TextLayerStats {
   readonly cullingQueries: number;
   readonly rendererAdapter: "detached" | "webgl" | "webgpu" | "unknown";
   readonly cullPath: CullPath;
+  readonly palettePath: PalettePath;
   readonly drawCalls: number;
   readonly submittedGlyphs: number;
   readonly atlasTextureCount: number;

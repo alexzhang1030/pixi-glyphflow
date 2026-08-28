@@ -21,6 +21,7 @@ describe("TextLayer", () => {
       labelCount: 1,
       pendingMutations: 1,
       revision: 0,
+      palettePath: "texture",
     });
 
     expect(Number(await layer.commit())).toBe(1);

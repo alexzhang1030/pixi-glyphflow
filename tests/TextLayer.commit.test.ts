@@ -408,6 +408,7 @@ describe("TextLayer commit and maintenance", () => {
       glyphCount: 1,
       shapedLabels: 1,
       transformOnlyLabels: 1,
+      palettePath: "texture",
     });
     expect(layer.get(id)).toMatchObject({ x: 40, y: 50 });
 

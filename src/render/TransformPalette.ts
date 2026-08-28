@@ -285,6 +285,32 @@ export class TransformPalette {
     return this.#data;
   }
 
+  /** Occupied flag for a slot. Storage rebuilds refresh x/y from the store columns. @internal */
+  occupiedAt(slot: number): boolean {
+    this.#assertActive();
+    return slot < this.#capacity && this.#occupied[slot] === 1;
+  }
+
+  /**
+   * Rewrite occupied x/y from store columns without dirtying. Used when a storage buffer rebuild
+   * would otherwise upload stale CPU texels after a mover-only storm.
+   */
+  refreshOrigins(originX: Float32Array, originY: Float32Array): number {
+    this.#assertActive();
+    const data = this.#data;
+    const occupied = this.#occupied;
+    const limit = Math.min(this.#capacity, occupied.length, originX.length, originY.length);
+    let written = 0;
+    for (let slot = 0; slot < limit; slot += 1) {
+      if (occupied[slot] !== 1) continue;
+      const offset = slot * FLOATS_PER_LABEL;
+      data[offset] = originX[slot] ?? 0;
+      data[offset + 1] = originY[slot] ?? 0;
+      written += 1;
+    }
+    return written;
+  }
+
   consumeDirty(): readonly Readonly<DirtyByteRange>[] {
     this.#assertActive();
     return this.#dirty.publish({

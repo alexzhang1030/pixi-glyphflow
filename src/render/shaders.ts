@@ -1,3 +1,5 @@
+import type { PalettePath } from "./paletteStorage";
+
 export const GLYPH_VERTEX_GLSL = /* glsl */ `
 #version 300 es
 
@@ -224,7 +226,7 @@ void main(void) {
 }
 `;
 
-export const GLYPH_SHADER_WGSL = /* wgsl */ `
+const GLYPH_SHADER_WGSL_TEXTURE: string = /* wgsl */ `
 struct GlobalUniforms {
     uProjectionMatrix: mat3x3<f32>,
     uWorldTransformMatrix: mat3x3<f32>,
@@ -470,3 +472,35 @@ fn mainFragment(input: VertexOutput) -> @location(0) vec4<f32> {
     return over(fill, composed) * labelAlpha * input.worldColor;
 }
 `;
+
+const GLYPH_SHADER_WGSL_STORAGE: string = GLYPH_SHADER_WGSL_TEXTURE.replace(
+  "@group(2) @binding(3) var uTransformTexture: texture_2d<f32>;",
+  "@group(2) @binding(3) var<storage, read> uTransforms: array<vec4<f32>>;",
+)
+  .replace(
+    "    let paletteWidth = u32(glyphUniforms.uPaletteWidth);\n    let paletteBase = aPaletteIndex * 2u;\n    let transform0 = textureLoad(uTransformTexture, paletteIndex(paletteBase, paletteWidth), 0);\n    let transform1 = textureLoad(uTransformTexture, paletteIndex(paletteBase + 1u, paletteWidth), 0);",
+    "    let paletteBase = aPaletteIndex * 2u;\n    let transform0 = uTransforms[paletteBase];\n    let transform1 = uTransforms[paletteBase + 1u];",
+  )
+  .replace(
+    `        textureLoad(
+            uTransformTexture,
+            paletteIndex(u32(glyphUniforms.uEffectBase) + aPaletteIndex, paletteWidth),
+            0,
+        )`,
+    "        uTransforms[u32(glyphUniforms.uEffectBase) + aPaletteIndex]",
+  );
+
+export const GLYPH_SHADER_WGSL: string = GLYPH_SHADER_WGSL_TEXTURE;
+
+export function glyphShaderWgsl(path: PalettePath): string {
+  switch (path) {
+    case "texture":
+      return GLYPH_SHADER_WGSL_TEXTURE;
+    case "storage":
+      return GLYPH_SHADER_WGSL_STORAGE;
+    default: {
+      const _exhaustive: never = path;
+      return _exhaustive;
+    }
+  }
+}

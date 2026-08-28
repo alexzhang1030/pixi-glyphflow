@@ -111,7 +111,10 @@ storage budgets stay until a human accepts new numbers.
 - Leave `computeCull` at `"auto"` for WebGPU camera workloads. Set it to `false` to force the
   WebGL-compatible CPU grid.
 - Pass `requestComputeCullGpu()` into `Application.init({ gpu })` so compute cull can bind
-  instance storage larger than the 128 MiB WebGPU default.
+  instance storage larger than the 128 MiB WebGPU default, and so the vertex stage can bind
+  the palette storage buffer. WebGL and devices without vertex storage keep the texture
+  palette. A WebGPU storage path does not gather 1,000,000 x/y values on a position-only or
+  camera-only commit; the CPU submits the mover slot list.
 - Reuse styles and fonts to maximize shaping and layout cache hits. Duplicate strings intern one
   layout result per (family, size, weight, text). Broadcast `updateTextPositions` with default
   anchors uses a columnar content lane: one layout, a shared prototype range, packed x/y, and

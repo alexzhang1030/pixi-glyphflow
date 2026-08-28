@@ -14,7 +14,7 @@ Version 1.1.0 already meets the formal million-label frame and mutation budgets 
 2. Dynamic text is at the wall. `dynamic-counters` records 16.40 ms frame p95 and 15.70 ms mutation p95 against a 16.67 ms limit.
 3. Camera-only frames still walk every resident label. `SpatialIndex.query` is a dense linear scan. Viewport workloads stay inside budget (5.40–7.60 ms p95) but leave little room for denser worlds, rotated cameras, or slower devices.
 4. The 8,000,000-glyph “full visibility” frame number in 1.1.0 artifacts is a synthetic `GlyphMesh`. `million-live` now exists as the product-path workload; treat 0.10 ms p95 as GPU submission evidence until a reference `million-live` artifact exists.
-5. CPU and GPU still store the same transform: `TextStore` columns and a GPU palette texel. `SpatialIndex` keeps a local box and aliases the store origin, so a position storm does not write world min/max. Fill-only labels use 32 bytes on the GPU. The CPU store now packs the non-position columns; one million reserved slots stay ≤ 48 MiB in unit measurement. The 1.1.0 artifacts still report 72 MiB and 64-byte records.
+5. CPU and GPU still store the same fill/scale/effect record. `TextStore` columns and a GPU palette texel or storage slot. `SpatialIndex` keeps a local box and aliases the store origin, so a position storm does not write world min/max. On the WebGPU storage path the GPU table owns live x/y after the first upload; the CPU submits who moved. Fill-only labels use 32 bytes on the GPU. The CPU store now packs the non-position columns; one million reserved slots stay ≤ 48 MiB in unit measurement. The 1.1.0 artifacts still report 72 MiB and 64-byte records.
 
 Extreme here means: keep 1,000,000 resident labels and 8,000,000 visible glyphs, then make atlas pressure, dynamic counters, and camera motion cheap enough that the 16.67 ms budget is headroom rather than a cliff. Do not replace the product with a document renderer, a compute-only 2D engine, or an outline-only GPU path.
 
@@ -178,11 +178,18 @@ LRU, 52-bit keys, the 48 MiB store (test-pinned, 44.9 MiB measured), the sparse 
     R8 (sdf/alpha) and RGBA8 (msdf/color) pages as layers. Instance metadata low bits are
     the same-format layer. Compact walks no longer split on `floor(page/8)`. Pixi buffer
     uploaders stay 2D; the surface allocates the array and writes `texSubImage3D` /
-    `writeTexture` at `z = layer`. Palette SSBO is still not started.
+    `writeTexture` at `z = layer`.
 22. **Prebuilt physical rematch — LANDED.** A bake keyed at one logical size that stores
     `rasterScale` crops any first sight whose physical size matches. The crop interns into
-    the TinySDF/MSDF field table. A 64px miss still generates. `uiSdfPrebuilt` at 16 px
+    the TinySDF/MSDF field table. A 64px miss still generates.     `uiSdfPrebuilt` at 16 px
     does not serve 32 px. On-screen unique ink still finishes in that commit.
+23. **Palette storage buffer — LANDED.** WebGPU with vertex storage binds the 32-byte
+    fill records as `array<vec4<f32>>`. Position storms skip `writePositions` and
+    submit the mover slot list; `patch_xy` writes x/y from store columns. Camera-only
+    frames do not gather the table. WebGL and devices with
+    `maxStorageBuffersInVertexStage` 0 keep the texture path. A storage rebuild
+    refreshes CPU origins before a full upload so stale texels cannot clobber movers.
+    Hit-test stays on the aliased store columns. Published budgets stay.
 
 **Regressions and traps the audits confirmed:**
 
@@ -390,8 +397,9 @@ WebGL 2 keeps the Wave 1 CPU grid. WebGPU gains a second adapter that does not w
 - Prefix sums and stable scatter preserve z-index and insertion order without atomic append order.
 - WebGL, missing WebGPU devices, `computeCull: false`, and multi-segment compact meshes keep the
   tight CPU grid.
-- Combining atlas pages into a texture array landed (two format arrays). Moving the transform
-  palette to a storage buffer remains follow-up work. Do not start with a palette SSBO.
+- Combining atlas pages into a texture array landed (two format arrays). The transform
+  palette is a WebGPU storage buffer when the vertex stage can bind it. WebGL keeps the
+  texture. Do not build a second feature-complete stack.
 - Optional LOD: `culling.lod` drops labels whose projected font height is below one pixel. Default off, because it changes pixels.
 
 Primary targets: camera-only CPU ≤ 1.00 ms p95 at 1,000,000 residents / 50,000 visible; WebGPU `viewport-drag` and `viewport-zoom` at or below the Wave 1 CPU-grid numbers; WebGL 2 unchanged within variance.

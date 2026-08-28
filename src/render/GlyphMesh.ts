@@ -11,7 +11,8 @@ import {
   type Texture,
 } from "pixi.js";
 
-import { GLYPH_FRAGMENT_GLSL, GLYPH_SHADER_WGSL, GLYPH_VERTEX_GLSL } from "./shaders";
+import type { PalettePath } from "./paletteStorage";
+import { GLYPH_FRAGMENT_GLSL, glyphShaderWgsl, GLYPH_VERTEX_GLSL } from "./shaders";
 import { GLYPH_DRAW_STRIDE, GLYPH_PROTO_TEXTURE_WIDTH, GLYPH_TEXTURE_BANK_SIZE } from "./types";
 
 /** Owned sampler. Do not bind `source.style` — destroying that source nulls it. */
@@ -29,6 +30,9 @@ export interface GlyphMeshOptions {
   readonly textures?: readonly Texture[];
   readonly paletteTexture: Texture;
   readonly paletteWidth: number;
+  /** WebGPU storage table. Ignored on the texture path and by WebGL. */
+  readonly paletteStorage?: Buffer;
+  readonly palettePath?: PalettePath;
   readonly prototypeTexture: Texture;
   readonly prototypeWidth?: number;
   readonly effectBase?: number;
@@ -97,8 +101,14 @@ export class GlyphMesh extends Mesh<Geometry, Shader> {
         }),
         gpuProgram: GpuProgram.from({
           name: "pixi-glyphflow",
-          vertex: { source: GLYPH_SHADER_WGSL, entryPoint: "mainVertex" },
-          fragment: { source: GLYPH_SHADER_WGSL, entryPoint: "mainFragment" },
+          vertex: {
+            source: glyphShaderWgsl(options.palettePath ?? "texture"),
+            entryPoint: "mainVertex",
+          },
+          fragment: {
+            source: glyphShaderWgsl(options.palettePath ?? "texture"),
+            entryPoint: "mainFragment",
+          },
           gpuLayout: [
             [
               {
@@ -130,15 +140,7 @@ export class GlyphMesh extends Mesh<Geometry, Shader> {
                 visibility: ShaderStage.FRAGMENT,
                 sampler: { type: "filtering" },
               },
-              {
-                binding: 3,
-                visibility: ShaderStage.VERTEX,
-                texture: {
-                  sampleType: "unfilterable-float",
-                  viewDimension: "2d",
-                  multisampled: false,
-                },
-              },
+              paletteVertexBinding(options.palettePath ?? "texture"),
               {
                 binding: 4,
                 visibility: ShaderStage.VERTEX,
@@ -161,6 +163,7 @@ export class GlyphMesh extends Mesh<Geometry, Shader> {
           uAtlasRGBA: atlasRGBA.source,
           uSampler: ATLAS_SAMPLER_STYLE,
           uTransformTexture: options.paletteTexture.source,
+          ...(options.paletteStorage === undefined ? {} : { uTransforms: options.paletteStorage }),
           uPrototype: options.prototypeTexture.source,
           glyphUniforms: {
             uPaletteWidth: { value: options.paletteWidth, type: "f32" },
@@ -216,6 +219,11 @@ export class GlyphMesh extends Mesh<Geometry, Shader> {
     this.#bindPrototype();
   }
 
+  setPaletteStorage(buffer: Buffer): void {
+    this.#ownedShader.resources.uTransforms = buffer;
+    this.#bindPrototype();
+  }
+
   setPrototypeTexture(texture: Texture, width: number): void {
     if (!Number.isSafeInteger(width) || width <= 0) {
       throw new TypeError("prototype width must be a positive safe integer");
@@ -234,6 +242,40 @@ export class GlyphMesh extends Mesh<Geometry, Shader> {
     super.destroy();
     this.#ownedGeometry.destroy(true);
     this.#ownedShader.destroy(false);
+  }
+}
+
+function paletteVertexBinding(path: PalettePath): {
+  binding: number;
+  visibility: number;
+  texture?: {
+    sampleType: "unfilterable-float";
+    viewDimension: "2d";
+    multisampled: false;
+  };
+  buffer?: { type: "read-only-storage" };
+} {
+  switch (path) {
+    case "texture":
+      return {
+        binding: 3,
+        visibility: ShaderStage.VERTEX,
+        texture: {
+          sampleType: "unfilterable-float",
+          viewDimension: "2d",
+          multisampled: false,
+        },
+      };
+    case "storage":
+      return {
+        binding: 3,
+        visibility: ShaderStage.VERTEX,
+        buffer: { type: "read-only-storage" },
+      };
+    default: {
+      const _exhaustive: never = path;
+      return _exhaustive;
+    }
   }
 }
 

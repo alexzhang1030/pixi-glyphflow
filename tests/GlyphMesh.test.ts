@@ -8,7 +8,12 @@ import {
   GLYPH_TEXTURE_BANK_SIZE,
   GlyphMesh,
 } from "../src/advanced";
-import { GLYPH_FRAGMENT_GLSL, GLYPH_SHADER_WGSL, GLYPH_VERTEX_GLSL } from "../src/render/shaders";
+import {
+  GLYPH_FRAGMENT_GLSL,
+  GLYPH_SHADER_WGSL,
+  GLYPH_VERTEX_GLSL,
+  glyphShaderWgsl,
+} from "../src/render/shaders";
 
 function meshOptions(
   overrides: Partial<ConstructorParameters<typeof GlyphMesh>[0]> = {},
@@ -165,6 +170,14 @@ describe("GlyphMesh", () => {
     expect(GLYPH_SHADER_WGSL).toContain("uEffectBase");
     expect(GLYPH_SHADER_WGSL).toContain("unpack2x16float");
     expect(GLYPH_SHADER_WGSL).toContain("textureLoad(uTransformTexture");
+    expect(glyphShaderWgsl("texture")).toContain("var uTransformTexture: texture_2d<f32>");
+    expect(glyphShaderWgsl("texture")).toContain("textureLoad(uTransformTexture");
+    expect(glyphShaderWgsl("storage")).toContain(
+      "var<storage, read> uTransforms: array<vec4<f32>>",
+    );
+    expect(glyphShaderWgsl("storage")).toContain("uTransforms[paletteBase]");
+    expect(glyphShaderWgsl("storage")).not.toContain("textureLoad(uTransformTexture");
+    expect(glyphShaderWgsl("storage")).not.toContain("var uTransformTexture");
     expect(GLYPH_SHADER_WGSL).toContain("var uPrototype");
     expect(GLYPH_SHADER_WGSL).toContain("@group(2) @binding(0) var uAtlasR: texture_2d_array");
     expect(GLYPH_SHADER_WGSL).toContain("@group(2) @binding(1) var uAtlasRGBA: texture_2d_array");

@@ -134,8 +134,11 @@ writes, and remirroring the store.
 - Atlas pages bind as layers in two texture arrays. `vMode` selects R or RGBA. Compact
   walks split only on blend and z. Growing an array reallocates and recopies layers.
   Array sources skip Pixi's 2D buffer uploader. WebGPU glyph rects pad `bytesPerRow` to
-  256. A mid-commit layer grow must not initialize the destroyed predecessor. Palette
-  SSBO is still not started.
+  256. A mid-commit layer grow must not initialize the destroyed predecessor.
+- WebGPU binds the 32-byte transform table as a storage buffer when the vertex stage
+  can hold one storage binding. Position storms skip the CPU 32-byte scatter and
+  submit the mover slot list. Camera-only frames do not gather palette x/y.
+  WebGL and devices with `maxStorageBuffersInVertexStage` 0 keep the texture path.
 
 ## Remaining slices, in order
 
@@ -150,10 +153,7 @@ writes, and remirroring the store.
    the host bakes `charsetSdfPrebuilt` once at any clamp-equivalent size. Unseen ink and
    sizes above the minimum still generate. Off-screen intern hits spend
    `offscreenAdmitBudgetBytes`. Do not defer texel uploads for glyphs already instanced.
-2. **Palette storage buffer.** Wave 3 leftover. Binding cost, not the zoom hitch. Atlas pages
-   are already two `sampler2DArray` / `texture_2d_array` textures (R8 and RGBA8). Do not start
-   this leftover with a palette SSBO: WebGL 2 has no storage buffers.
-3. **Default baked pages.** The optional side export landed. Shipping those pages in the core
+2. **Default baked pages.** The optional side export landed. Shipping those pages in the core
    gzip is still rejected. The core graph stays empty of alphabet pages.
 
 Reject: drip-feed admission, `queryAll()` for compute-cull, BVH rebuilds on the 100k storm, and

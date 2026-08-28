@@ -126,6 +126,13 @@ by z order and blend mode only. Equal-z labels retain insertion order. `GlyphMes
 array from `vMode` and the layer from instance metadata. Two array textures plus the vertex
 transform palette and the prototype texture stay inside the WebGL 2 minimum texture-unit budget.
 
+WebGPU devices that expose at least one vertex storage binding keep the 32-byte fill records in
+a storage buffer. Vertex WGSL reads `uTransforms[slot * 2]`. Position-only storms skip the CPU
+32-byte scatter and submit the mover slot list; a compute pass writes x/y from the store columns.
+Camera-only frames do not gather the table. WebGL and devices with
+`maxStorageBuffersInVertexStage` 0 keep the texture palette. `requestComputeCullGpu()` raises that
+vertex-storage limit when the adapter allows it. Hit-test stays on the aliased store columns.
+
 ## Culling and camera integration
 
 `SpatialIndex` keeps a local box, visibility, z order, and stable insertion order. `TextLayer`
@@ -148,13 +155,14 @@ indirect draw. The encoder hook checks geometry ownership and is removed when th
 destroyed. WebGL, missing devices, disabled compute culling, oversized storage buffers, and
 multi-segment meshes retain the tight CPU-grid path. A single-bank mesh stays on the compute path
 when CPU instance order is not spatial order. PixiJS devices keep the 128 MiB storage-binding default;
-`requestComputeCullGpu()` raises that limit to the adapter maximum.
+`requestComputeCullGpu()` raises those limits to the adapter maximum, including
+`maxStorageBuffersInVertexStage` when the adapter exposes a non-zero value.
 
 ## Diagnostics
 
 `TextLayer.stats` allocates one immutable snapshot at read time. It reports CPU capacity, dirty
-domains, revisions, shaping, visible labels, spatial queries, renderer backend, cull path, draw
-calls, glyphs, pending glyphs, pending admissions, upload bytes, and last-commit layout,
+domains, revisions, shaping, visible labels, spatial queries, renderer backend, cull path,
+palette path, draw calls, glyphs, pending glyphs, pending admissions, upload bytes, and last-commit layout,
 instance-write, palette-write, spatial, and upload milliseconds. `visibleLabelCount` is the instanced
 working set. On the CPU grid that set is the tight padded viewport. On compute cull it is the
 expanded residency query. The getter does not walk the grid.
