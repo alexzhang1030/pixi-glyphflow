@@ -2,6 +2,7 @@ import {
   BufferImageSource,
   Texture,
   type BLEND_MODES,
+  type Buffer,
   type Container,
   type Renderer,
   type WebGLRenderer,
@@ -40,7 +41,7 @@ import {
   writeDrawInstance,
   writePrototypeGlyphs,
 } from "./pack";
-import { resolvePalettePath, type PalettePath } from "./paletteStorage";
+import { readyPalettePath, resolvePalettePath, type PalettePath } from "./paletteStorage";
 import { PaletteStoragePass, type PaletteMoveUpload } from "./PaletteStoragePass";
 import type { RenderCommitResult, RenderCoordinator, RenderDrawState } from "./RenderCoordinator";
 import {
@@ -238,6 +239,17 @@ export class RenderSurface {
       return this.#adoptPalettePath(previous);
     }
     this.#palettePass = pass;
+    const ensured = pass.ensureTransforms(this.#coordinator.transforms.data.byteLength);
+    if (!ensured.ok) {
+      this.#palettePath = "texture";
+      return this.#adoptPalettePath(previous);
+    }
+    if (ensured.replaced && previous === "storage") {
+      this.#storageSynced = false;
+      for (const surface of this.#meshes.values()) {
+        surface.mesh.setPaletteStorage(pass.transformBuffer);
+      }
+    }
     this.#palettePath = "storage";
     return this.#adoptPalettePath(previous);
   }
@@ -597,8 +609,7 @@ export class RenderSurface {
   #bindMeshSources(): void {
     const stats = this.#coordinator.transforms.stats;
     const textures = this.#atlasTextures();
-    const storage =
-      this.#palettePath === "storage" ? this.#palettePass?.transformBuffer : undefined;
+    const storage = this.#readyPaletteStorage();
     for (const surface of this.#meshes.values()) {
       surface.mesh.setPaletteTexture(this.#paletteTexture, stats.textureWidth, stats.effectBase);
       if (storage !== undefined) surface.mesh.setPaletteStorage(storage);
@@ -607,6 +618,19 @@ export class RenderSurface {
         surface.atlasGeneration = this.#atlasGeneration;
         surface.mesh.setTextures(textures);
       }
+    }
+  }
+
+  #readyPaletteStorage(): Buffer | undefined {
+    if (this.#palettePath !== "storage") return undefined;
+    const pass = this.#palettePass;
+    if (pass === undefined || !pass.hasGpuTransforms) return undefined;
+    return pass.transformBuffer;
+  }
+
+  #useReadyPaletteForMeshes(): void {
+    if (this.#palettePath === "storage" && this.#readyPaletteStorage() === undefined) {
+      this.#fallbackPaletteToTexture();
     }
   }
 
@@ -690,6 +714,7 @@ export class RenderSurface {
   }
 
   #syncMeshes(computeCull: Readonly<RenderComputeCullUpdate> | undefined): void {
+    this.#useReadyPaletteForMeshes();
     const store = this.#coordinator.instances;
     const storeStats = store.stats;
     if (storeStats.activeInstances === 0 || this.#coordinator.getDrawStates().length === 0) {
@@ -857,6 +882,7 @@ export class RenderSurface {
   }
 
   #syncComputeMesh(blendMode: BLEND_MODES): void {
+    this.#useReadyPaletteForMeshes();
     for (const [key, surface] of this.#meshes) {
       if (key !== 0) this.#destroyMesh(key, surface);
     }
@@ -940,14 +966,13 @@ export class RenderSurface {
   ): SurfaceMesh {
     const textures = this.#atlasTextures();
     const paletteStats = this.#coordinator.transforms.stats;
-    const paletteStorage =
-      this.#palettePath === "storage" ? this.#palettePass?.transformBuffer : undefined;
+    const paletteStorage = this.#readyPaletteStorage();
     const mesh = new GlyphMesh({
       texture: textures[0],
       textures,
       paletteTexture: this.#paletteTexture,
       paletteWidth: paletteStats.textureWidth,
-      palettePath: this.#palettePath,
+      palettePath: readyPalettePath(this.#palettePath, paletteStorage !== undefined),
       ...(paletteStorage === undefined ? {} : { paletteStorage }),
       prototypeTexture: this.#protoTexture,
       prototypeWidth: this.#protoWidth,
@@ -1008,6 +1033,7 @@ export class RenderSurface {
   }
 
   #syncCompactDraw(update: Readonly<RenderComputeCullUpdate>): void {
+    this.#useReadyPaletteForMeshes();
     const store = this.#coordinator.instances;
     if (store.stats.activeInstances === 0) {
       this.#destroyMeshes();

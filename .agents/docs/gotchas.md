@@ -101,6 +101,15 @@ A storage-buffer rebuild or geometric grow must `refreshOrigins` from the live s
 before a full upload. Mover-only storms leave CPU texels stale. Uploading that table without
 the refresh clobbers GPU-patched x/y. Hit-test keeps using the aliased store columns.
 
+Storage-path `GlyphMesh` resources must name `uTransforms` only. After #34 the storage WGSL
+replaced `uTransformTexture`, but the mesh still put that texture in `resources` and only
+added `uTransforms` when a buffer was passed in. Pixi maps unknown resource names to bind
+group 99. `createBindGroup` then reads `program.gpuLayout[99]`, which is undefined, and the
+first compute-cull WebGPU draw throws. Do not keep the leftover texture resource on the
+storage shader. Do not mark `palettePath` `"storage"` until `PaletteStoragePass.ensureTransforms`
+has registered a GPU buffer. If that table is not ready, stay on the texture shader for the
+frame so position storms still write CPU texels.
+
 ## Compute culling needs a larger CPU working set than its draw set
 
 When culling has viewport bounds, never instance `SpatialIndex.queryAll()` for compute culling. A

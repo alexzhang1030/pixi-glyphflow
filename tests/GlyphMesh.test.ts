@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 
-import { GpuProgram, Shader, Texture } from "pixi.js";
+import { Buffer, BufferUsage, GpuProgram, Shader, Texture } from "pixi.js";
 
 import {
   GLYPH_ATLAS_ARRAY_LAYERS,
@@ -8,6 +8,8 @@ import {
   GLYPH_TEXTURE_BANK_SIZE,
   GlyphMesh,
 } from "../src/advanced";
+import { glyphPaletteBindSpec } from "../src/render/GlyphMesh";
+import type { PalettePath } from "../src/render/paletteStorage";
 import {
   GLYPH_FRAGMENT_GLSL,
   GLYPH_SHADER_WGSL,
@@ -187,4 +189,69 @@ describe("GlyphMesh", () => {
     expect(GLYPH_ATLAS_ARRAY_LAYERS).toBe(256);
     expect(GLYPH_DRAW_STRIDE).toBe(8);
   });
+
+  test("keeps texture and storage palette binds on matching names", () => {
+    const storage = new Buffer({
+      size: 64,
+      usage: BufferUsage.STORAGE | BufferUsage.COPY_DST,
+      label: "pixi-glyphflow-test-palette-storage",
+    });
+    const textureMesh = new GlyphMesh(meshOptions({ palettePath: "texture" }));
+    const storageMesh = new GlyphMesh(
+      meshOptions({ palettePath: "storage", paletteStorage: storage }),
+    );
+    const fallbackMesh = new GlyphMesh(meshOptions({ palettePath: "storage" }));
+
+    assertPaletteBind(textureMesh, "texture");
+    assertPaletteBind(storageMesh, "storage");
+    assertPaletteBind(fallbackMesh, "texture");
+    expect(fallbackMesh.palettePath).toBe("texture");
+
+    storageMesh.setPaletteTexture(Texture.WHITE, 2, 4);
+    expect("uTransformTexture" in storageMesh.shader.resources).toBe(false);
+    expect(storageMesh.shader.groups[99]).toBeUndefined();
+
+    textureMesh.destroy();
+    storageMesh.destroy();
+    fallbackMesh.destroy();
+  });
 });
+
+function assertPaletteBind(mesh: GlyphMesh, path: PalettePath): void {
+  const spec = glyphPaletteBindSpec(path);
+  const otherName = spec.resourceName === "uTransformTexture" ? "uTransforms" : "uTransformTexture";
+  const program = mesh.shader.gpuProgram;
+  const source = glyphShaderWgsl(path);
+  const group2 = program.gpuLayout[2] ?? [];
+  const binding3 = group2.find((entry) => entry.binding === 3);
+
+  expect(mesh.palettePath).toBe(path);
+  expect(source).toContain(`@group(2) @binding(${String(spec.binding)}`);
+  expect(source).toContain(spec.resourceName);
+  expect(source).not.toContain(otherName);
+  expect(program.layout[2]?.[spec.resourceName]).toBe(spec.binding);
+  expect(program.layout[2]?.[otherName]).toBeUndefined();
+  expect(binding3).toBeDefined();
+  switch (path) {
+    case "texture":
+      expect(binding3?.texture).toEqual(spec.texture);
+      expect(binding3?.buffer).toBeUndefined();
+      expect(mesh.shader.resources.uTransformTexture).toBeDefined();
+      expect("uTransforms" in mesh.shader.resources).toBe(false);
+      break;
+    case "storage":
+      expect(binding3?.buffer).toEqual(spec.buffer);
+      expect(binding3?.texture).toBeUndefined();
+      expect(mesh.shader.resources.uTransforms).toBeDefined();
+      expect("uTransformTexture" in mesh.shader.resources).toBe(false);
+      break;
+    default: {
+      const _exhaustive: never = path;
+      throw new Error(`unhandled palette path ${String(_exhaustive)}`);
+    }
+  }
+  expect(mesh.shader.groups[2]?.getResource(spec.binding)).toBe(
+    mesh.shader.resources[spec.resourceName],
+  );
+  expect(mesh.shader.groups[99]).toBeUndefined();
+}
