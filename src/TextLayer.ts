@@ -1543,11 +1543,7 @@ export class TextLayer extends Container {
     let last = -1;
     for (const change of changes) {
       if (change.snapshot === undefined) continue;
-      if (
-        gpuOwn &&
-        change.positionOnly === true &&
-        (change.mask & TextDirty.Content) === 0
-      ) {
+      if (gpuOwn && change.positionOnly === true && (change.mask & TextDirty.Content) === 0) {
         continue;
       }
       const index = this.#cullRecordIndex[change.slot] ?? -1;

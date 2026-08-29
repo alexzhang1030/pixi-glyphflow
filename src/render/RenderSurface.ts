@@ -918,9 +918,7 @@ export class RenderSurface {
         this.#originX,
         this.#originY,
       );
-      included[index] = Number(
-        aabbVisible(box.minX, box.minY, box.maxX, box.maxY, viewport),
-      );
+      included[index] = Number(aabbVisible(box.minX, box.minY, box.maxX, box.maxY, viewport));
     }
     return included;
   }

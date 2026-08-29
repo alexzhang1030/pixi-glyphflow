@@ -119,15 +119,15 @@ describe("compute cull host reference", () => {
     expect(gpuOwnsCullBoxes({ palettePath: "texture", cullPath: "compute-cull" })).toBe(false);
     expect(gpuOwnsCullBoxes({ palettePath: "storage", cullPath: "cpu-grid" })).toBe(false);
     expect(gpuOwnsCullBoxes({ palettePath: "texture", cullPath: "cpu-grid" })).toBe(false);
-    expect(
-      shouldPatchComputeCullLane({ gpuOwnsCullBoxes: true, localBoxChanged: false }),
-    ).toBe(false);
-    expect(
-      shouldPatchComputeCullLane({ gpuOwnsCullBoxes: true, localBoxChanged: true }),
-    ).toBe(true);
-    expect(
-      shouldPatchComputeCullLane({ gpuOwnsCullBoxes: false, localBoxChanged: false }),
-    ).toBe(true);
+    expect(shouldPatchComputeCullLane({ gpuOwnsCullBoxes: true, localBoxChanged: false })).toBe(
+      false,
+    );
+    expect(shouldPatchComputeCullLane({ gpuOwnsCullBoxes: true, localBoxChanged: true })).toBe(
+      true,
+    );
+    expect(shouldPatchComputeCullLane({ gpuOwnsCullBoxes: false, localBoxChanged: false })).toBe(
+      true,
+    );
   });
 
   test("storage plus compute-cull storms skip lane record dirty when the local box holds", () => {
@@ -156,9 +156,9 @@ describe("compute cull host reference", () => {
     const floats = new Float32Array(records);
     expect(cullRecordMatchesLocal(floats, 0, local)).toBe(true);
     expect(cullRecordMatchesLocal(floats, 0, { x: 0, y: 0, width: 11, height: 10 })).toBe(false);
-    expect(
-      shouldPatchComputeCullLane({ gpuOwnsCullBoxes: true, localBoxChanged: false }),
-    ).toBe(false);
+    expect(shouldPatchComputeCullLane({ gpuOwnsCullBoxes: true, localBoxChanged: false })).toBe(
+      false,
+    );
 
     const originX = new Float32Array([0, 1000]);
     const originY = new Float32Array([0, 0]);
@@ -198,7 +198,15 @@ describe("compute cull host reference", () => {
 
   test("adds palette origin to a local cull record", () => {
     const records = packCullRecords([
-      { minX: 1, minY: 2, maxX: 11, maxY: 12, instanceOffset: 0, instanceCount: 1, paletteIndex: 1 },
+      {
+        minX: 1,
+        minY: 2,
+        maxX: 11,
+        maxY: 12,
+        instanceOffset: 0,
+        instanceCount: 1,
+        paletteIndex: 1,
+      },
     ]);
     const floats = new Float32Array(records);
     const uints = new Uint32Array(records);
@@ -209,7 +217,14 @@ describe("compute cull host reference", () => {
       maxY: 12,
     });
     expect(
-      cullRecordWorldAabb(floats, uints, 0, "local", new Float32Array([0, 40]), new Float32Array([0, 50])),
+      cullRecordWorldAabb(
+        floats,
+        uints,
+        0,
+        "local",
+        new Float32Array([0, 40]),
+        new Float32Array([0, 50]),
+      ),
     ).toEqual({ minX: 41, minY: 52, maxX: 51, maxY: 62 });
   });
 

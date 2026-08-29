@@ -80,8 +80,8 @@ export function gpuOwnsCullBoxes(input: {
 }
 
 /**
- * Position storms skip the CPU cull-record walk when the GPU owns the boxes and the local
- * half did not change. Content-layout that changes the local box still patches.
+ * Position storms skip the CPU cull-record walk when the GPU owns the boxes and the local half did
+ * not change. Content-layout that changes the local box still patches.
  */
 export function shouldPatchComputeCullLane(input: {
   readonly gpuOwnsCullBoxes: boolean;
@@ -501,14 +501,7 @@ export function compactVisibleInstances(
   const space = options.aabbSpace ?? "world";
   let instanceCount = 0;
   for (let index = 0; index < recordCount; index += 1) {
-    const box = cullRecordWorldAabb(
-      floats,
-      uints,
-      index,
-      space,
-      options.originX,
-      options.originY,
-    );
+    const box = cullRecordWorldAabb(floats, uints, index, space, options.originX, options.originY);
     const visible = aabbVisible(box.minX, box.minY, box.maxX, box.maxY, viewport);
     const count = visible ? (uints[index * FLOATS_PER_RECORD + 5] ?? 0) : 0;
     counts[index] = count;
