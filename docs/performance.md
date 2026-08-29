@@ -114,7 +114,8 @@ storage budgets stay until a human accepts new numbers.
   instance storage larger than the 128 MiB WebGPU default, and so the vertex stage can bind
   the palette storage buffer. WebGL and devices without vertex storage keep the texture
   palette. A WebGPU storage path does not gather 1,000,000 x/y values on a position-only or
-  camera-only commit; the CPU submits the mover slot list.
+  camera-only commit. After the first full upload the GPU table owns live x/y, and a
+  position-only storm uploads one packed move-command buffer.
 - Reuse styles and fonts to maximize shaping and layout cache hits. Duplicate strings intern one
   layout result per (family, size, weight, text). Broadcast `updateTextPositions` with default
   anchors uses a columnar content lane: one layout, a shared prototype range, packed x/y, and

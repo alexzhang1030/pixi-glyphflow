@@ -129,11 +129,13 @@ transform palette and the prototype texture stay inside the WebGL 2 minimum text
 WebGPU devices that expose at least one vertex storage binding keep the 32-byte fill records in
 a storage buffer. Vertex WGSL reads `uTransforms[slot * 2]`. The storage-path mesh binds that
 name at group 2 binding 3 and does not keep a leftover `uTransformTexture` resource. The path
-stays `"texture"` until the storage table is registered with Pixi. Position-only storms skip the
-CPU 32-byte scatter and submit the mover slot list; a compute pass writes x/y from the store
-columns. Camera-only frames do not gather the table. WebGL and devices with
+stays `"texture"` until the storage table is registered with Pixi. After the first full upload
+that table is the live draw source for x/y. Position-only storms skip the CPU 32-byte scatter
+and upload one packed move-command buffer (`slot`, `x`, `y`); a compute pass writes
+`transforms[slot * 2].xy`. Camera-only frames do not gather the table. WebGL and devices with
 `maxStorageBuffersInVertexStage` 0 keep the texture palette. `requestComputeCullGpu()` raises that
 vertex-storage limit when the adapter allows it. Hit-test stays on the aliased store columns.
+Compute-cull records still store world AABB and are patched on the CPU.
 
 ## Culling and camera integration
 

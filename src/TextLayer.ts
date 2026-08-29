@@ -30,7 +30,11 @@ import {
 import { SpatialIndex } from "./culling/SpatialIndex";
 import type { BoundsData, MutableBoundsData, PointLike } from "./culling/types";
 import { FontRegistry } from "./FontRegistry";
-import { shouldWriteCpuPalettePositions } from "./render/paletteStorage";
+import {
+  PALETTE_MOVE_STRIDE,
+  packPaletteMoves,
+  shouldWriteCpuPalettePositions,
+} from "./render/paletteStorage";
 import {
   RenderCoordinator,
   type AdmitLaneGroup,
@@ -161,6 +165,7 @@ export class TextLayer extends Container {
   #offscreenAdmitDeferred = false;
   #laneSlots: Uint32Array;
   #contentSlots: Uint32Array;
+  #moveCommands = new ArrayBuffer(0);
   #boundOriginX: Float32Array | undefined;
   readonly #boundsScratch: MutableBoundsData = { x: 0, y: 0, width: 0, height: 0 };
   // Broadcast mutations reuse one text/style reference across the batch; estimating once
@@ -966,21 +971,31 @@ export class TextLayer extends Container {
         this.#renderSurface.bindOriginColumns(this.#store.xColumn, this.#store.yColumn);
         const moveCount = laneCount + (writeCpuPalette ? 0 : contentCount);
         if (moveCount > 0) {
-          const moveSlots = new Uint32Array(moveCount);
-          let write = 0;
-          if (laneSlots !== undefined) {
-            moveSlots.set(laneSlots.subarray(0, laneCount), write);
-            write += laneCount;
+          const commands = this.#ensureMoveCommands(moveCount);
+          let packed = 0;
+          if (laneSlots !== undefined && laneCount > 0) {
+            packed += packPaletteMoves(
+              commands,
+              packed,
+              laneSlots,
+              laneCount,
+              this.#store.xColumn,
+              this.#store.yColumn,
+            );
           }
           if (!writeCpuPalette && contentSlots !== undefined && contentCount > 0) {
-            moveSlots.set(contentSlots.subarray(0, contentCount), write);
+            packed += packPaletteMoves(
+              commands,
+              packed,
+              contentSlots,
+              contentCount,
+              this.#store.xColumn,
+              this.#store.yColumn,
+            );
           }
-          this.#renderSurface.queuePaletteMoves({
-            slots: moveSlots,
-            count: moveCount,
-            originX: this.#store.xColumn,
-            originY: this.#store.yColumn,
-          });
+          if (packed > 0) {
+            this.#renderSurface.queuePaletteMoves({ commands, count: packed });
+          }
         }
       }
       const result = mergeRenderResults(commitResult, contentResult, admitResult, laneResult);
@@ -1302,6 +1317,15 @@ export class TextLayer extends Container {
     if (x === this.#boundOriginX) return;
     this.#spatial.bindOrigins(x, this.#store.yColumn);
     this.#boundOriginX = x;
+  }
+
+  #ensureMoveCommands(count: number): ArrayBuffer {
+    const bytes = count * PALETTE_MOVE_STRIDE;
+    if (this.#moveCommands.byteLength >= bytes) return this.#moveCommands;
+    let capacity = Math.max(64 * PALETTE_MOVE_STRIDE, this.#moveCommands.byteLength * 2);
+    while (capacity < bytes) capacity *= 2;
+    this.#moveCommands = new ArrayBuffer(capacity);
+    return this.#moveCommands;
   }
 
   #ensureScratchCapacity(): void {

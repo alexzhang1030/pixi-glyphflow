@@ -42,8 +42,13 @@ import {
   writeDrawInstance,
   writePrototypeGlyphs,
 } from "./pack";
-import { readyPalettePath, resolvePalettePath, type PalettePath } from "./paletteStorage";
-import { PaletteStoragePass, type PaletteMoveUpload } from "./PaletteStoragePass";
+import {
+  readyPalettePath,
+  resolvePalettePath,
+  type PaletteMoveUpload,
+  type PalettePath,
+} from "./paletteStorage";
+import { PaletteStoragePass } from "./PaletteStoragePass";
 import type { RenderCommitResult, RenderCoordinator, RenderDrawState } from "./RenderCoordinator";
 import {
   GLYPH_DRAW_STRIDE,

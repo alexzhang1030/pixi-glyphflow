@@ -104,14 +104,18 @@ PixiJS `requestDevice()` leaves `maxStorageBuffersInVertexStage` at the core def
 is WebGL, or when the palette byte length exceeds `maxStorageBufferBindingSize`.
 
 The storage table uses the same 32-byte fill records as the texture (`array<vec4<f32>>`, two
-`vec4`s per slot). Position storms skip `writePositions`. The CPU submits the mover slot list
-and a dirty origin-column span (or per-slot origin writes when the span is sparse). A compute
-`patch_xy` writes `transforms[slot * 2].xy` from the store x/y columns. Camera-only frames
-submit neither a slot list nor a palette gather.
+`vec4`s per slot). After the first full upload, that table is the live draw source for x/y.
+Position storms skip `writePositions`. JS packs one move-command buffer (`slot`, `x`, `y`) and
+a compute `patch_xy` writes `transforms[slot * 2].xy`. Do not upload origin-column spans. Do
+not `writeBuffer` per mover. Camera-only frames submit neither commands nor a palette gather.
 
 A storage-buffer rebuild or geometric grow must `refreshOrigins` from the live store columns
 before a full upload. Mover-only storms leave CPU texels stale. Uploading that table without
 the refresh clobbers GPU-patched x/y. Hit-test keeps using the aliased store columns.
+
+Compute-cull records still store world AABB (`min`/`max`), not a second origin pair. Storms
+patch those AABBs on the CPU and upload dirty record ranges. Deriving cull from the palette
+table would need local boxes on the GPU and a cull-shader rewrite. Keep that as a later cut.
 
 Storage-path `GlyphMesh` resources must name `uTransforms` only. After #34 the storage WGSL
 replaced `uTransformTexture`, but the mesh still put that texture in `resources` and only

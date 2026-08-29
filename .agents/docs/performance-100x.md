@@ -139,9 +139,10 @@ writes, and remirroring the store.
   Array sources skip Pixi's 2D buffer uploader. WebGPU glyph rects pad `bytesPerRow` to
   256. A mid-commit layer grow must not initialize the destroyed predecessor.
 - WebGPU binds the 32-byte transform table as a storage buffer when the vertex stage
-  can hold one storage binding. Position storms skip the CPU 32-byte scatter and
-  submit the mover slot list. Camera-only frames do not gather palette x/y.
-  WebGL and devices with `maxStorageBuffersInVertexStage` 0 keep the texture path.
+  can hold one storage binding. After the first full upload that table owns live x/y.
+  Position storms skip the CPU 32-byte scatter and upload one packed move-command
+  buffer. Camera-only frames upload nothing. WebGL and devices with
+  `maxStorageBuffersInVertexStage` 0 keep the texture path.
 
 ## Remaining slices, in order
 

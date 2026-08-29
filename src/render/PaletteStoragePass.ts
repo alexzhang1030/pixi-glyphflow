@@ -3,21 +3,16 @@ import { Buffer, BufferUsage, type WebGPURenderer } from "pixi.js";
 import { planComputeCullStorageBytes } from "../culling/computeCull";
 import { PALETTE_PATCH_WGSL } from "./palettePatch.wgsl";
 import {
-  originColumnUploadBytes,
+  PALETTE_MOVE_STRIDE,
+  PALETTE_MOVE_UNIFORM_BYTES,
   PALETTE_PATCH_WORKGROUP,
-  paletteMoveRange,
-  type PaletteMoveRange,
+  paletteMoveDispatchBytes,
+  paletteMoveUploadBytes,
+  type PaletteMoveUpload,
 } from "./paletteStorage";
 import type { DirtyByteRange } from "./types";
 
-const UNIFORM_BYTES = 16;
-
-export interface PaletteMoveUpload {
-  readonly slots: Uint32Array;
-  readonly count: number;
-  readonly originX: Float32Array;
-  readonly originY: Float32Array;
-}
+export type { PaletteMoveUpload };
 
 export class PaletteStoragePass {
   readonly #renderer: WebGPURenderer;
@@ -26,15 +21,12 @@ export class PaletteStoragePass {
   #bindGroupLayout: GPUBindGroupLayout | undefined;
   #transforms: GPUBuffer | undefined;
   #transformBuffer: Buffer;
-  #originX: GPUBuffer | undefined;
-  #originY: GPUBuffer | undefined;
-  #slots: GPUBuffer | undefined;
+  #commands: GPUBuffer | undefined;
   #uniform: GPUBuffer | undefined;
   #transformBytes = 0;
-  #originCapacity = 0;
-  #slotCapacity = 0;
+  #commandCapacity = 0;
   #ready = false;
-  readonly #uniformScratch = new ArrayBuffer(UNIFORM_BYTES);
+  readonly #uniformScratch = new ArrayBuffer(PALETTE_MOVE_UNIFORM_BYTES);
   readonly #uniformInts = new Uint32Array(this.#uniformScratch);
 
   constructor(renderer: WebGPURenderer) {
@@ -69,9 +61,7 @@ export class PaletteStoragePass {
         entries: [
           { binding: 0, visibility: GPUShaderStage.COMPUTE, buffer: { type: "uniform" } },
           { binding: 1, visibility: GPUShaderStage.COMPUTE, buffer: { type: "read-only-storage" } },
-          { binding: 2, visibility: GPUShaderStage.COMPUTE, buffer: { type: "read-only-storage" } },
-          { binding: 3, visibility: GPUShaderStage.COMPUTE, buffer: { type: "read-only-storage" } },
-          { binding: 4, visibility: GPUShaderStage.COMPUTE, buffer: { type: "storage" } },
+          { binding: 2, visibility: GPUShaderStage.COMPUTE, buffer: { type: "storage" } },
         ],
       });
       this.#pipeline = device.createComputePipeline({
@@ -140,33 +130,22 @@ export class PaletteStoragePass {
     const layout = this.#bindGroupLayout;
     const pipeline = this.#pipeline;
     const transforms = this.#transforms;
+    const commandBytes = paletteMoveUploadBytes(move.count);
     if (
       device === undefined ||
       layout === undefined ||
       pipeline === undefined ||
       transforms === undefined ||
-      move.count <= 0
+      commandBytes <= 0 ||
+      move.commands.byteLength < commandBytes
     ) {
       return 0;
     }
-    const range = paletteMoveRange(move.slots, move.count, move.originX.length);
-    if (range === undefined) return 0;
-    if (!this.#ensureMoveBuffers(move.originX.length, move.count)) return 0;
-    const originX = this.#originX;
-    const originY = this.#originY;
-    const slots = this.#slots;
+    if (!this.#ensureMoveBuffers(move.count)) return 0;
+    const commands = this.#commands;
     const uniform = this.#uniform;
-    if (
-      originX === undefined ||
-      originY === undefined ||
-      slots === undefined ||
-      uniform === undefined
-    ) {
-      return 0;
-    }
-    this.#uploadOriginColumns(device, originX, originY, move, range);
-    const slotBytes = move.count * Uint32Array.BYTES_PER_ELEMENT;
-    device.queue.writeBuffer(slots, 0, move.slots.buffer, move.slots.byteOffset, slotBytes);
+    if (commands === undefined || uniform === undefined) return 0;
+    device.queue.writeBuffer(commands, 0, move.commands, 0, commandBytes);
     this.#uniformInts[0] = move.count;
     device.queue.writeBuffer(uniform, 0, this.#uniformScratch);
     const bindGroup = device.createBindGroup({
@@ -174,10 +153,8 @@ export class PaletteStoragePass {
       layout,
       entries: [
         { binding: 0, resource: { buffer: uniform } },
-        { binding: 1, resource: { buffer: slots } },
-        { binding: 2, resource: { buffer: originX } },
-        { binding: 3, resource: { buffer: originY } },
-        { binding: 4, resource: { buffer: transforms } },
+        { binding: 1, resource: { buffer: commands } },
+        { binding: 2, resource: { buffer: transforms } },
       ],
     });
     const groups = Math.max(1, Math.ceil(move.count / PALETTE_PATCH_WORKGROUP));
@@ -188,13 +165,11 @@ export class PaletteStoragePass {
     pass.dispatchWorkgroups(groups);
     pass.end();
     device.queue.submit([encoder.finish()]);
-    return originColumnUploadBytes(range, move.count) + slotBytes + UNIFORM_BYTES;
+    return paletteMoveDispatchBytes(move.count);
   }
 
   destroy(): void {
-    this.#originX?.destroy();
-    this.#originY?.destroy();
-    this.#slots?.destroy();
+    this.#commands?.destroy();
     this.#uniform?.destroy();
     this.#transformBuffer.destroy();
     this.#transforms = undefined;
@@ -202,83 +177,24 @@ export class PaletteStoragePass {
     this.#device = undefined;
   }
 
-  #uploadOriginColumns(
-    device: GPUDevice,
-    originX: GPUBuffer,
-    originY: GPUBuffer,
-    move: PaletteMoveUpload,
-    range: PaletteMoveRange,
-  ): void {
-    const spanSlots = range.maxSlot - range.minSlot + 1;
-    if (spanSlots <= move.count * 4) {
-      const originOffset = range.minSlot * Float32Array.BYTES_PER_ELEMENT;
-      const originBytes = spanSlots * Float32Array.BYTES_PER_ELEMENT;
-      device.queue.writeBuffer(
-        originX,
-        originOffset,
-        move.originX.buffer,
-        move.originX.byteOffset + originOffset,
-        originBytes,
-      );
-      device.queue.writeBuffer(
-        originY,
-        originOffset,
-        move.originY.buffer,
-        move.originY.byteOffset + originOffset,
-        originBytes,
-      );
-      return;
-    }
-    for (let index = 0; index < move.count; index += 1) {
-      const slot = move.slots[index] ?? 0;
-      if (slot >= move.originX.length) continue;
-      const originOffset = slot * Float32Array.BYTES_PER_ELEMENT;
-      device.queue.writeBuffer(
-        originX,
-        originOffset,
-        move.originX.buffer,
-        move.originX.byteOffset + originOffset,
-        Float32Array.BYTES_PER_ELEMENT,
-      );
-      device.queue.writeBuffer(
-        originY,
-        originOffset,
-        move.originY.buffer,
-        move.originY.byteOffset + originOffset,
-        Float32Array.BYTES_PER_ELEMENT,
-      );
-    }
-  }
-
-  #ensureMoveBuffers(originCapacity: number, slotCount: number): boolean {
+  #ensureMoveBuffers(commandCount: number): boolean {
     const device = this.#device;
     if (device === undefined) return false;
     const limit = Math.min(device.limits.maxStorageBufferBindingSize, device.limits.maxBufferSize);
-    const originBytes = planComputeCullStorageBytes(
-      Math.max(4, originCapacity * Float32Array.BYTES_PER_ELEMENT),
+    const commandBytes = planComputeCullStorageBytes(
+      Math.max(PALETTE_MOVE_STRIDE, commandCount * PALETTE_MOVE_STRIDE),
       limit,
     );
-    const slotBytes = planComputeCullStorageBytes(
-      Math.max(4, slotCount * Uint32Array.BYTES_PER_ELEMENT),
-      limit,
-    );
-    if (originBytes === undefined || slotBytes === undefined) return false;
-    if (originCapacity > this.#originCapacity || this.#originX === undefined) {
-      this.#originX?.destroy();
-      this.#originY?.destroy();
-      this.#originX = createBuffer(device, originBytes, "pixi-glyphflow-palette-origin-x");
-      this.#originY = createBuffer(device, originBytes, "pixi-glyphflow-palette-origin-y");
-      this.#originCapacity = originBytes / Float32Array.BYTES_PER_ELEMENT;
-    }
-    if (slotCount > this.#slotCapacity || this.#slots === undefined) {
-      this.#slots?.destroy();
-      this.#slots = createBuffer(device, slotBytes, "pixi-glyphflow-palette-move-slots");
-      this.#slotCapacity = slotBytes / Uint32Array.BYTES_PER_ELEMENT;
+    if (commandBytes === undefined) return false;
+    if (commandCount > this.#commandCapacity || this.#commands === undefined) {
+      this.#commands?.destroy();
+      this.#commands = createBuffer(device, commandBytes, "pixi-glyphflow-palette-move-commands");
+      this.#commandCapacity = commandBytes / PALETTE_MOVE_STRIDE;
     }
     if (this.#uniform === undefined) {
       this.#uniform = createBuffer(
         device,
-        UNIFORM_BYTES,
+        PALETTE_MOVE_UNIFORM_BYTES,
         "pixi-glyphflow-palette-move-uniforms",
         GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
       );

@@ -183,13 +183,15 @@ LRU, 52-bit keys, the 48 MiB store (test-pinned, 44.9 MiB measured), the sparse 
     `rasterScale` crops any first sight whose physical size matches. The crop interns into
     the TinySDF/MSDF field table. A 64px miss still generates.     `uiSdfPrebuilt` at 16 px
     does not serve 32 px. On-screen unique ink still finishes in that commit.
-23. **Palette storage buffer — LANDED.** WebGPU with vertex storage binds the 32-byte
-    fill records as `array<vec4<f32>>`. Position storms skip `writePositions` and
-    submit the mover slot list; `patch_xy` writes x/y from store columns. Camera-only
-    frames do not gather the table. WebGL and devices with
-    `maxStorageBuffersInVertexStage` 0 keep the texture path. A storage rebuild
-    refreshes CPU origins before a full upload so stale texels cannot clobber movers.
-    Hit-test stays on the aliased store columns. Published budgets stay.
+23. **Palette storage buffer — LANDED, then GPU-owned x/y.** WebGPU with vertex storage
+    binds the 32-byte fill records as `array<vec4<f32>>`. After the first full upload
+    the GPU table owns live x/y. Position storms skip `writePositions` and upload one
+    packed move-command buffer; `patch_xy` writes `transforms[slot * 2].xy`. Camera-only
+    frames upload nothing. WebGL and devices with `maxStorageBuffersInVertexStage` 0
+    keep the texture path. A storage rebuild refreshes CPU origins before a full upload
+    so stale texels cannot clobber movers. Hit-test stays on the aliased store columns.
+    Compute-cull records still carry world AABB and stay a separate upload. Published
+    budgets stay.
 
 **Regressions and traps the audits confirmed:**
 
@@ -246,7 +248,7 @@ This is the likely core of `dynamic-counters` sitting at 16.40 ms. Live instance
 
 ### Transforms are parsed and stored three times
 
-`TransformPalette.set` writes a 32-byte fill-only core (xy, scale, packed half2 rotation, packed half2 anchors, packed RGB, packed alphas plus an effect flag). Stroke and drop shadow occupy one extra texel after `capacity * 2`, allocated only when any label first uses those effects. Numeric fills skip PixiJS `Color`, and position-only commits call `writePositions` so a position storm dirties 16 bytes per label, or one span when the slot column is dense. `TextStore` keeps `x`/`y`/`zIndex` as `Float32` and packs scale, rotation, alpha, and anchors as binary16 so they match the GPU palette quanta. Occupied, visible, and the position-only kind share one flag byte. Generation and source revision are `u16`. The dirty journal still has a per-slot mask but grows the dirty-slot list with the pending wave and releases it on publish. `SpatialIndex` stores a local box and aliases the store origin columns on `TextLayer`; world min/max are derived.
+`TransformPalette.set` writes a 32-byte fill-only core (xy, scale, packed half2 rotation, packed half2 anchors, packed RGB, packed alphas plus an effect flag). Stroke and drop shadow occupy one extra texel after `capacity * 2`, allocated only when any label first uses those effects. Numeric fills skip PixiJS `Color`. The texture path still calls `writePositions` so a position storm dirties 16 bytes per label, or one span when the slot column is dense. The WebGPU storage path leaves those CPU texels stale and patches GPU `transforms[slot].xy` from packed move commands. `TextStore` keeps `x`/`y`/`zIndex` as `Float32` and packs scale, rotation, alpha, and anchors as binary16 so they match the GPU palette quanta. Occupied, visible, and the position-only kind share one flag byte. Generation and source revision are `u16`. The dirty journal still has a per-slot mask but grows the dirty-slot list with the pending wave and releases it on publish. `SpatialIndex` stores a local box and aliases the store origin columns on `TextLayer`; world min/max are derived.
 
 The published 128 MiB store and 64-byte transform ceilings stay until new M1 Pro Chrome artifacts exist. Do not fail CI on 48 MiB or 32-byte transforms yet.
 
