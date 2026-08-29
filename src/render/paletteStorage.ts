@@ -6,6 +6,11 @@ export type PalettePath = "texture" | "storage";
 export const PALETTE_ORIGIN_FLOATS = 8;
 export const PALETTE_PATCH_WORKGROUP = 256;
 
+/** One move command: slot, x, y, pad. After the first full upload the GPU table owns x/y. */
+export const PALETTE_MOVE_STRIDE = 16;
+export const PALETTE_MOVE_WORDS = PALETTE_MOVE_STRIDE / Uint32Array.BYTES_PER_ELEMENT;
+export const PALETTE_MOVE_UNIFORM_BYTES = 16;
+
 export interface PalettePathInput {
   readonly adapter: "webgl" | "webgpu" | "unknown" | "detached";
   readonly maxStorageBuffersInVertexStage: number;
@@ -13,9 +18,9 @@ export interface PalettePathInput {
   readonly paletteBytes: number;
 }
 
-export interface PaletteMoveRange {
-  readonly minSlot: number;
-  readonly maxSlot: number;
+export interface PaletteMoveUpload {
+  readonly commands: ArrayBuffer;
+  readonly count: number;
 }
 
 /** WebGPU storage palette when the vertex stage can bind the table. WebGL stays on the texture. */
@@ -62,49 +67,75 @@ export function shouldWriteCpuPalettePositions(path: PalettePath): boolean {
   }
 }
 
-export function paletteMoveRange(
-  slots: Uint32Array,
-  count: number,
-  capacity: number,
-): PaletteMoveRange | undefined {
-  if (count <= 0) return undefined;
-  let minSlot = 0xffff_ffff;
-  let maxSlot = 0;
-  let seen = 0;
-  for (let index = 0; index < count; index += 1) {
-    const slot = slots[index] ?? 0;
-    if (slot >= capacity) continue;
-    if (slot < minSlot) minSlot = slot;
-    if (slot > maxSlot) maxSlot = slot;
-    seen += 1;
-  }
-  if (seen === 0) return undefined;
-  return { minSlot, maxSlot };
+/** Bytes for one packed move-command upload. Sparse and dense storms share this size. */
+export function paletteMoveUploadBytes(count: number): number {
+  if (count <= 0) return 0;
+  return count * PALETTE_MOVE_STRIDE;
 }
 
-/** Bytes uploaded for origin columns. Dense storms write one span; sparse storms write movers. */
-export function originColumnUploadBytes(range: PaletteMoveRange, moverCount = 0): number {
-  const spanSlots = range.maxSlot - range.minSlot + 1;
-  const spanBytes = spanSlots * Float32Array.BYTES_PER_ELEMENT * 2;
-  if (moverCount <= 0 || spanSlots <= moverCount * 4) return spanBytes;
-  return moverCount * Float32Array.BYTES_PER_ELEMENT * 2;
+/** Command buffer plus the move-count uniform. Camera-only frames stay at 0. */
+export function paletteMoveDispatchBytes(count: number): number {
+  if (count <= 0) return 0;
+  return paletteMoveUploadBytes(count) + PALETTE_MOVE_UNIFORM_BYTES;
 }
 
-export function applyPaletteMoves(
-  data: Float32Array,
+/**
+ * Pack `slot`, `x`, `y` into 16-byte commands. `destIndex` is a command index so lane and content
+ * movers can share one buffer. Out-of-range slots are skipped.
+ */
+export function packPaletteMoves(
+  dest: ArrayBuffer,
+  destIndex: number,
   slots: Uint32Array,
   count: number,
   originX: Float32Array,
   originY: Float32Array,
 ): number {
-  const floatsPerLabel = PALETTE_ORIGIN_FLOATS;
+  if (count <= 0) return 0;
+  if (destIndex < 0) {
+    throw new RangeError("palette move destIndex must be a non-negative command index");
+  }
+  const needed = (destIndex + count) * PALETTE_MOVE_STRIDE;
+  if (needed > dest.byteLength) {
+    throw new RangeError("palette move command buffer is shorter than the packed count");
+  }
+  const uints = new Uint32Array(dest);
+  const floats = new Float32Array(dest);
+  const originLimit = Math.min(originX.length, originY.length);
   let written = 0;
   for (let index = 0; index < count; index += 1) {
     const slot = slots[index] ?? 0;
+    if (slot >= originLimit) continue;
+    const base = (destIndex + written) * PALETTE_MOVE_WORDS;
+    uints[base] = slot;
+    floats[base + 1] = originX[slot] ?? 0;
+    floats[base + 2] = originY[slot] ?? 0;
+    written += 1;
+  }
+  return written;
+}
+
+/** Apply packed move commands to CPU fill records. Used as the host reference for `patch_xy`. */
+export function applyPaletteMoves(
+  data: Float32Array,
+  commands: ArrayBuffer,
+  count: number,
+): number {
+  const needed = paletteMoveUploadBytes(count);
+  if (needed > commands.byteLength) {
+    throw new RangeError("palette move command buffer is shorter than the packed count");
+  }
+  const uints = new Uint32Array(commands);
+  const floats = new Float32Array(commands);
+  const floatsPerLabel = PALETTE_ORIGIN_FLOATS;
+  let written = 0;
+  for (let index = 0; index < count; index += 1) {
+    const base = index * PALETTE_MOVE_WORDS;
+    const slot = uints[base] ?? 0;
     const offset = slot * floatsPerLabel;
     if (offset + 1 >= data.length) continue;
-    const nextX = originX[slot] ?? 0;
-    const nextY = originY[slot] ?? 0;
+    const nextX = floats[base + 1] ?? 0;
+    const nextY = floats[base + 2] ?? 0;
     if (data[offset] === nextX && data[offset + 1] === nextY) continue;
     data[offset] = nextX;
     data[offset + 1] = nextY;

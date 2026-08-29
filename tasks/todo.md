@@ -442,6 +442,15 @@
   - Verify: bun test tests/paletteStorage.test.ts tests/GlyphMesh.test.ts tests/TransformPalette.test.ts tests/RenderCoordinator.test.ts tests/TextLayer.test.ts tests/TextLayer.commit.test.ts && bun run typecheck && bun run docs:check
   - Files: src/render/paletteStorage.ts, src/render/PaletteStoragePass.ts, src/render/RenderSurface.ts, src/render/GlyphMesh.ts, src/render/shaders.ts, src/TextLayer.ts, src/culling/requestComputeCullGpu.ts
 
+- [x] Task 12.34: Make the WebGPU storage palette the live x/y table.
+  - Acceptance: Storage-path position storms upload one packed move-command buffer
+    (`slot`, `x`, `y`). The compute pass writes `transforms[slot].xy`. No origin-column
+    span upload and no per-mover `writeBuffer`. Camera-only stays empty after the first
+    full upload. WebGL texture path, hit-test store columns, and 1M residency stay.
+    Compute-cull records still carry world AABB. Public `TextLayer` contract stays.
+  - Verify: bun test tests/paletteStorage.test.ts tests/GlyphMesh.test.ts tests/TransformPalette.test.ts tests/RenderCoordinator.test.ts tests/TextLayer.test.ts tests/TextLayer.commit.test.ts tests/computeCull.test.ts && bun run typecheck && bun run docs:check
+  - Files: src/render/paletteStorage.ts, src/render/palettePatch.wgsl.ts, src/render/PaletteStoragePass.ts, src/TextLayer.ts
+
 - [ ] Task 12.8: Optional extreme quality tracks (Wave 5).
   - Acceptance: Outline (Slug), collision, SIMD shaping, and SharedArrayBuffer rings land only as opt-in modes with their own workloads and pixel tolerances.
   - Verify: focused tests plus a named benchmark workload per enabled track

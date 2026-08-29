@@ -8,11 +8,16 @@ struct MoveParams {
   _pad2: u32,
 }
 
+struct MoveCommand {
+  slot: u32,
+  x: f32,
+  y: f32,
+  _pad: u32,
+}
+
 @group(0) @binding(0) var<uniform> params: MoveParams;
-@group(0) @binding(1) var<storage, read> slots: array<u32>;
-@group(0) @binding(2) var<storage, read> origin_x: array<f32>;
-@group(0) @binding(3) var<storage, read> origin_y: array<f32>;
-@group(0) @binding(4) var<storage, read_write> transforms: array<vec4<f32>>;
+@group(0) @binding(1) var<storage, read> commands: array<MoveCommand>;
+@group(0) @binding(2) var<storage, read_write> transforms: array<vec4<f32>>;
 
 const WORKGROUP: u32 = ${String(PALETTE_PATCH_WORKGROUP)}u;
 
@@ -21,11 +26,11 @@ fn patch_xy(@builtin(global_invocation_id) id: vec3<u32>) {
   if (id.x >= params.count) {
     return;
   }
-  let slot = slots[id.x];
-  let base = slot * 2u;
+  let command = commands[id.x];
+  let base = command.slot * 2u;
   var texel = transforms[base];
-  texel.x = origin_x[slot];
-  texel.y = origin_y[slot];
+  texel.x = command.x;
+  texel.y = command.y;
   transforms[base] = texel;
 }
 `;

@@ -37,12 +37,13 @@
   the same object with `texSubImage2D`, then rebind through `#bindMeshSources`. WebGPU keeps
   the tight rectangles.
 - WebGPU owns the 32-byte transform table in a storage buffer when the vertex stage can bind
-  it. Position-only storms skip the CPU 32-byte scatter and submit the mover slot list. A
-  compute pass writes x/y from the store columns. Camera-only frames do not gather the full
-  palette. WebGL and devices with `maxStorageBuffersInVertexStage` 0 keep the texture path.
+  it. After the first full upload that table is the live draw source for x/y. Position-only
+  storms skip the CPU 32-byte scatter and upload one packed move-command buffer. A compute
+  pass writes `transforms[slot].xy`. Camera-only frames upload nothing. WebGL and devices
+  with `maxStorageBuffersInVertexStage` 0 keep the texture path.
   `requestComputeCullGpu()` requests that vertex-storage limit. `TextLayerStats.palettePath`
   reports `"storage"` or `"texture"`. Published budgets stay. Hit-test still uses the aliased
-  store columns.
+  store columns. Compute-cull records still store world AABB.
 - Prebuilt distance-field pages rematch by physical size. A `charsetSdfPrebuilt` bake at 14px
   crops a 13px or 32px first sight of the same glyph and interns the field, instead of starting
   TinySDF or MSDF. Sizes above `distanceFieldMinFontSize` still generate. On-screen unique ink

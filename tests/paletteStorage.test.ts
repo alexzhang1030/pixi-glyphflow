@@ -5,9 +5,12 @@ import { computeCullDeviceLimits } from "../src/culling/requestComputeCullGpu";
 import { PALETTE_PATCH_WGSL } from "../src/render/palettePatch.wgsl";
 import {
   applyPaletteMoves,
-  originColumnUploadBytes,
+  PALETTE_MOVE_STRIDE,
+  PALETTE_MOVE_UNIFORM_BYTES,
   PALETTE_ORIGIN_FLOATS,
-  paletteMoveRange,
+  packPaletteMoves,
+  paletteMoveDispatchBytes,
+  paletteMoveUploadBytes,
   refreshPaletteOrigins,
   readyPalettePath,
   resolvePalettePath,
@@ -104,36 +107,83 @@ describe("palette storage path", () => {
     });
   });
 
-  test("patches only x/y in a 32-byte fill record", () => {
+  test("patches only x/y in a 32-byte fill record from packed commands", () => {
     const data = new Float32Array(PALETTE_ORIGIN_FLOATS * 2);
     data.set([1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16]);
-    const slots = new Uint32Array([1]);
+    const commands = new ArrayBuffer(PALETTE_MOVE_STRIDE);
     const originX = new Float32Array([0, 40]);
     const originY = new Float32Array([0, 50]);
+    expect(packPaletteMoves(commands, 0, new Uint32Array([1]), 1, originX, originY)).toBe(1);
 
-    expect(applyPaletteMoves(data, slots, 1, originX, originY)).toBe(1);
+    expect(applyPaletteMoves(data, commands, 1)).toBe(1);
     expect(Array.from(data.subarray(0, 8))).toEqual([1, 2, 3, 4, 5, 6, 7, 8]);
     expect(Array.from(data.subarray(8, 16))).toEqual([40, 50, 11, 12, 13, 14, 15, 16]);
-    expect(applyPaletteMoves(data, slots, 1, originX, originY)).toBe(0);
+    expect(applyPaletteMoves(data, commands, 1)).toBe(0);
   });
 
-  test("uploads origin columns instead of a 32-byte gather", () => {
-    const dense = new Uint32Array(1_000);
-    for (let index = 0; index < dense.length; index += 1) dense[index] = index;
-    const denseRange = paletteMoveRange(dense, dense.length, dense.length);
-    if (denseRange === undefined) throw new Error("dense movers must form a range");
-    const denseBytes = originColumnUploadBytes(denseRange, dense.length);
-    expect(denseBytes).toBe(1_000 * Float32Array.BYTES_PER_ELEMENT * 2);
-    expect(denseBytes).toBeLessThan(1_000 * TRANSFORM_PALETTE_STRIDE);
+  test("uploads packed moves instead of origin columns", () => {
+    const denseCount = 100_000;
+    const denseBytes = paletteMoveUploadBytes(denseCount);
+    expect(denseBytes).toBe(denseCount * PALETTE_MOVE_STRIDE);
+    expect(denseBytes).toBeLessThan(denseCount * TRANSFORM_PALETTE_STRIDE);
+    expect(paletteMoveDispatchBytes(denseCount)).toBe(denseBytes + PALETTE_MOVE_UNIFORM_BYTES);
+    expect(paletteMoveDispatchBytes(0)).toBe(0);
 
-    const sparse = new Uint32Array([0, 999_999]);
-    const sparseRange = paletteMoveRange(sparse, 2, 1_000_000);
-    if (sparseRange === undefined) throw new Error("sparse movers must form a range");
-    expect(originColumnUploadBytes(sparseRange)).toBe(
-      1_000_000 * Float32Array.BYTES_PER_ELEMENT * 2,
-    );
-    expect(originColumnUploadBytes(sparseRange, 2)).toBe(2 * Float32Array.BYTES_PER_ELEMENT * 2);
-    expect(paletteMoveRange(new Uint32Array(), 0, 8)).toBeUndefined();
+    const originColumnSpanBytes = 1_000_000 * Float32Array.BYTES_PER_ELEMENT * 2;
+    const sparseCount = 2;
+    const sparseBytes = paletteMoveUploadBytes(sparseCount);
+    expect(sparseBytes).toBe(sparseCount * PALETTE_MOVE_STRIDE);
+    expect(sparseBytes).toBeLessThan(originColumnSpanBytes);
+    expect(paletteMoveDispatchBytes(sparseCount)).toBeLessThan(originColumnSpanBytes);
+
+    const originX = new Float32Array(1_000_000);
+    const originY = new Float32Array(1_000_000);
+    originX[0] = 11;
+    originY[0] = 12;
+    originX[999_999] = 21;
+    originY[999_999] = 22;
+    const commands = new ArrayBuffer(sparseCount * PALETTE_MOVE_STRIDE);
+    expect(
+      packPaletteMoves(commands, 0, new Uint32Array([0, 999_999]), sparseCount, originX, originY),
+    ).toBe(2);
+    const uints = new Uint32Array(commands);
+    const floats = new Float32Array(commands);
+    expect(uints[0]).toBe(0);
+    expect(floats[1]).toBe(11);
+    expect(floats[2]).toBe(12);
+    expect(uints[4]).toBe(999_999);
+    expect(floats[5]).toBe(21);
+    expect(floats[6]).toBe(22);
+    expect(commands.byteLength).toBe(sparseBytes);
+    expect(commands.byteLength).not.toBe(originColumnSpanBytes);
+  });
+
+  test("packs lane and content movers into one command buffer", () => {
+    const originX = new Float32Array([1, 2, 3]);
+    const originY = new Float32Array([4, 5, 6]);
+    const commands = new ArrayBuffer(3 * PALETTE_MOVE_STRIDE);
+    const lane = packPaletteMoves(commands, 0, new Uint32Array([0, 2]), 2, originX, originY);
+    const content = packPaletteMoves(commands, lane, new Uint32Array([1]), 1, originX, originY);
+    expect(lane).toBe(2);
+    expect(content).toBe(1);
+    const uints = new Uint32Array(commands);
+    const floats = new Float32Array(commands);
+    expect(uints[0]).toBe(0);
+    expect(floats[1]).toBe(1);
+    expect(uints[4]).toBe(2);
+    expect(floats[5]).toBe(3);
+    expect(uints[8]).toBe(1);
+    expect(floats[9]).toBe(2);
+    expect(() =>
+      packPaletteMoves(
+        new ArrayBuffer(PALETTE_MOVE_STRIDE),
+        0,
+        new Uint32Array([0, 1]),
+        2,
+        originX,
+        originY,
+      ),
+    ).toThrow(RangeError);
   });
 
   test("refreshes occupied origins without touching empty slots", () => {
@@ -151,12 +201,23 @@ describe("palette storage path", () => {
     ]);
   });
 
-  test("avoids WGSL reserved identifiers in the origin patch", () => {
+  test("patches live x/y from packed commands, not origin-column lookups", () => {
     expect(PALETTE_PATCH_WGSL).not.toMatch(/\blet from\b/);
     expect(PALETTE_PATCH_WGSL).not.toMatch(/\blet to\b/);
     expect(PALETTE_PATCH_WGSL).toContain("fn patch_xy");
+    expect(PALETTE_PATCH_WGSL).toContain("struct MoveCommand");
+    expect(PALETTE_PATCH_WGSL).toContain("commands[id.x]");
+    expect(PALETTE_PATCH_WGSL).toContain("texel.x = command.x");
+    expect(PALETTE_PATCH_WGSL).toContain("texel.y = command.y");
     expect(PALETTE_PATCH_WGSL).toContain("transforms[base] = texel");
-    expect(PALETTE_PATCH_WGSL).toContain("origin_x[slot]");
-    expect(PALETTE_PATCH_WGSL).toContain("origin_y[slot]");
+    expect(PALETTE_PATCH_WGSL).not.toContain("origin_x");
+    expect(PALETTE_PATCH_WGSL).not.toContain("origin_y");
+    expect(PALETTE_PATCH_WGSL).not.toContain("array<u32>");
+    expect(PALETTE_PATCH_WGSL).toContain("@group(0) @binding(1) var<storage, read> commands");
+    expect(PALETTE_PATCH_WGSL).toContain(
+      "@group(0) @binding(2) var<storage, read_write> transforms",
+    );
+    expect(PALETTE_PATCH_WGSL).not.toContain("@group(0) @binding(3)");
+    expect(PALETTE_PATCH_WGSL).not.toContain("@group(0) @binding(4)");
   });
 });
