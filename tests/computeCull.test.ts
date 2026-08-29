@@ -6,10 +6,13 @@ import {
   computeCullStructurallyEligible,
   createIndirectArgs,
   createOffscreenAdmitBudget,
+  cullRecordMatchesLocal,
+  cullRecordWorldAabb,
   cullResidency,
   DEFAULT_OFFSCREEN_ADMIT_BUDGET_BYTES,
   expandPrepareRing,
   expandWorkingSet,
+  gpuOwnsCullBoxes,
   OFFSCREEN_ADMIT_LABEL_BYTES,
   packCullRecords,
   planComputeCullStorageBytes,
@@ -20,6 +23,7 @@ import {
   shouldAdmitUnshaped,
   shouldDropSubpixelLod,
   shouldInstanceUnshaped,
+  shouldPatchComputeCullLane,
   shouldQueryPrepareRing,
   shouldRefreshResidency,
   tryAdmitOffscreen,
@@ -104,6 +108,124 @@ describe("compute cull host reference", () => {
     expect(COMPUTE_CULL_WGSL).toContain("UINTS_PER_DRAW");
     expect(COMPUTE_CULL_WGSL).toContain("instances_out[dst] = srcBase + glyph");
     expect(COMPUTE_CULL_WGSL).not.toContain("instances_in");
+    expect(COMPUTE_CULL_WGSL).toContain("fn world_box");
+    expect(COMPUTE_CULL_WGSL).toContain("use_gpu_origin");
+    expect(COMPUTE_CULL_WGSL).toContain("transforms[record.palette_index * 2u].xy");
+    expect(COMPUTE_CULL_WGSL).toContain("@group(0) @binding(7) var<storage, read> transforms");
+  });
+
+  test("owns cull boxes only on a ready storage plus compute-cull path", () => {
+    expect(gpuOwnsCullBoxes({ palettePath: "storage", cullPath: "compute-cull" })).toBe(true);
+    expect(gpuOwnsCullBoxes({ palettePath: "texture", cullPath: "compute-cull" })).toBe(false);
+    expect(gpuOwnsCullBoxes({ palettePath: "storage", cullPath: "cpu-grid" })).toBe(false);
+    expect(gpuOwnsCullBoxes({ palettePath: "texture", cullPath: "cpu-grid" })).toBe(false);
+    expect(shouldPatchComputeCullLane({ gpuOwnsCullBoxes: true, localBoxChanged: false })).toBe(
+      false,
+    );
+    expect(shouldPatchComputeCullLane({ gpuOwnsCullBoxes: true, localBoxChanged: true })).toBe(
+      true,
+    );
+    expect(shouldPatchComputeCullLane({ gpuOwnsCullBoxes: false, localBoxChanged: false })).toBe(
+      true,
+    );
+  });
+
+  test("storage plus compute-cull storms skip lane record dirty when the local box holds", () => {
+    const local = { x: 0, y: 0, width: 10, height: 10 };
+    const records = packCullRecords([
+      {
+        minX: local.x,
+        minY: local.y,
+        maxX: local.x + local.width,
+        maxY: local.y + local.height,
+        instanceOffset: 0,
+        instanceCount: 1,
+        paletteIndex: 0,
+      },
+      {
+        minX: local.x,
+        minY: local.y,
+        maxX: local.x + local.width,
+        maxY: local.y + local.height,
+        instanceOffset: 1,
+        instanceCount: 1,
+        paletteIndex: 1,
+      },
+    ]);
+    const before = new Float32Array(records.slice(0));
+    const floats = new Float32Array(records);
+    expect(cullRecordMatchesLocal(floats, 0, local)).toBe(true);
+    expect(cullRecordMatchesLocal(floats, 0, { x: 0, y: 0, width: 11, height: 10 })).toBe(false);
+    expect(shouldPatchComputeCullLane({ gpuOwnsCullBoxes: true, localBoxChanged: false })).toBe(
+      false,
+    );
+
+    const originX = new Float32Array([0, 1000]);
+    const originY = new Float32Array([0, 0]);
+    const viewport = { x: 0, y: 0, width: 50, height: 50, padding: 0 };
+    const instances = new ArrayBuffer(2 * GLYPH_INSTANCE_STRIDE);
+    const first = compactVisibleInstances(records, 2, instances, viewport, {
+      aabbSpace: "local",
+      originX,
+      originY,
+    });
+    expect(first.instanceCount).toBe(1);
+    const firstWords = new Uint32Array(
+      first.compact.buffer,
+      first.compact.byteOffset,
+      first.compact.byteLength / 4,
+    );
+    expect(firstWords[0]).toBe(0);
+    expect(firstWords[1]).toBe(0);
+
+    originX[0] = 1000;
+    originX[1] = 5;
+    const moved = compactVisibleInstances(records, 2, instances, viewport, {
+      aabbSpace: "local",
+      originX,
+      originY,
+    });
+    expect(moved.instanceCount).toBe(1);
+    const movedWords = new Uint32Array(
+      moved.compact.buffer,
+      moved.compact.byteOffset,
+      moved.compact.byteLength / 4,
+    );
+    expect(movedWords[0]).toBe(1);
+    expect(movedWords[1]).toBe(1);
+    expect(Array.from(new Float32Array(records))).toEqual(Array.from(before));
+  });
+
+  test("adds palette origin to a local cull record", () => {
+    const records = packCullRecords([
+      {
+        minX: 1,
+        minY: 2,
+        maxX: 11,
+        maxY: 12,
+        instanceOffset: 0,
+        instanceCount: 1,
+        paletteIndex: 1,
+      },
+    ]);
+    const floats = new Float32Array(records);
+    const uints = new Uint32Array(records);
+    expect(cullRecordWorldAabb(floats, uints, 0)).toEqual({
+      minX: 1,
+      minY: 2,
+      maxX: 11,
+      maxY: 12,
+    });
+    expect(
+      cullRecordWorldAabb(
+        floats,
+        uints,
+        0,
+        "local",
+        new Float32Array([0, 40]),
+        new Float32Array([0, 50]),
+      ),
+    ).toEqual({ minX: 41, minY: 52, maxX: 51, maxY: 62 });
   });
 
   test("keeps axis-aligned overlap and rejects separated boxes", () => {

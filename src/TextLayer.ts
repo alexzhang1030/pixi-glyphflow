@@ -9,19 +9,23 @@ import {
 import {
   aabbVisible,
   createOffscreenAdmitBudget,
+  cullRecordMatchesLocal,
   cullResidency,
   DEFAULT_OFFSCREEN_ADMIT_BUDGET_BYTES,
   expandPrepareRing,
   expandWorkingSet,
   CULL_RECORD_STRIDE,
+  gpuOwnsCullBoxes,
   selectAdmitBoxes,
   shouldDropSubpixelLod,
   shouldInstanceUnshaped,
+  shouldPatchComputeCullLane,
   shouldQueryPrepareRing,
   shouldRefreshResidency,
   tryAdmitOffscreen,
   viewportFromBounds,
   writeCullRecordAt,
+  type CullAabbSpace,
   type CullPath,
   type CullRecordDirty,
   type CullViewport,
@@ -34,6 +38,7 @@ import {
   PALETTE_MOVE_STRIDE,
   packPaletteMoves,
   shouldWriteCpuPalettePositions,
+  type PalettePath,
 } from "./render/paletteStorage";
 import {
   RenderCoordinator,
@@ -160,6 +165,7 @@ export class TextLayer extends Container {
   #cullRecordIndex: Int32Array;
   #cullRecordCount = 0;
   #cullRecordEpoch = -1;
+  #cullRecordSpace: CullAabbSpace = "world";
   readonly #cullRecordDirtyScratch: DirtyByteRange[] = [];
   #preparedRing: CullViewport | undefined;
   #offscreenAdmitDeferred = false;
@@ -1049,6 +1055,7 @@ export class TextLayer extends Container {
               contentSlots,
               contentCount,
               drawViewport,
+              palettePath,
             )
           : undefined;
       if (result !== undefined) surface?.apply(result, computeUpdate);
@@ -1402,30 +1409,55 @@ export class TextLayer extends Container {
     contentSlots: Uint32Array | undefined,
     contentCount: number,
     draw: CullViewport | undefined,
+    palettePath: PalettePath,
   ): RenderComputeCullUpdate {
+    const gpuOwn = gpuOwnsCullBoxes({ palettePath, cullPath: "compute-cull" });
+    const space: CullAabbSpace = gpuOwn ? "local" : "world";
     const states = coordinator.getDrawStates();
     let recordDirty: CullRecordDirty = "none";
     if (
       coordinator.drawListEpoch !== this.#cullRecordEpoch ||
-      states.length < this.#cullRecordCount
+      states.length < this.#cullRecordCount ||
+      space !== this.#cullRecordSpace
     ) {
-      this.#packCullRecords(coordinator, states);
+      this.#packCullRecords(coordinator, states, space);
       recordDirty = "all";
     } else {
       const ranges = this.#cullRecordDirtyScratch;
       ranges.length = 0;
-      const patched = this.#patchCullRecords(coordinator, changes);
+      const patched = this.#patchCullRecords(coordinator, changes, space, gpuOwn);
       if (patched !== undefined) ranges.push(patched);
-      if (laneSlots !== undefined && laneCount > 0) {
-        const lanePatched = this.#patchLaneCullRecords(coordinator, laneSlots, laneCount);
+      if (
+        laneSlots !== undefined &&
+        laneCount > 0 &&
+        shouldPatchComputeCullLane({ gpuOwnsCullBoxes: gpuOwn, localBoxChanged: false })
+      ) {
+        const lanePatched = this.#patchLaneCullRecords(coordinator, laneSlots, laneCount, space);
         if (lanePatched !== undefined) ranges.push(lanePatched);
       }
       if (contentSlots !== undefined && contentCount > 0) {
-        const contentPatched = this.#patchLaneCullRecords(coordinator, contentSlots, contentCount);
-        if (contentPatched !== undefined) ranges.push(contentPatched);
+        const contentLocalChanged = this.#contentLaneLocalChanged(
+          contentSlots,
+          contentCount,
+          space,
+        );
+        if (
+          shouldPatchComputeCullLane({
+            gpuOwnsCullBoxes: gpuOwn,
+            localBoxChanged: contentLocalChanged,
+          })
+        ) {
+          const contentPatched = this.#patchLaneCullRecords(
+            coordinator,
+            contentSlots,
+            contentCount,
+            space,
+          );
+          if (contentPatched !== undefined) ranges.push(contentPatched);
+        }
       }
       if (states.length > this.#cullRecordCount) {
-        ranges.push(this.#appendCullRecords(coordinator, states));
+        ranges.push(this.#appendCullRecords(coordinator, states, space));
       }
       if (ranges.length > 0) recordDirty = ranges;
     }
@@ -1434,28 +1466,33 @@ export class TextLayer extends Container {
       recordCount: this.#cullRecordCount,
       recordDirty,
       viewport: draw ?? FULL_CULL_VIEWPORT,
+      aabbSpace: space,
+      ...(gpuOwn && (laneCount > 0 || contentCount > 0) ? { recompute: true } : {}),
     };
   }
 
   #packCullRecords(
     coordinator: RenderCoordinator,
     states: readonly Readonly<RenderDrawState>[],
+    space: CullAabbSpace,
   ): void {
     this.#clearCullRecordIndex();
     this.#ensureCullRecordCapacity(states.length);
-    this.#writeCullRecords(coordinator, states, 0);
+    this.#writeCullRecords(coordinator, states, 0, space);
     this.#cullRecordCount = states.length;
     this.#cullRecordEpoch = coordinator.drawListEpoch;
+    this.#cullRecordSpace = space;
   }
 
   /** While the draw-list epoch holds, states only append, so the packed prefix stays valid. */
   #appendCullRecords(
     coordinator: RenderCoordinator,
     states: readonly Readonly<RenderDrawState>[],
+    space: CullAabbSpace,
   ): DirtyByteRange {
     const start = this.#cullRecordCount;
     this.#ensureCullRecordCapacity(states.length);
-    this.#writeCullRecords(coordinator, states, start);
+    this.#writeCullRecords(coordinator, states, start, space);
     this.#cullRecordCount = states.length;
     return {
       offset: start * CULL_RECORD_STRIDE,
@@ -1467,6 +1504,7 @@ export class TextLayer extends Container {
     coordinator: RenderCoordinator,
     states: readonly Readonly<RenderDrawState>[],
     start: number,
+    space: CullAabbSpace,
   ): void {
     for (let index = start; index < states.length; index += 1) {
       const state = states[index];
@@ -1475,15 +1513,15 @@ export class TextLayer extends Container {
       if (range === undefined) {
         throw new Error(`Cull instance range ${String(state.slot)} is unavailable`);
       }
-      const box = this.#spatial.get(state.slot, this.#boundsScratch);
+      const box = this.#cullRecordAabb(state.slot, space);
       if (box === undefined) {
         throw new Error(`Cull bounds ${String(state.slot)} are unavailable`);
       }
       writeCullRecordAt(this.#cullRecordFloats, this.#cullRecordUints, index, {
-        minX: box.x,
-        minY: box.y,
-        maxX: box.x + box.width,
-        maxY: box.y + box.height,
+        minX: box.minX,
+        minY: box.minY,
+        maxX: box.maxX,
+        maxY: box.maxY,
         instanceOffset: range.offset,
         instanceCount: range.count,
         paletteIndex: state.slot,
@@ -1497,23 +1535,28 @@ export class TextLayer extends Container {
   #patchCullRecords(
     coordinator: RenderCoordinator,
     changes: readonly LayerRenderChange[],
+    space: CullAabbSpace,
+    gpuOwn: boolean,
   ): DirtyByteRange | undefined {
     if (this.#cullRecordCount === 0) return undefined;
     let first = -1;
     let last = -1;
     for (const change of changes) {
       if (change.snapshot === undefined) continue;
+      if (gpuOwn && change.positionOnly === true && (change.mask & TextDirty.Content) === 0) {
+        continue;
+      }
       const index = this.#cullRecordIndex[change.slot] ?? -1;
       if (index < 0) continue;
       const range = coordinator.instances.getRange(change.slot);
       if (range === undefined) continue;
-      const box = this.#spatial.get(change.slot, this.#boundsScratch);
+      const box = this.#cullRecordAabb(change.slot, space);
       if (box === undefined) continue;
       writeCullRecordAt(this.#cullRecordFloats, this.#cullRecordUints, index, {
-        minX: box.x,
-        minY: box.y,
-        maxX: box.x + box.width,
-        maxY: box.y + box.height,
+        minX: box.minX,
+        minY: box.minY,
+        maxX: box.maxX,
+        maxY: box.maxY,
         instanceOffset: range.offset,
         instanceCount: range.count,
         paletteIndex: change.slot,
@@ -1532,6 +1575,7 @@ export class TextLayer extends Container {
     coordinator: RenderCoordinator,
     laneSlots: Uint32Array,
     laneCount: number,
+    space: CullAabbSpace,
   ): DirtyByteRange | undefined {
     if (this.#cullRecordCount === 0) return undefined;
     let first = -1;
@@ -1542,13 +1586,13 @@ export class TextLayer extends Container {
       if (index < 0) continue;
       const range = coordinator.instances.getRange(slot);
       if (range === undefined) continue;
-      const box = this.#spatial.get(slot, this.#boundsScratch);
+      const box = this.#cullRecordAabb(slot, space);
       if (box === undefined) continue;
       writeCullRecordAt(this.#cullRecordFloats, this.#cullRecordUints, index, {
-        minX: box.x,
-        minY: box.y,
-        maxX: box.x + box.width,
-        maxY: box.y + box.height,
+        minX: box.minX,
+        minY: box.minY,
+        maxX: box.maxX,
+        maxY: box.maxY,
         instanceOffset: range.offset,
         instanceCount: range.count,
         paletteIndex: slot,
@@ -1561,6 +1605,55 @@ export class TextLayer extends Container {
       offset: first * CULL_RECORD_STRIDE,
       length: (last - first + 1) * CULL_RECORD_STRIDE,
     };
+  }
+
+  #cullRecordAabb(
+    slot: number,
+    space: CullAabbSpace,
+  ): { minX: number; minY: number; maxX: number; maxY: number } | undefined {
+    switch (space) {
+      case "local": {
+        const local = this.#spatial.getLocal(slot, this.#boundsScratch);
+        if (local === undefined) return undefined;
+        return {
+          minX: local.x,
+          minY: local.y,
+          maxX: local.x + local.width,
+          maxY: local.y + local.height,
+        };
+      }
+      case "world": {
+        const box = this.#spatial.get(slot, this.#boundsScratch);
+        if (box === undefined) return undefined;
+        return {
+          minX: box.x,
+          minY: box.y,
+          maxX: box.x + box.width,
+          maxY: box.y + box.height,
+        };
+      }
+      default: {
+        const _exhaustive: never = space;
+        return _exhaustive;
+      }
+    }
+  }
+
+  #contentLaneLocalChanged(
+    contentSlots: Uint32Array,
+    contentCount: number,
+    space: CullAabbSpace,
+  ): boolean {
+    if (space === "world") return true;
+    for (let position = 0; position < contentCount; position += 1) {
+      const slot = contentSlots[position] ?? 0;
+      const index = this.#cullRecordIndex[slot] ?? -1;
+      if (index < 0) continue;
+      const local = this.#spatial.getLocal(slot, this.#boundsScratch);
+      if (local === undefined) return true;
+      return !cullRecordMatchesLocal(this.#cullRecordFloats, index, local);
+    }
+    return false;
   }
 
   #ensureCullRecordCapacity(count: number): void {
@@ -1891,6 +1984,7 @@ export class TextLayer extends Container {
     this.#offscreenAdmitDeferred = false;
     this.#clearCullRecordIndex();
     this.#cullRecordEpoch = -1;
+    this.#cullRecordSpace = "world";
     this.#visibilityDirty = true;
   }
 

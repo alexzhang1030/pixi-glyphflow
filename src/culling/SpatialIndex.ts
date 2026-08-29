@@ -294,6 +294,20 @@ export class SpatialIndex {
     return target;
   }
 
+  /** Local box only. World AABB is origin + this. @internal */
+  getLocal(slot: number, output?: MutableBoundsData): Readonly<BoundsData> | undefined {
+    this.#assertActive();
+    assertSlot(slot);
+    if (slot >= this.#highWater || this.#occupied[slot] !== 1) return undefined;
+    const target = output ?? { x: 0, y: 0, width: 0, height: 0 };
+    target.x = this.#localX[slot] ?? 0;
+    target.y = this.#localY[slot] ?? 0;
+    target.width = this.#width[slot] ?? 0;
+    target.height = this.#height[slot] ?? 0;
+
+    return target;
+  }
+
   /** Return the stable insertion order used for z-index ties. @internal */
   orderOf(slot: number): number | undefined {
     this.#assertActive();

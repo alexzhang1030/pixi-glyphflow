@@ -47,6 +47,11 @@ export class PaletteStoragePass {
     return this.#transforms !== undefined;
   }
 
+  /** Live palette table. Compute-cull reads origin from the same buffer. */
+  get gpuTransforms(): GPUBuffer | undefined {
+    return this.#transforms;
+  }
+
   initialize(): boolean {
     if (this.#ready) return true;
     const device = this.#renderer.gpu?.device;

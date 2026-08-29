@@ -19,9 +19,10 @@ import {
 } from "../atlas/types";
 import {
   aabbVisible,
-  CULL_RECORD_STRIDE,
   computeCullStructurallyEligible,
+  cullRecordWorldAabb,
   cullViewportsEqual,
+  type CullAabbSpace,
   type CullPath,
   type CullRecordDirty,
   type CullViewport,
@@ -122,6 +123,10 @@ export interface RenderComputeCullUpdate {
   readonly recordCount: number;
   readonly recordDirty: CullRecordDirty;
   readonly viewport: CullViewport;
+  /** Local boxes plus palette origins when the GPU owns the world AABB. */
+  readonly aabbSpace?: CullAabbSpace;
+  /** Palette origins moved; re-cull even when records are clean. */
+  readonly recompute?: boolean;
 }
 
 export interface RenderSurfaceStats {
@@ -330,9 +335,16 @@ export class RenderSurface {
       return this.#useCpuCull();
     }
     pass.trackGeometry(surface.mesh.geometry);
+    const useGpuOrigin = update.aabbSpace === "local";
+    const transforms = useGpuOrigin ? this.#palettePass?.gpuTransforms : undefined;
+    if (useGpuOrigin && transforms === undefined) {
+      this.#syncCompactDraw(update);
+      return this.#useCpuCull();
+    }
     // ensureCapacity resets the indirect args, so an idle frame must return before it.
     if (
       update.recordDirty === "none" &&
+      update.recompute !== true &&
       pass.synced &&
       cullViewportsEqual(this.#lastCullViewport, update.viewport)
     ) {
@@ -345,7 +357,11 @@ export class RenderSurface {
       return this.#useCpuCull();
     }
     pass.uploadRecords(update.records, update.recordCount, update.recordDirty);
-    if (!pass.dispatch(update.viewport)) {
+    const dispatched =
+      transforms === undefined
+        ? pass.dispatch(update.viewport, { useGpuOrigin })
+        : pass.dispatch(update.viewport, { transforms, useGpuOrigin });
+    if (!dispatched) {
       this.#syncCompactDraw(update);
       return this.#useCpuCull();
     }
@@ -771,6 +787,7 @@ export class RenderSurface {
               computeCull.records,
               computeCull.viewport,
               computeCull.recordCount,
+              computeCull.aabbSpace,
             ),
           );
     this.#syncCompactMeshes(compactDraw.segments);
@@ -883,25 +900,25 @@ export class RenderSurface {
     records: ArrayBuffer,
     viewport: CullViewport,
     recordCount: number,
+    aabbSpace: CullAabbSpace = "world",
   ): Uint8Array {
     const states = this.#coordinator.getDrawStates();
     if (recordCount !== states.length) {
       throw new Error("Cull record count differs from draw state count");
     }
     const floats = new Float32Array(records);
+    const uints = new Uint32Array(records);
     const included = new Uint8Array(recordCount);
-    const floatsPerRecord = CULL_RECORD_STRIDE / Float32Array.BYTES_PER_ELEMENT;
     for (let index = 0; index < recordCount; index += 1) {
-      const offset = index * floatsPerRecord;
-      included[index] = Number(
-        aabbVisible(
-          floats[offset] ?? 0,
-          floats[offset + 1] ?? 0,
-          floats[offset + 2] ?? 0,
-          floats[offset + 3] ?? 0,
-          viewport,
-        ),
+      const box = cullRecordWorldAabb(
+        floats,
+        uints,
+        index,
+        aabbSpace,
+        this.#originX,
+        this.#originY,
       );
+      included[index] = Number(aabbVisible(box.minX, box.minY, box.maxX, box.maxY, viewport));
     }
     return included;
   }
@@ -1067,7 +1084,12 @@ export class RenderSurface {
     const view = new DataView(store.buffer);
     const draw = this.#buildDrawSegments(
       view,
-      this.#visibleCullRecords(update.records, update.viewport, update.recordCount),
+      this.#visibleCullRecords(
+        update.records,
+        update.viewport,
+        update.recordCount,
+        update.aabbSpace,
+      ),
     );
     this.#syncCompactMeshes(draw.segments);
     this.#submittedGlyphs = draw.count;

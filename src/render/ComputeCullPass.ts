@@ -47,6 +47,8 @@ export class ComputeCullPass {
   #recordCount = 0;
   #bindGroup: GPUBindGroup | undefined;
   #recordsSynced = false;
+  #dummyTransforms: GPUBuffer | undefined;
+  #boundTransforms: GPUBuffer | undefined;
   readonly #uniformScratch = new ArrayBuffer(UNIFORM_BYTES);
   readonly #uniformFloats = new Float32Array(this.#uniformScratch);
   readonly #uniformInts = new Uint32Array(this.#uniformScratch);
@@ -97,6 +99,7 @@ export class ComputeCullPass {
           { binding: 4, visibility: GPUShaderStage.COMPUTE, buffer: { type: "storage" } },
           { binding: 5, visibility: GPUShaderStage.COMPUTE, buffer: { type: "storage" } },
           { binding: 6, visibility: GPUShaderStage.COMPUTE, buffer: { type: "storage" } },
+          { binding: 7, visibility: GPUShaderStage.COMPUTE, buffer: { type: "read-only-storage" } },
         ],
       });
       const layout = device.createPipelineLayout({ bindGroupLayouts: [bindGroupLayout] });
@@ -118,6 +121,12 @@ export class ComputeCullPass {
       });
       this.#bindGroupLayout = bindGroupLayout;
       this.#device = device;
+      this.#dummyTransforms = createBuffer(
+        device,
+        16,
+        GPUBufferUsage.STORAGE,
+        "pixi-glyphflow-cull-dummy-transforms",
+      );
       this.#ready = true;
       installEncoderHook(this.#renderer, this);
       return true;
@@ -216,9 +225,15 @@ export class ComputeCullPass {
     this.#recordsSynced = false;
   }
 
-  dispatch(viewport: CullViewport): boolean {
+  dispatch(
+    viewport: CullViewport,
+    options: { readonly transforms?: GPUBuffer; readonly useGpuOrigin?: boolean } = {},
+  ): boolean {
     const device = this.#device;
     const layout = this.#bindGroupLayout;
+    const dummy = this.#dummyTransforms;
+    const useGpuOrigin = options.useGpuOrigin === true;
+    const transforms = useGpuOrigin ? options.transforms : dummy;
     if (
       device === undefined ||
       layout === undefined ||
@@ -231,7 +246,9 @@ export class ComputeCullPass {
       this.#prefix === undefined ||
       this.#groupSums === undefined ||
       this.#instancesOut === undefined ||
-      this.#uniform === undefined
+      this.#uniform === undefined ||
+      dummy === undefined ||
+      transforms === undefined
     ) {
       return false;
     }
@@ -243,7 +260,12 @@ export class ComputeCullPass {
     floats[3] = viewport.height;
     floats[4] = viewport.padding;
     this.#uniformInts[5] = this.#recordCount;
+    this.#uniformInts[6] = Number(useGpuOrigin);
     device.queue.writeBuffer(this.#uniform, 0, this.#uniformScratch);
+    if (this.#boundTransforms !== transforms) {
+      this.#bindGroup = undefined;
+      this.#boundTransforms = transforms;
+    }
     const bindGroup =
       this.#bindGroup ??
       device.createBindGroup({
@@ -257,6 +279,7 @@ export class ComputeCullPass {
           { binding: 4, resource: { buffer: this.#groupSums } },
           { binding: 5, resource: { buffer: this.#instancesOut } },
           { binding: 6, resource: { buffer: indirect } },
+          { binding: 7, resource: { buffer: transforms } },
         ],
       });
     this.#bindGroup = bindGroup;
@@ -326,6 +349,9 @@ export class ComputeCullPass {
     this.#groupSums?.destroy();
     this.#instancesOut?.destroy();
     this.#uniform?.destroy();
+    this.#dummyTransforms?.destroy();
+    this.#dummyTransforms = undefined;
+    this.#boundTransforms = undefined;
     this.#bindGroup = undefined;
     this.#recordsSynced = false;
     this.indirectBuffer.destroy();

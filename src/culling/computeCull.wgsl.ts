@@ -19,7 +19,7 @@ struct Viewport {
   height: f32,
   padding: f32,
   label_count: u32,
-  _pad0: u32,
+  use_gpu_origin: u32,
   _pad1: u32,
 }
 
@@ -30,16 +30,33 @@ struct Viewport {
 @group(0) @binding(4) var<storage, read_write> group_sums: array<u32>;
 @group(0) @binding(5) var<storage, read_write> instances_out: array<u32>;
 @group(0) @binding(6) var<storage, read_write> indirect: array<u32>;
+@group(0) @binding(7) var<storage, read> transforms: array<vec4<f32>>;
 
 const WORKGROUP: u32 = ${String(CULL_WORKGROUP)}u;
 const UINTS_PER_DRAW: u32 = 2u;
 
+fn world_box(record: CullRecord) -> vec4<f32> {
+  var min_x = record.min_x;
+  var min_y = record.min_y;
+  var max_x = record.max_x;
+  var max_y = record.max_y;
+  if (viewport.use_gpu_origin != 0u) {
+    let origin = transforms[record.palette_index * 2u].xy;
+    min_x += origin.x;
+    min_y += origin.y;
+    max_x += origin.x;
+    max_y += origin.y;
+  }
+  return vec4<f32>(min_x, min_y, max_x, max_y);
+}
+
 fn visible(record: CullRecord) -> bool {
+  let box = world_box(record);
   let left = viewport.x - viewport.padding;
   let top = viewport.y - viewport.padding;
   let right = viewport.x + viewport.width + viewport.padding;
   let bottom = viewport.y + viewport.height + viewport.padding;
-  return record.max_x >= left && record.min_x <= right && record.max_y >= top && record.min_y <= bottom;
+  return box.z >= left && box.x <= right && box.w >= top && box.y <= bottom;
 }
 
 @compute @workgroup_size(${String(CULL_WORKGROUP)})

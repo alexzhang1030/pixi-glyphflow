@@ -143,6 +143,10 @@ writes, and remirroring the store.
   Position storms skip the CPU 32-byte scatter and upload one packed move-command
   buffer. Camera-only frames upload nothing. WebGL and devices with
   `maxStorageBuffersInVertexStage` 0 keep the texture path.
+- On storage plus compute-cull, records store the local box. The cull shader adds
+  palette origin. A position-only storm does not walk slots to rewrite cull AABBs and
+  does not upload a dirty cull-record span. Content-layout that changes the local box
+  still writes CPU records. Texture and cpu-grid keep the CPU world-AABB patch.
 
 ## Remaining slices, in order
 
