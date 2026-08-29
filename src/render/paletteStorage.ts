@@ -8,7 +8,7 @@ export const PALETTE_PATCH_WORKGROUP = 256;
 
 /** One move command: slot, x, y, pad. After the first full upload the GPU table owns x/y. */
 export const PALETTE_MOVE_STRIDE = 16;
-export const PALETTE_MOVE_WORDS = PALETTE_MOVE_STRIDE / Uint32Array.BYTES_PER_ELEMENT;
+export const PALETTE_MOVE_WORDS: number = PALETTE_MOVE_STRIDE / Uint32Array.BYTES_PER_ELEMENT;
 export const PALETTE_MOVE_UNIFORM_BYTES = 16;
 
 export interface PalettePathInput {
