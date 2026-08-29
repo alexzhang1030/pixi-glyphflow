@@ -357,7 +357,11 @@ export class RenderSurface {
       return this.#useCpuCull();
     }
     pass.uploadRecords(update.records, update.recordCount, update.recordDirty);
-    if (!pass.dispatch(update.viewport, { transforms, useGpuOrigin })) {
+    const dispatched =
+      transforms === undefined
+        ? pass.dispatch(update.viewport, { useGpuOrigin })
+        : pass.dispatch(update.viewport, { transforms, useGpuOrigin });
+    if (!dispatched) {
       this.#syncCompactDraw(update);
       return this.#useCpuCull();
     }
