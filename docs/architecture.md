@@ -135,7 +135,9 @@ and upload one packed move-command buffer (`slot`, `x`, `y`); a compute pass wri
 `transforms[slot * 2].xy`. Camera-only frames do not gather the table. WebGL and devices with
 `maxStorageBuffersInVertexStage` 0 keep the texture palette. `requestComputeCullGpu()` raises that
 vertex-storage limit when the adapter allows it. Hit-test stays on the aliased store columns.
-Compute-cull records still store world AABB and are patched on the CPU.
+On the storage plus compute-cull path, cull records store the local box. The cull shader
+adds palette origin. Position storms do not rewrite or upload those records. Texture and
+cpu-grid still store world AABB and patch it on the CPU.
 
 ## Culling and camera integration
 
@@ -152,7 +154,8 @@ prepared ring. It still queries the tight view so a deferred unique miss is admi
 crosses on screen. Crossing the working-set edge refreshes residency. GPU mirrors sync incrementally:
 commits upload dirty prototype texels and changed or appended cull records, keyed by a
 draw-list epoch that appends preserve; re-sorts, removals, and cull-path fallbacks force a full
-repack or resync. Scatter writes 8-byte draw records and does not read the store.
+repack or resync. A storage-path position storm does not mark mover cull records dirty when
+the local box is unchanged. The GPU still re-culls from live palette x/y. Scatter writes 8-byte draw records and does not read the store.
 
 The direct `GlyphMesh` rebinds its instance attributes to the compact buffer and uses an indexed
 indirect draw. The encoder hook checks geometry ownership and is removed when the pass is

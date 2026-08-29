@@ -31,6 +31,12 @@
 
 ### Performance
 
+- WebGPU storage plus compute-cull owns world AABBs. Cull records store the local box. The
+  cull shader adds `transforms[slot].xy` from the same table the move pass writes. A
+  position-only storm does not walk slots to patch cull AABBs and does not upload a dirty
+  cull-record span. Camera-only still uploads nothing. Texture, WebGL, and cpu-grid keep
+  the CPU world-AABB path. Content-layout, first-seen, and visibility changes that change
+  the local box still write CPU records. Hit-test stays on store x/y.
 - WebGL dirty uploads of the `rgba32float` transform table blank after the first allocation:
   both `texSubImage2D` and a second `texImage2D` of the same GL texture (`glError` 0) wipe the
   first view. Unbind the palette from each mesh and from GL `TEXTURE_2D` units, dirty-upload
@@ -43,7 +49,8 @@
   with `maxStorageBuffersInVertexStage` 0 keep the texture path.
   `requestComputeCullGpu()` requests that vertex-storage limit. `TextLayerStats.palettePath`
   reports `"storage"` or `"texture"`. Published budgets stay. Hit-test still uses the aliased
-  store columns. Compute-cull records still store world AABB.
+  store columns. On storage plus compute-cull, records store the local box and the cull
+  shader adds palette origin, so a position storm does not upload mover AABBs.
 - Prebuilt distance-field pages rematch by physical size. A `charsetSdfPrebuilt` bake at 14px
   crops a 13px or 32px first sight of the same glyph and interns the field, instead of starting
   TinySDF or MSDF. Sizes above `distanceFieldMinFontSize` still generate. On-screen unique ink

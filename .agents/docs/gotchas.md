@@ -113,9 +113,11 @@ A storage-buffer rebuild or geometric grow must `refreshOrigins` from the live s
 before a full upload. Mover-only storms leave CPU texels stale. Uploading that table without
 the refresh clobbers GPU-patched x/y. Hit-test keeps using the aliased store columns.
 
-Compute-cull records still store world AABB (`min`/`max`), not a second origin pair. Storms
-patch those AABBs on the CPU and upload dirty record ranges. Deriving cull from the palette
-table would need local boxes on the GPU and a cull-shader rewrite. Keep that as a later cut.
+Compute-cull records on the storage path store the local box (`min`/`max`), not a second
+origin pair. The cull shader adds `transforms[palette_index * 2].xy`. Position storms skip the
+CPU AABB walk and do not upload a dirty cull-record span. Camera-only still uploads nothing.
+Content-layout, first-seen, and visibility changes that change the local box still write CPU
+records. Texture, cpu-grid, or a table that is not ready keeps the CPU world-AABB patch.
 
 Storage-path `GlyphMesh` resources must name `uTransforms` only. After #34 the storage WGSL
 replaced `uTransformTexture`, but the mesh still put that texture in `resources` and only

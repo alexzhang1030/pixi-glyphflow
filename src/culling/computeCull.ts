@@ -5,6 +5,8 @@ import type { BoundsData } from "./types";
 export type CullPath = "cpu-grid" | "compute-cull";
 export type CullResidency = "viewport" | "all";
 export type CullRecordDirty = "all" | "none" | readonly Readonly<DirtyByteRange>[];
+/** World AABB is origin + local. GPU-owned compute-cull stores the local half. */
+export type CullAabbSpace = "world" | "local";
 
 export const CULL_RECORD_STRIDE = 32;
 export const CULL_WORKGROUP = 256;
@@ -55,6 +57,87 @@ export function resolveCullPath(input: {
     return "cpu-grid";
   }
   return "compute-cull";
+}
+
+/**
+ * Storage + compute-cull owns world AABBs from palette x/y plus the local box in the record.
+ * Texture, cpu-grid, or a table that is not ready stays on the CPU world-AABB patch.
+ */
+export function gpuOwnsCullBoxes(input: {
+  readonly palettePath: "texture" | "storage";
+  readonly cullPath: CullPath;
+}): boolean {
+  switch (input.palettePath) {
+    case "texture":
+      return false;
+    case "storage":
+      return input.cullPath === "compute-cull";
+    default: {
+      const _exhaustive: never = input.palettePath;
+      return _exhaustive;
+    }
+  }
+}
+
+/**
+ * Position storms skip the CPU cull-record walk when the GPU owns the boxes and the local
+ * half did not change. Content-layout that changes the local box still patches.
+ */
+export function shouldPatchComputeCullLane(input: {
+  readonly gpuOwnsCullBoxes: boolean;
+  readonly localBoxChanged: boolean;
+}): boolean {
+  if (!input.gpuOwnsCullBoxes) return true;
+  return input.localBoxChanged;
+}
+
+export function cullRecordMatchesLocal(
+  floats: Float32Array,
+  index: number,
+  local: BoundsData,
+): boolean {
+  const base = index * FLOATS_PER_RECORD;
+  return (
+    (floats[base] ?? 0) === local.x &&
+    (floats[base + 1] ?? 0) === local.y &&
+    (floats[base + 2] ?? 0) === local.x + local.width &&
+    (floats[base + 3] ?? 0) === local.y + local.height
+  );
+}
+
+/** Host reference for the cull shader: world = origin[paletteIndex] + local when space is local. */
+export function cullRecordWorldAabb(
+  floats: Float32Array,
+  uints: Uint32Array,
+  index: number,
+  space: CullAabbSpace = "world",
+  originX?: Float32Array,
+  originY?: Float32Array,
+): { minX: number; minY: number; maxX: number; maxY: number } {
+  const base = index * FLOATS_PER_RECORD;
+  let minX = floats[base] ?? 0;
+  let minY = floats[base + 1] ?? 0;
+  let maxX = floats[base + 2] ?? 0;
+  let maxY = floats[base + 3] ?? 0;
+  switch (space) {
+    case "world":
+      break;
+    case "local": {
+      const slot = uints[base + 6] ?? 0;
+      const originOffsetX = originX?.[slot] ?? 0;
+      const originOffsetY = originY?.[slot] ?? 0;
+      minX += originOffsetX;
+      minY += originOffsetY;
+      maxX += originOffsetX;
+      maxY += originOffsetY;
+      break;
+    }
+    default: {
+      const _exhaustive: never = space;
+      return _exhaustive;
+    }
+  }
+  return { minX, minY, maxX, maxY };
 }
 
 function nextPowerOfTwo(value: number): number {
@@ -406,21 +489,28 @@ export function compactVisibleInstances(
   recordCount: number,
   instances: ArrayBuffer,
   viewport: CullViewport,
+  options: {
+    readonly aabbSpace?: CullAabbSpace;
+    readonly originX?: Float32Array;
+    readonly originY?: Float32Array;
+  } = {},
 ): CompactInstancesResult {
   const floats = new Float32Array(records);
   const uints = new Uint32Array(records);
   const counts = new Uint32Array(recordCount);
+  const space = options.aabbSpace ?? "world";
   let instanceCount = 0;
   for (let index = 0; index < recordCount; index += 1) {
-    const base = index * FLOATS_PER_RECORD;
-    const visible = aabbVisible(
-      floats[base] ?? 0,
-      floats[base + 1] ?? 0,
-      floats[base + 2] ?? 0,
-      floats[base + 3] ?? 0,
-      viewport,
+    const box = cullRecordWorldAabb(
+      floats,
+      uints,
+      index,
+      space,
+      options.originX,
+      options.originY,
     );
-    const count = visible ? (uints[base + 5] ?? 0) : 0;
+    const visible = aabbVisible(box.minX, box.minY, box.maxX, box.maxY, viewport);
+    const count = visible ? (uints[index * FLOATS_PER_RECORD + 5] ?? 0) : 0;
     counts[index] = count;
     instanceCount += count;
   }

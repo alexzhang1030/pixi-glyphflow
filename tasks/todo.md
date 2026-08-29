@@ -451,6 +451,16 @@
   - Verify: bun test tests/paletteStorage.test.ts tests/GlyphMesh.test.ts tests/TransformPalette.test.ts tests/RenderCoordinator.test.ts tests/TextLayer.test.ts tests/TextLayer.commit.test.ts tests/computeCull.test.ts && bun run typecheck && bun run docs:check
   - Files: src/render/paletteStorage.ts, src/render/palettePatch.wgsl.ts, src/render/PaletteStoragePass.ts, src/TextLayer.ts
 
+- [x] Task 12.35: Let the GPU own compute-cull boxes on the storage path.
+  - Acceptance: WebGPU storage plus compute-cull position storms do not walk slots to
+    rewrite cull AABBs and do not upload a dirty cull-record span when the local box is
+    unchanged. The cull shader adds palette origin to the local box. Camera-only still
+    uploads nothing. Texture, WebGL, and cpu-grid keep the CPU world-AABB patch.
+    Content-layout that changes the local box still writes CPU records. Hit-test and 1M
+    residency stay. Public `TextLayer` contract stays.
+  - Verify: bun test tests/computeCull.test.ts tests/paletteStorage.test.ts tests/SpatialIndex.test.ts tests/TextLayer.test.ts tests/TextLayer.commit.test.ts && bun run typecheck && bun run docs:check
+  - Files: src/culling/computeCull.ts, src/culling/computeCull.wgsl.ts, src/render/ComputeCullPass.ts, src/TextLayer.ts
+
 - [ ] Task 12.8: Optional extreme quality tracks (Wave 5).
   - Acceptance: Outline (Slug), collision, SIMD shaping, and SharedArrayBuffer rings land only as opt-in modes with their own workloads and pixel tolerances.
   - Verify: focused tests plus a named benchmark workload per enabled track

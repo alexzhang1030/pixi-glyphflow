@@ -186,7 +186,9 @@ worker serializes font loading and atlas generation; separate workers execute in
 latest draw preparation. `TextLayerStats.palettePath` is either `"storage"` or `"texture"` and
 names the transform table used by that draw. WebGPU storage skips a CPU gather of the full
 palette on a position-only or camera-only commit. A position-only storm uploads packed
-move commands so the GPU can write live x/y. WebGL stays on `"texture"`. The root entry
+move commands so the GPU can write live x/y. On storage plus compute-cull the same table
+feeds the cull shader, so that storm does not upload mover world AABBs. WebGL stays on
+`"texture"`. The root entry
 exports the `CullPath` and `PalettePath` types and `requestComputeCullGpu`. Compute shader and
 pass internals are not root exports.
 

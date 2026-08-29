@@ -115,7 +115,9 @@ storage budgets stay until a human accepts new numbers.
   the palette storage buffer. WebGL and devices without vertex storage keep the texture
   palette. A WebGPU storage path does not gather 1,000,000 x/y values on a position-only or
   camera-only commit. After the first full upload the GPU table owns live x/y, and a
-  position-only storm uploads one packed move-command buffer.
+  position-only storm uploads one packed move-command buffer. On storage plus compute-cull
+  that storm does not upload mover cull AABBs. The GPU adds palette origin to the local box
+  stored in the cull record.
 - Reuse styles and fonts to maximize shaping and layout cache hits. Duplicate strings intern one
   layout result per (family, size, weight, text). Broadcast `updateTextPositions` with default
   anchors uses a columnar content lane: one layout, a shared prototype range, packed x/y, and
