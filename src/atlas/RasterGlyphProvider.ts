@@ -1,7 +1,10 @@
+import { encodeCacheKey } from "../cache/cacheKey";
 import type { FontRegistry } from "../FontRegistry";
 import { prepareGlyphFont } from "../fonts/cmap";
+import { createControlledTeardown } from "../lifecycle/ControlledTeardown";
 import { PrebuiltGlyphProvider, prebuiltGlyphKey } from "./PrebuiltGlyphProvider";
 import { encodeTinySdf, TINY_SDF_RADIUS } from "./tinySdf";
+import { RasterProviderDisposedError } from "./types";
 import type {
   GlyphMetrics,
   GlyphMode,
@@ -54,12 +57,13 @@ export class RasterGlyphProvider {
   #generatorStarts = 0;
   readonly #faces = new Map<string, FontFace>();
   readonly #faceLoads = new Map<string, Promise<void>>();
-  readonly #prebuilt: PrebuiltGlyphProvider | undefined;
+  #prebuilt: PrebuiltGlyphProvider | undefined;
   readonly #msdfBatches = new Map<string, MsdfBatch>();
   readonly #tinySdfBatches = new Map<string, TinySdfBatch>();
   #msdfFlushScheduled = false;
   #tinySdfFlushScheduled = false;
   #destroyed = false;
+  #destroyPromise: Promise<void> | undefined;
 
   constructor(registry: FontRegistry, options: RasterGlyphProviderOptions = {}) {
     this.#registry = registry;
@@ -155,23 +159,93 @@ export class RasterGlyphProvider {
     });
   }
 
-  async destroy(): Promise<void> {
-    if (this.#destroyed) return;
+  /** Detach immediately, settle every live generator path, and release each resource once. */
+  destroy(): Promise<void> {
+    const existing = this.#destroyPromise;
+    if (existing !== undefined) return existing;
+
+    const teardown = createControlledTeardown();
+    this.#destroyPromise = teardown.promise;
     this.#destroyed = true;
+    const prebuilt = this.#prebuilt;
+    const faces = [...this.#faces.values()];
+    const generatorTails = this.#generatorTails.flatMap((tail) =>
+      tail === undefined ? [] : [tail],
+    );
+    const generatorPromises = this.#generatorPromises.flatMap((generator) =>
+      generator === undefined ? [] : [generator],
+    );
+    const disposedError = new RasterProviderDisposedError();
+    this.#prebuilt = undefined;
     this.#cache.clear();
     this.#pending.clear();
     this.#physical.clear();
     this.#physicalPending.clear();
-    this.#prebuilt?.destroy();
-    for (const face of this.#faces.values()) {
-      globalThis.document?.fonts.delete(face);
-    }
     this.#faces.clear();
-    await Promise.all(this.#generatorTails.flatMap((tail) => (tail === undefined ? [] : [tail])));
-    const generators = await Promise.all(
-      this.#generatorPromises.flatMap((generator) => (generator === undefined ? [] : [generator])),
+    this.#faceLoads.clear();
+    this.#generatorTails.fill(undefined);
+    this.#generatorPromises.fill(undefined);
+    this.#nextGenerator = 0;
+    this.#msdfFlushScheduled = false;
+    this.#tinySdfFlushScheduled = false;
+    for (const batch of this.#msdfBatches.values()) {
+      for (const member of batch.members) member.reject(disposedError);
+    }
+    this.#msdfBatches.clear();
+    for (const batch of this.#tinySdfBatches.values()) {
+      for (const member of batch.members) member.reject(disposedError);
+    }
+    this.#tinySdfBatches.clear();
+
+    let firstFailure: CleanupFailure | undefined;
+    if (prebuilt !== undefined) {
+      try {
+        prebuilt.destroy();
+      } catch (error: unknown) {
+        firstFailure = { error };
+      }
+    }
+    for (const face of faces) {
+      try {
+        globalThis.document?.fonts.delete(face);
+      } catch (error: unknown) {
+        firstFailure ??= { error };
+      }
+    }
+
+    void this.#finishGeneratorTeardown(generatorTails, generatorPromises).then((asyncFailure) => {
+      const failure = firstFailure ?? asyncFailure;
+      if (failure === undefined) teardown.resolve();
+      else teardown.reject(failure.error);
+    });
+    return teardown.promise;
+  }
+
+  async #finishGeneratorTeardown(
+    tails: readonly Promise<void>[],
+    factories: readonly Promise<MsdfGeneratorLike>[],
+  ): Promise<CleanupFailure | undefined> {
+    const [tailResults, factoryResults] = await Promise.all([
+      Promise.allSettled(tails),
+      Promise.allSettled(factories),
+    ]);
+    let firstFailure: CleanupFailure | undefined;
+    for (const result of tailResults) {
+      if (result.status === "rejected") firstFailure ??= { error: result.reason };
+    }
+
+    const generators = new Set<MsdfGeneratorLike>();
+    for (const result of factoryResults) {
+      if (result.status === "rejected") firstFailure ??= { error: result.reason };
+      else generators.add(result.value);
+    }
+    const disposeResults = await Promise.allSettled(
+      [...generators].map((generator) => Promise.resolve().then(() => generator.dispose())),
     );
-    await Promise.all(generators.map((generator) => generator.dispose()));
+    for (const result of disposeResults) {
+      if (result.status === "rejected") firstFailure ??= { error: result.reason };
+    }
+    return firstFailure;
   }
 
   async #createRaster(request: RasterGlyphRequest): Promise<Readonly<GlyphRaster>> {
@@ -265,7 +339,13 @@ export class RasterGlyphProvider {
     // The generator re-parses the posted font on every call, so a commit's misses for one
     // (family, revision, physical size) share a single pass: one parse plus N crops.
     return new Promise((resolve, reject) => {
-      const key = `${request.family}\u0000${String(request.fontRevision)}\u0000${String(rasterFontSize)}`;
+      const key = encodeCacheKey([
+        request.family,
+        String(request.fontRevision),
+        String(rasterFontSize),
+        request.fontWeight ?? "normal",
+        request.variationKey ?? "",
+      ]);
       let batch = this.#msdfBatches.get(key);
       if (batch === undefined) {
         batch = { bytes, rasterFontSize, members: [] };
@@ -302,7 +382,9 @@ export class RasterGlyphProvider {
     chunk: readonly MsdfBatchMember[],
   ): Promise<void> {
     if (this.#destroyed) {
-      const error = new Error("RasterGlyphProvider was destroyed before the batch generated");
+      const error = new RasterProviderDisposedError(
+        "RasterGlyphProvider was destroyed before the batch generated",
+      );
       for (const member of chunk) member.reject(error);
       return;
     }
@@ -338,13 +420,14 @@ export class RasterGlyphProvider {
 
   #queueTinySdf(request: RasterGlyphRequest): Promise<Readonly<PhysicalRaster>> {
     const rasterFontSize = Math.max(request.fontSize, this.#distanceFieldMinFontSize);
-    const key = [
+    const key = encodeCacheKey([
       request.family,
-      request.fontFamilies?.join("\u0001") ?? "",
+      encodeCacheKey(request.fontFamilies ?? []),
       String(request.fontRevision),
       String(rasterFontSize),
-      String(request.fontWeight ?? "normal"),
-    ].join("\u0000");
+      request.fontWeight ?? "normal",
+      request.variationKey ?? "",
+    ]);
     return new Promise((resolve, reject) => {
       let batch = this.#tinySdfBatches.get(key);
       if (batch === undefined) {
@@ -372,7 +455,9 @@ export class RasterGlyphProvider {
 
   async #rasterizeTinySdfBatch(batch: Readonly<TinySdfBatch>): Promise<void> {
     if (this.#destroyed) {
-      const error = new Error("RasterGlyphProvider was destroyed before TinySDF ran");
+      const error = new RasterProviderDisposedError(
+        "RasterGlyphProvider was destroyed before TinySDF ran",
+      );
       for (const member of batch.members) member.reject(error);
       return;
     }
@@ -385,7 +470,9 @@ export class RasterGlyphProvider {
     }
     for (const member of batch.members) {
       if (this.#destroyed) {
-        member.reject(new Error("RasterGlyphProvider was destroyed before TinySDF ran"));
+        member.reject(
+          new RasterProviderDisposedError("RasterGlyphProvider was destroyed before TinySDF ran"),
+        );
         continue;
       }
       try {
@@ -442,8 +529,7 @@ export class RasterGlyphProvider {
     const bytes = this.#registry.getBinaryData(family);
     if (bytes === undefined) return;
     if (typeof FontFace === "undefined") return;
-    const copy = new Uint8Array(bytes.byteLength);
-    copy.set(bytes);
+    const copy = new Uint8Array(bytes);
     const face = new FontFace(family, copy);
     await face.load();
     if (this.#destroyed) return;
@@ -457,6 +543,7 @@ export class RasterGlyphProvider {
     this.#nextGenerator += 1;
     const previous = this.#generatorTails[index] ?? Promise.resolve();
     const work = previous.then(async () => {
+      this.#assertActive();
       const generator = await this.#generator(index);
       return generator.generateAtlas(options);
     });
@@ -471,14 +558,25 @@ export class RasterGlyphProvider {
     let generatorPromise = this.#generatorPromises[index];
     if (generatorPromise === undefined) {
       this.#generatorStarts += 1;
-      generatorPromise = this.#createMsdfGenerator().then(async (generator) => {
-        await generator.initialize?.();
-        return generator;
-      });
+      generatorPromise = this.#createInitializedGenerator();
+      void generatorPromise.catch(() => undefined);
       this.#generatorPromises[index] = generatorPromise;
     }
 
     return generatorPromise;
+  }
+
+  async #createInitializedGenerator(): Promise<MsdfGeneratorLike> {
+    const generator = await this.#createMsdfGenerator();
+    try {
+      await generator.initialize?.();
+      return generator;
+    } catch (error: unknown) {
+      await Promise.resolve()
+        .then(() => generator.dispose())
+        .catch(() => undefined);
+      throw error;
+    }
   }
 
   async #peekPhysical(request: RasterGlyphRequest): Promise<Readonly<GlyphRaster> | undefined> {
@@ -512,6 +610,7 @@ export class RasterGlyphProvider {
   }
 
   #lookupPrebuilt(request: RasterGlyphRequest): Readonly<GlyphRaster> | undefined {
+    if ((request.variationKey ?? "").length > 0) return undefined;
     const exact = this.#prebuilt?.lookup(prebuiltGlyphKey(request));
     if (exact !== undefined) return exact;
     if (request.glyphId !== 0 && isSingleUnicodeScalar(request.glyphText)) {
@@ -525,7 +624,7 @@ export class RasterGlyphProvider {
 
   #assertActive(): void {
     if (this.#destroyed) {
-      throw new Error("RasterGlyphProvider has been destroyed");
+      throw new RasterProviderDisposedError();
     }
   }
 }
@@ -623,6 +722,10 @@ interface PhysicalRaster {
   readonly fieldRange?: number;
 }
 
+interface CleanupFailure {
+  readonly error: unknown;
+}
+
 function physicalDistanceFieldKey(request: RasterGlyphRequest, rasterFontSize: number): string {
   switch (request.mode) {
     case "sdf":
@@ -639,29 +742,32 @@ function physicalDistanceFieldKey(request: RasterGlyphRequest, rasterFontSize: n
   }
 }
 
-/** TinySDF paints `glyphText`. Logical size and HarfBuzz id do not change the field. */
+/** TinySDF physical fields follow painted text, face revision, weight, axes, and raster size. */
 function physicalTinySdfKey(request: RasterGlyphRequest, rasterFontSize: number): string {
-  return [
+  return encodeCacheKey([
     "sdf",
     request.family,
-    request.fontFamilies?.join("\u0001") ?? "",
+    encodeCacheKey(request.fontFamilies ?? []),
     String(request.fontRevision),
     request.glyphText,
     request.fontWeight ?? "normal",
+    request.variationKey ?? "",
     String(rasterFontSize),
-  ].join("\u0000");
+  ]);
 }
 
-/** MSDF crops a cmap-aware outline. Logical size does not change the field. */
+/** MSDF physical fields follow the cmap-aware outline, face revision, weight, axes, and raster size. */
 function physicalMsdfKey(request: RasterGlyphRequest, rasterFontSize: number): string {
-  return [
+  return encodeCacheKey([
     "msdf",
     request.family,
     String(request.fontRevision),
     String(request.glyphId),
     request.glyphText,
+    request.fontWeight ?? "normal",
+    request.variationKey ?? "",
     String(rasterFontSize),
-  ].join("\u0000");
+  ]);
 }
 
 function unscalePrebuiltPhysical(
@@ -821,6 +927,9 @@ function validateRequest(request: RasterGlyphRequest): void {
   if (typeof request.glyphText !== "string" || request.glyphText.length === 0) {
     throw new TypeError("glyphText must be a non-empty string");
   }
+  if (request.variationKey !== undefined && typeof request.variationKey !== "string") {
+    throw new TypeError("variationKey must be a string");
+  }
   if (!Number.isFinite(request.fontSize) || request.fontSize <= 0) {
     throw new TypeError("fontSize must be a positive finite number");
   }
@@ -850,16 +959,17 @@ function validateRaster(raster: GlyphRaster, expectedMode: GlyphMode): void {
 }
 
 function requestCacheKey(request: RasterGlyphRequest): string {
-  return [
+  return encodeCacheKey([
     request.family,
-    request.fontFamilies?.join("\u0001") ?? "",
-    request.fontRevision,
-    request.glyphId,
+    encodeCacheKey(request.fontFamilies ?? []),
+    String(request.fontRevision),
+    String(request.glyphId),
     request.glyphText,
-    request.fontSize,
+    request.variationKey ?? "",
+    String(request.fontSize),
     request.fontWeight ?? "normal",
     request.mode,
-  ].join("\u0000");
+  ]);
 }
 
 function canvasFont(request: RasterGlyphRequest): string {

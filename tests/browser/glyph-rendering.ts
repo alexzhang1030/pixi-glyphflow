@@ -87,6 +87,19 @@ async function run(): Promise<void> {
   const reattachedMeasure = await measureVisiblePixels(app, layer);
   const reattachedStats = { ...layer.stats };
 
+  // Grow the WebGPU storage palette while a mesh is live. Pixi invalidates the whole bind group
+  // when its old storage Buffer is destroyed, so the renderer adapter must rebind first.
+  layer.createMany(
+    Array.from({ length: 2_048 }, (_, index) => ({
+      text: "g",
+      x: 300 + (index % 2),
+      y: 170 + (index % 2),
+      style: { fontFamily: "Arial", fontSize: 12, fill: 0xffffff },
+    })),
+  );
+  await layer.commit();
+  app.render();
+
   window.__glyphflow.result = {
     initialPixels: initialMeasure.count,
     movedPixels: movedMeasure.count,

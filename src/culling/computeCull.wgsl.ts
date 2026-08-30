@@ -9,7 +9,7 @@ struct CullRecord {
   instance_offset: u32,
   instance_count: u32,
   palette_index: u32,
-  _pad1: u32,
+  local_bounds_index: u32,
 }
 
 struct Viewport {
@@ -20,7 +20,7 @@ struct Viewport {
   padding: f32,
   label_count: u32,
   use_gpu_origin: u32,
-  _pad1: u32,
+  group_count: u32,
 }
 
 @group(0) @binding(0) var<uniform> viewport: Viewport;
@@ -28,26 +28,21 @@ struct Viewport {
 @group(0) @binding(2) var<storage, read_write> counts: array<u32>;
 @group(0) @binding(3) var<storage, read_write> prefix: array<u32>;
 @group(0) @binding(4) var<storage, read_write> group_sums: array<u32>;
-@group(0) @binding(5) var<storage, read_write> instances_out: array<u32>;
-@group(0) @binding(6) var<storage, read_write> indirect: array<u32>;
+@group(0) @binding(5) var<storage, read_write> group_block_sums: array<u32>;
+@group(0) @binding(6) var<storage, read_write> instances_out: array<u32>;
 @group(0) @binding(7) var<storage, read> transforms: array<vec4<f32>>;
+@group(0) @binding(8) var<storage, read_write> indirect: array<u32>;
 
 const WORKGROUP: u32 = ${String(CULL_WORKGROUP)}u;
 const UINTS_PER_DRAW: u32 = 2u;
 
 fn world_box(record: CullRecord) -> vec4<f32> {
-  var min_x = record.min_x;
-  var min_y = record.min_y;
-  var max_x = record.max_x;
-  var max_y = record.max_y;
+  var box = vec4<f32>(record.min_x, record.min_y, record.max_x, record.max_y);
   if (viewport.use_gpu_origin != 0u) {
     let origin = transforms[record.palette_index * 2u].xy;
-    min_x += origin.x;
-    min_y += origin.y;
-    max_x += origin.x;
-    max_y += origin.y;
+    box += vec4<f32>(origin, origin);
   }
-  return vec4<f32>(min_x, min_y, max_x, max_y);
+  return box;
 }
 
 fn visible(record: CullRecord) -> bool {
@@ -71,6 +66,24 @@ fn mark_visible(@builtin(global_invocation_id) id: vec3<u32>) {
 
 var<workgroup> scratch: array<u32, ${String(CULL_WORKGROUP)}>;
 
+// pass-independent stable prefix: every level scans fixed record-order partitions.
+fn scan_workgroup(local_index: u32, value: u32) -> u32 {
+  scratch[local_index] = value;
+  workgroupBarrier();
+  var offset = 1u;
+  while (offset < WORKGROUP) {
+    var sum = scratch[local_index];
+    if (local_index >= offset) {
+      sum += scratch[local_index - offset];
+    }
+    workgroupBarrier();
+    scratch[local_index] = sum;
+    workgroupBarrier();
+    offset *= 2u;
+  }
+  return scratch[local_index];
+}
+
 @compute @workgroup_size(${String(CULL_WORKGROUP)})
 fn scan_counts(@builtin(local_invocation_id) local: vec3<u32>, @builtin(workgroup_id) group: vec3<u32>) {
   let index = group.x * WORKGROUP + local.x;
@@ -78,19 +91,7 @@ fn scan_counts(@builtin(local_invocation_id) local: vec3<u32>, @builtin(workgrou
   if (index < viewport.label_count) {
     value = counts[index];
   }
-  scratch[local.x] = value;
-  workgroupBarrier();
-  var offset = 1u;
-  while (offset < WORKGROUP) {
-    var sum = scratch[local.x];
-    if (local.x >= offset) {
-      sum += scratch[local.x - offset];
-    }
-    workgroupBarrier();
-    scratch[local.x] = sum;
-    workgroupBarrier();
-    offset *= 2u;
-  }
+  let inclusive = scan_workgroup(local.x, value);
   if (index < viewport.label_count) {
     var exclusive = 0u;
     if (local.x > 0u) {
@@ -99,24 +100,61 @@ fn scan_counts(@builtin(local_invocation_id) local: vec3<u32>, @builtin(workgrou
     prefix[index] = exclusive;
   }
   if (local.x == WORKGROUP - 1u) {
-    group_sums[group.x] = scratch[local.x];
+    group_sums[group.x] = inclusive;
   }
 }
 
-@compute @workgroup_size(1)
-fn scan_group_sums() {
-  let groups = (viewport.label_count + WORKGROUP - 1u) / WORKGROUP;
-  var running = 0u;
-  for (var group = 0u; group < groups; group++) {
-    let sum = group_sums[group];
-    group_sums[group] = running;
-    running += sum;
+@compute @workgroup_size(${String(CULL_WORKGROUP)})
+fn scan_group_sums(@builtin(local_invocation_id) local: vec3<u32>, @builtin(workgroup_id) block: vec3<u32>) {
+  let index = block.x * WORKGROUP + local.x;
+  var value = 0u;
+  if (index < viewport.group_count) {
+    value = group_sums[index];
   }
-  indirect[0] = 6u;
-  indirect[1] = running;
-  indirect[2] = 0u;
-  indirect[3] = 0u;
-  indirect[4] = 0u;
+  let inclusive = scan_workgroup(local.x, value);
+  if (index < viewport.group_count) {
+    var exclusive = 0u;
+    if (local.x > 0u) {
+      exclusive = scratch[local.x - 1u];
+    }
+    group_sums[index] = exclusive;
+  }
+  if (local.x == WORKGROUP - 1u) {
+    group_block_sums[block.x] = inclusive;
+  }
+}
+
+@compute @workgroup_size(${String(CULL_WORKGROUP)})
+fn scan_group_blocks(@builtin(local_invocation_id) local: vec3<u32>) {
+  let block_count = (viewport.group_count + WORKGROUP - 1u) / WORKGROUP;
+  var value = 0u;
+  if (local.x < block_count) {
+    value = group_block_sums[local.x];
+  }
+  let inclusive = scan_workgroup(local.x, value);
+  if (local.x < block_count) {
+    var exclusive = 0u;
+    if (local.x > 0u) {
+      exclusive = scratch[local.x - 1u];
+    }
+    group_block_sums[local.x] = exclusive;
+  }
+  if (local.x == WORKGROUP - 1u) {
+    indirect[0] = 6u;
+    indirect[1] = inclusive;
+    indirect[2] = 0u;
+    indirect[3] = 0u;
+    indirect[4] = 0u;
+  }
+}
+
+@compute @workgroup_size(${String(CULL_WORKGROUP)})
+fn add_group_offsets(@builtin(global_invocation_id) id: vec3<u32>) {
+  let group = id.x;
+  if (group >= viewport.group_count) {
+    return;
+  }
+  group_sums[group] += group_block_sums[group / WORKGROUP];
 }
 
 @compute @workgroup_size(${String(CULL_WORKGROUP)})

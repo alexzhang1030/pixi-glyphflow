@@ -20,7 +20,12 @@ export interface PositionedRun {
   readonly glyphCount: number;
   readonly direction: TextDirection;
   readonly glyphIds: Readonly<Uint32Array>;
+  /** UTF-16 cluster starts. Kept under the established name for package compatibility. */
   readonly clusters: Readonly<Uint32Array>;
+  /** Exclusive UTF-16 cluster end for each glyph when exact shaping spans are available. */
+  readonly clusterEnds?: Readonly<Uint32Array>;
+  /** Canonical sorted OpenType variation-axis identity, for example `wdth=90,wght=700`. */
+  readonly variationKey?: string;
   readonly x: Readonly<Float32Array>;
   readonly y: Readonly<Float32Array>;
   readonly xAdvance: Readonly<Float32Array>;

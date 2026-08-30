@@ -1,5 +1,6 @@
 import type { TextStyleFontWeight } from "pixi.js";
 
+import { encodeCacheKey } from "../cache/cacheKey";
 import type { GlyphCacheKey, GlyphMode } from "./types";
 
 const FAMILY_BITS = 12;
@@ -51,6 +52,8 @@ export interface GlyphIdentityInput {
   readonly fontRevision: number;
   readonly glyphId: number;
   readonly glyphText: string;
+  /** Canonical OpenType variation-axis identity from the positioned run. */
+  readonly variationKey?: string;
   readonly fontSize: number;
   readonly fontWeight?: TextStyleFontWeight;
   readonly mode: GlyphMode;
@@ -79,10 +82,7 @@ export function internGlyphFamily(
   fontFamily: string,
   fontFamilies?: readonly string[],
 ): number | undefined {
-  const token =
-    fontFamilies === undefined || fontFamilies.length === 0
-      ? fontFamily
-      : `${fontFamily}\0${fontFamilies.join("\u0001")}`;
+  const token = encodeCacheKey([fontFamily, encodeCacheKey(fontFamilies ?? [])]);
   const existing = familyIds.get(token);
   if (existing !== undefined) return existing;
   if (nextFamilyId > MAX_FAMILY_ID) return undefined;
@@ -94,29 +94,31 @@ export function internGlyphFamily(
 
 /**
  * Pack the live-path atlas key as a 52-bit integer: family, glyph id, size bucket, weight class,
- * mode, and font revision. `glyphText` is not part of the packed key when a glyph id is present.
+ * mode, and font revision. A font-local glyph id supplies the outline identity on this path.
  */
 export function resolveGlyphIdentity(input: GlyphIdentityInput): ResolvedGlyphIdentity {
   const packed = packGlyphIdentity(input);
   if (packed !== undefined) return packed;
   const fontWeight = input.fontWeight ?? "normal";
   return {
-    key: [
+    key: encodeCacheKey([
       input.fontFamily,
-      input.fontFamilies?.join("\u0001") ?? "",
-      input.fontRevision,
-      input.glyphId,
+      encodeCacheKey(input.fontFamilies ?? []),
+      String(input.fontRevision),
+      String(input.glyphId),
       input.glyphText,
-      input.fontSize,
-      fontWeight,
+      input.variationKey ?? "",
+      String(input.fontSize),
+      String(fontWeight),
       input.mode,
-    ].join("\u0000"),
+    ]),
     fontSize: input.fontSize,
     fontWeight,
   };
 }
 
 export function packGlyphIdentity(input: GlyphIdentityInput): ResolvedGlyphIdentity | undefined {
+  if ((input.variationKey ?? "").length > 0) return undefined;
   const familyId = internGlyphFamily(input.fontFamily, input.fontFamilies);
   const glyphId = identityCode(input.glyphId, input.glyphText);
   const fontSize = sizeBucket(input.fontSize);

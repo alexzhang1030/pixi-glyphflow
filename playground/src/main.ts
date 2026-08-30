@@ -1,14 +1,28 @@
 import { Viewport } from "pixi-viewport";
 import { Application, type TextStyleOptions } from "pixi.js";
 
-import { TextLayer, type TextId, type TextLabelSpec } from "../../dist/index.js";
+import {
+  requestComputeCullGpu,
+  TextLayer,
+  type TextId,
+  type TextLabelSpec,
+} from "../../dist/index.js";
 import { bindViewport } from "../../dist/viewport/index.js";
 
 const COLUMNS = 1_000;
 const SPACING = 18;
 const CHUNK_SIZE = 8_192;
 const STORM_INTERVAL_MS = 100;
+const FRAME_SAMPLE_CAPACITY = 120;
+const LIVE_FRAME_MISS_MS = 20;
 const numberFormat = new Intl.NumberFormat("en-US");
+
+interface FrameTelemetry {
+  readonly fps: number;
+  readonly p95Ms: number;
+  readonly overBudget: number;
+  readonly samples: number;
+}
 
 void main().catch((error: unknown) => {
   const state = element("state");
@@ -24,15 +38,25 @@ async function main(): Promise<void> {
   const movingCount = Math.min(labelCount, readCount("moving", 100_000, 100_000));
   const worldWidth = COLUMNS * SPACING;
   const worldHeight = Math.ceil(labelCount / COLUMNS) * SPACING;
+  const gpu = await requestComputeCullGpu({ powerPreference: "high-performance" });
   const app = new Application();
-  await app.init({
+  const appOptions = {
     resizeTo: scene,
-    preference: "webgl",
-    preferWebGLVersion: 2,
+    preferWebGLVersion: 2 as const,
+    powerPreference: "high-performance" as const,
     antialias: false,
     background: 0x070b14,
-  });
+  };
+  try {
+    if (gpu === undefined) await app.init({ ...appOptions, preference: ["webgl"] });
+    else await app.init({ ...appOptions, preference: ["webgpu"], gpu });
+  } catch (error: unknown) {
+    gpu?.device.destroy();
+    throw error;
+  }
   app.stop();
+  app.canvas.setAttribute("role", "img");
+  app.canvas.setAttribute("aria-label", "Interactive one-million-label GPU stress scene");
   scene.prepend(app.canvas);
 
   const viewport = new Viewport({
@@ -42,12 +66,13 @@ async function main(): Promise<void> {
     worldHeight,
     events: app.renderer.events,
   });
+  const fitAllScale = Math.min(app.screen.width / worldWidth, app.screen.height / worldHeight);
   viewport
     .drag()
     .decelerate({ friction: 0.95, minSpeed: 0.01 })
     .wheel({ smooth: 3 })
     .pinch()
-    .clampZoom({ minScale: 0.05, maxScale: 32 });
+    .clampZoom({ minScale: fitAllScale, maxScale: 32 });
   app.stage.addChild(viewport);
 
   const layer = new TextLayer({
@@ -56,6 +81,8 @@ async function main(): Promise<void> {
     culling: {
       bounds: { x: 0, y: 0, width: app.screen.width, height: app.screen.height },
       padding: 24,
+      computeCull: "auto",
+      residency: "gpu-scene",
     },
   });
   const binding = bindViewport(layer, viewport, {
@@ -101,7 +128,8 @@ async function main(): Promise<void> {
   app.start();
   loading.hidden = true;
   const state = element("state");
-  state.textContent = "Live";
+  state.textContent =
+    layer.stats.residencyActive === "gpu-scene" ? "Live · GPU scene" : "Live · viewport";
   state.classList.add("ready");
 
   const firstPositions = buildPositions(movingCount, 0.25);
@@ -139,6 +167,16 @@ async function main(): Promise<void> {
     viewport.emit("frame-end", viewport);
   });
 
+  button("fit-all").addEventListener("click", () => {
+    viewport.rotation = 0;
+    rotation.value = "0";
+    viewport.setZoom(fitAllScale, true);
+    viewport.moveCenter(worldWidth / 2, worldHeight / 2);
+    viewport.emit("moved", { viewport, type: "drag" });
+    viewport.emit("zoomed", { viewport, type: "wheel" });
+    viewport.emit("frame-end", viewport);
+  });
+
   const runStorm = async (): Promise<void> => {
     if (!stormRunning || stormPending) return;
     stormPending = true;
@@ -154,14 +192,33 @@ async function main(): Promise<void> {
   };
   const stormTimer = window.setInterval(() => void runStorm(), STORM_INTERVAL_MS);
 
+  const frameSamples = new Float32Array(FRAME_SAMPLE_CAPACITY);
+  let frameSampleCount = 0;
+  let frameSampleCursor = 0;
+  let lastFrameAt = performance.now();
+  let frameTelemetry: FrameTelemetry = { fps: 0, p95Ms: 0, overBudget: 0, samples: 0 };
   app.ticker.add(() => {
     viewport.emit("frame-end", viewport);
     const now = performance.now();
+    const frameMs = now - lastFrameAt;
+    lastFrameAt = now;
+    if (frameMs <= 1_000) {
+      frameSamples[frameSampleCursor] = frameMs;
+      frameSampleCursor = (frameSampleCursor + 1) % FRAME_SAMPLE_CAPACITY;
+      frameSampleCount = Math.min(FRAME_SAMPLE_CAPACITY, frameSampleCount + 1);
+    }
     if (now - lastHudUpdate < 200) return;
     lastHudUpdate = now;
-    updateHud(layer, binding.stats.lastDurationMs, movingCount, lastStormMs);
+    frameTelemetry = summarizeFrames(frameSamples, frameSampleCount);
+    updateHud(layer, binding.stats.lastDurationMs, movingCount, lastStormMs, frameTelemetry);
   });
-  updateHud(layer, binding.stats.lastDurationMs, movingCount, performance.now() - setupStart);
+  updateHud(
+    layer,
+    binding.stats.lastDurationMs,
+    movingCount,
+    performance.now() - setupStart,
+    frameTelemetry,
+  );
 
   const resize = (): void => {
     viewport.resize(app.screen.width, app.screen.height, worldWidth, worldHeight);
@@ -177,6 +234,7 @@ async function main(): Promise<void> {
       layer.destroy();
       viewport.destroy({ children: true });
       app.destroy(true);
+      gpu?.device.destroy();
     },
     { once: true },
   );
@@ -197,16 +255,52 @@ function updateHud(
   viewportDurationMs: number,
   movingCount: number,
   stormDurationMs: number,
+  frameTelemetry: Readonly<FrameTelemetry>,
 ): void {
   const stats = layer.stats;
   write("resident", numberFormat.format(stats.labelCount));
   write("visible", numberFormat.format(stats.visibleLabelCount));
   write("moving", numberFormat.format(movingCount));
+  write("fps", frameTelemetry.fps.toFixed(0));
+  write("frame-p95", `${frameTelemetry.p95Ms.toFixed(2)} ms`);
+  write(
+    "frame-over-budget",
+    `${numberFormat.format(frameTelemetry.overBudget)} / ${numberFormat.format(frameTelemetry.samples)}`,
+  );
   write("revision", numberFormat.format(Number(stats.revision)));
   write("storm-time", `${stormDurationMs.toFixed(2)} ms`);
   write("viewport-time", `${viewportDurationMs.toFixed(2)} ms`);
+  write("scene-setup", `${stats.lastSceneSetupMs.toFixed(2)} ms`);
   write("draws", numberFormat.format(stats.drawCalls));
   write("glyphs", numberFormat.format(stats.submittedGlyphs));
+  write("renderer", formatRenderer(stats.rendererAdapter));
+  write(
+    "residency",
+    stats.residencyFallbackReason === undefined
+      ? stats.residencyActive
+      : `${stats.residencyActive} · ${stats.residencyFallbackReason}`,
+  );
+  write("cull-path", stats.cullPath);
+  write("palette-path", stats.palettePath);
+}
+
+function summarizeFrames(samples: Float32Array, count: number): FrameTelemetry {
+  if (count === 0) return { fps: 0, p95Ms: 0, overBudget: 0, samples: 0 };
+  const sorted = Array.from(samples.subarray(0, count)).sort((left, right) => left - right);
+  const total = sorted.reduce((sum, sample) => sum + sample, 0);
+  const p95Index = Math.min(sorted.length - 1, Math.floor(sorted.length * 0.95));
+  return {
+    fps: (count * 1_000) / total,
+    p95Ms: sorted[p95Index] ?? 0,
+    overBudget: sorted.filter((sample) => sample > LIVE_FRAME_MISS_MS).length,
+    samples: count,
+  };
+}
+
+function formatRenderer(renderer: string): string {
+  if (renderer === "webgpu") return "WebGPU";
+  if (renderer === "webgl") return "WebGL 2";
+  return renderer;
 }
 
 function readCount(name: string, fallback: number, maximum: number): number {

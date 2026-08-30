@@ -209,7 +209,10 @@ The 1.1.0 suite already meets the formal million-label frame budgets. The next p
   source. Published instance, transform, and store ceilings stay until new artifacts exist.
 - Wave 3: stable WebGPU compute compaction and indirect draw are in source for the direct
   natural-order mesh. WebGL 2 and multi-segment meshes keep the CPU grid. Atlas pages bind as
-  two texture arrays. Transform storage buffers remain follow-up work.
+  two texture arrays. WebGPU transform storage owns live x/y. The explicit
+  `culling.residency: "gpu-scene"` lane retains up to 64 prototypes × 8 paints across 512 bins,
+  patches transform origins and absolute cull AABBs in one fused pass, and defers CPU spatial
+  rebucketing until a CPU query.
 - Wave 4: TinySDF / prebake / four-channel rect uploads, duplicate-string layout intern,
   shared prototype instance ranges, the first-seen admit lane, the broadcast content lane,
   spatial `placeMany`, the prototype-fetch instance mesh, compute-cull ring-only unique
@@ -222,7 +225,36 @@ The 1.1.0 suite already meets the formal million-label frame budgets. The next p
   in the seeing commit. The off-screen admit budget (`offscreenAdmitBudgetBytes`) gates
   ring intern hits and same-commit ring copies. Atlas texel uploads for already-instanced
   glyphs stay ungated.
-- Wave 5: optional Slug outline mode, collision, SIMD, SharedArrayBuffer ring.
+- Wave 5 stays an open umbrella with explicit per-track decisions. HarfBuzz GPU packaged
+  Worker/Wasm and packed browser storage are GO; the direct `vec4<i32>` route waits at its separate
+  quality/performance gate. Outline compute/fragment integration and lifecycle are GO. Advanced SAB
+  transport is GO with `SharedArrayBuffer`, `Atomics`, and cross-origin isolation. Collision direct
+  selection/compute and whole-frame repeatability are GO at 11.87 ms mean WebGPU p95. Packaged
+  HarfBuzz worker SIMD is HOLD after a 2.51% variant regression.
+- Wave 5 native/browser checkpoint: HarfBuzz 14.4.0 shapes 151 glyphs and encodes 114 font-local
+  unique blobs with zero draw/encode failures and stable repeated hashes. Packed 16-bit storage
+  projects to 57,409,123 bytes and passes browser rendering plus the 64 MiB gate. The packaged
+  Worker/Wasm encoder passes native parity, 10,000 glyph/s, and 100 ms cold-start gates. Direct
+  WebGPU `vec4<i32>` storage projects to 114,818,246 bytes and stays PAUSE.
+- R4 map-symbol continuity now has explicit logical/candidate identity, deterministic overlap
+  selection, separated source/placement epochs, fade/readmit/TTL, staged abort, committed-read
+  isolation, a bit-level state hash, u32 exhaustion, and a 1,048,576-record hard ceiling. Targeted
+  correctness is GO. Repeated 100k local runs place manual-mode frame p95 at 9.85–11.57 ms and
+  every-frame p95 at 14.46–16.17 ms. The dual-mode index microbenchmark is GO. TextLayer product
+  integration remains HOLD through R2 WAL/delta, browser-workload, and sustained-frame gates.
+- R5 sparse strips now have a versioned two-pass typed IR, byte-bounded defensive LRU, physical
+  pixel buckets, checked u32/allocation preflight, owned pre-await snapshots, near-O(N log N)
+  overlap validation, exact-size dispatch groups, and an independent WebGPU `OutlineColorAtlas`
+  adapter. Real Chrome proves 256/512 HarfBuzz pixel parity within two channel levels, stable
+  repeated hashes, and dispatch padding within 1.15× effective pixels. CPU representation is 29.47%
+  of dense alpha bytes at 512 pixels and 15.04% at 1024 pixels. Product routing remains HOLD through
+  the sustained atlas-pressure, stable-atlas-hit, and whole-frame tail gates.
+- Correctness foundation for the next renderer generation: one internal render token now binds
+  every asynchronous cold glyph request to its layer epoch, coordinator ticket, source/font
+  revisions, atlas generation, and renderer destination. TextLayer lifecycle transitions retire
+  captured render work while keeping the public TextLayer interface stable. Internally owned
+  raster work settles through that stale path after attach, detach, or destroy. Injected atlases
+  keep caller lifecycle ownership and isolate public frame commits from coordinator frame tokens.
 
 ### Checkpoint
 
@@ -231,6 +263,30 @@ The 1.1.0 suite already meets the formal million-label frame budgets. The next p
 - Core gzip is still measured; the 40 KiB CI fail is deferred.
 - WebGL 2 remains inside current budgets when a WebGPU-only path is added.
 - Raw artifacts and the generated report are overwritten from isolated Chrome runs.
+- GPU-scene resident truth repeatability is GO across five schema 7 1M-label / 100K-mover runs.
+  Each reads 50,000 compact references with hash `0x45cfd045`, pixel hash `0xa8ad90b4`, and 302,457
+  non-transparent pixels. Formal telemetry is 1,300 readbacks / 1,300 fused timestamp resolves /
+  zero standalone submissions. Aggregate camera p95/p99/max is 7.9/9.4/10.6 ms and position is
+  9.8/11.0/12.5 ms, with zero overruns in both 600-frame formal sets. Five of five runs pass every formal
+  budget. The independent sustained run records 1,220/1,220/0 telemetry, camera 10.5/13.5/21.5 ms
+  with 4/600 overruns, and position 8.1/9.9/11.6 ms with zero overruns. All 1,300 formal segmented samples are
+  exact. Sustained 600, formal performance, and overall promotion are GO.
+- Current resident movers use a dense 8-byte exact-f32 fast path for sorted, unique, strictly
+  contiguous active slots and an indexed 12-byte fallback for sparse, reordered, duplicate, and
+  holed inputs. The 16-byte header carries `baseSlot` and `count`, so dense 10,000- and
+  100,000-mover waves upload exactly 80,016 and 800,016 bytes. Fresh formal artifacts own the R1a
+  position-promotion decision; current artifacts use 8-byte dense uploads, historical R1a preserves
+  12-byte / 1,200,016-byte captures, and historical resident artifacts preserve 16-byte captures.
+- Palette, compute, and frame-transaction resources follow the live `GPUDevice`, pass epoch, and
+  encoder epoch. Loss blocks re-entry on
+  that identity; replacement rebuilds pipelines, Pixi buffers and hooks, full cull records, and
+  resident local bounds before recovery is acknowledged. Stale epoch callbacks release ownership
+  while current callbacks alone publish sync and failure state.
+- Late raster, font revision, destination, attach, detach, and destroy fixtures publish zero stale
+  atlas uploads and expose rejected completions through coordinator telemetry. Active provider
+  errors preserve their rejection, and token lifetime storage stays proportional to pending glyphs.
+- `bun run benchmark:hb-gpu` compiles its native helper in a temporary directory, validates all
+  five provenance hashes, records per-glyph extents/bytes/timing, and writes the pinned raw artifact.
 
 ## Risks and mitigations
 

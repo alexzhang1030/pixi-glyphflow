@@ -1,24 +1,52 @@
 import type { BLEND_MODES, TextStyleOptions } from "pixi.js";
 
-import { GlyphAtlas } from "../atlas/GlyphAtlas";
+import {
+  commitGlyphAtlasRenderFrame,
+  discardGlyphAtlasRenderFrame,
+  GlyphAtlas,
+  requestGlyphAtlasRenderToken,
+  stageGlyphAtlasRenderToken,
+} from "../atlas/GlyphAtlas";
 import { resolveGlyphIdentity } from "../atlas/glyphIdentity";
+import { RasterProviderDisposedError, sameRenderScope } from "../atlas/types";
 import type {
+  AtlasGlyphRaster,
   GlyphAtlasOptions,
   GlyphCacheKey,
   GlyphMode,
   GlyphRaster,
   RasterGlyphProviderOptions,
   RasterGlyphRequest,
+  RenderToken,
+  RenderTokenScope,
 } from "../atlas/types";
 import type { AtlasCommit } from "../atlas/types";
+import { encodeCacheKey } from "../cache/cacheKey";
 import type { FontRegistry } from "../FontRegistry";
 import { LayoutEngine } from "../layout/LayoutEngine";
+import {
+  isLeasedPositionedRun,
+  ownedPositionedRun,
+  releasePositionedRun,
+  retainPositionedRun,
+} from "../layout/PositionedRunLease";
 import type { LayoutResult, PositionedRun, TextLayoutInput } from "../layout/types";
+import { createControlledTeardown } from "../lifecycle/ControlledTeardown";
 import type { TrustedGlyphRun } from "../shaping/TrustedGlyphRun";
 import { TextDirty } from "../store/types";
 import type { TextLayoutOptions, TextShapingOptions } from "../types";
+import { cleanupBestEffort } from "./cleanup";
 import { GlyphInstanceStore } from "./GlyphInstanceStore";
-import { TransformPalette } from "./TransformPalette";
+import type { GpuResidentAdmitColumn } from "./GpuResidentScene";
+import {
+  GPU_SCENE_MAX_PAINTS,
+  GPU_SCENE_MAX_PROTOTYPES,
+  GpuSceneCompiler,
+  type GpuScenePlan,
+  type GpuScenePrototypeBinding,
+} from "./GpuSceneCompiler";
+import type { OutlineRenderingPlugin, OutlineRenderingRasterRequest } from "./outline/types";
+import { canonicalFillPaint, TransformPalette } from "./TransformPalette";
 import type {
   GlyphInstanceBatch,
   GlyphInstanceStoreOptions,
@@ -43,6 +71,8 @@ export interface RenderLabelSnapshot {
   readonly style: Readonly<TextStyleOptions>;
   readonly layout?: Readonly<TextLayoutOptions>;
   readonly shaping?: Readonly<TextShapingOptions>;
+  /** Projected font height in device pixels. Present on the regular label path. */
+  readonly projectedHeightPx?: number;
 }
 
 export interface RenderChange {
@@ -72,6 +102,10 @@ export interface RenderCoordinatorOptions {
   readonly glyphProvider?: GlyphProviderLike;
   /** Dynamic canvas and MSDF rasterizer configuration used by the default glyph provider. */
   readonly rasterizerOptions?: RasterGlyphProviderOptions;
+  /** Explicitly opt into analytic outline rasterization for eligible HarfBuzz glyphs. */
+  readonly glyphMode?: "auto" | "outline";
+  /** Caller-owned side-entry plugin used when `glyphMode` is `outline`. */
+  readonly outline?: OutlineRenderingPlugin;
   readonly atlas?: GlyphAtlas;
   readonly instances?: GlyphInstanceStore;
   readonly transforms?: TransformPalette;
@@ -97,6 +131,7 @@ export interface ContentLaneInput {
   readonly xy: Float32Array;
   readonly text: string;
   readonly style: Readonly<TextStyleOptions>;
+  readonly projectedHeightPx?: number;
   /** Storage palette patches x/y on the GPU; skip the CPU 32-byte scatter. */
   readonly writePalettePositions?: boolean;
 }
@@ -104,6 +139,7 @@ export interface ContentLaneInput {
 interface PreparedAdmitColumn {
   readonly group: AdmitLaneGroup;
   readonly run: Readonly<PositionedRun>;
+  readonly ownedRun: Readonly<PositionedRun>;
   readonly snapshot: Readonly<RenderLabelSnapshot>;
 }
 
@@ -115,6 +151,28 @@ export interface AdmitLaneGroup {
   readonly orders: Uint32Array;
   readonly text: string;
   readonly style: Readonly<TextStyleOptions>;
+  readonly projectedHeightPx?: number;
+}
+
+/** GPU-resident first-seen group. Slot traversal must preserve transparent draw order. */
+export interface ResidentAdmitLaneGroup extends AdmitLaneGroup {
+  readonly zIndex: number;
+  readonly blendMode: BLEND_MODES;
+  /** Pre-layout geometry candidate assigned by the bounded GPU-scene compiler. */
+  readonly prototypeCandidateIndex?: number;
+}
+
+export type ResidentPrototypeColumn = GpuResidentAdmitColumn;
+
+export interface ResidentAdmitLaneResult extends RenderCommitResult {
+  readonly residentColumns: readonly Readonly<ResidentPrototypeColumn>[];
+  /** Internal bounded-plan outcome consumed by TextLayer's deterministic fallback path. */
+  readonly residentFallbackReason?: "device-limit";
+}
+
+export interface ResidentAdmitLaneOptions {
+  /** Complete-scene device capacity check, called after layout and before raster/atlas work. */
+  readonly capacityFits?: (recordCount: number, drawInstanceCount: number) => boolean;
 }
 
 export interface RenderDrawState {
@@ -133,6 +191,11 @@ export interface RenderCoordinatorStats {
   readonly removedLabels: number;
   readonly glyphs: number;
   readonly pendingGlyphs: number;
+  readonly staleGlyphResults: number;
+  readonly residentLabels: number;
+  readonly residentPrototypeCount: number;
+  /** Resident labels own typed palette/record columns and zero coordinator objects per label. */
+  readonly residentPerLabelObjectCount: 0;
   readonly lastLayoutMs: number;
   readonly lastInstanceWriteMs: number;
   readonly lastPaletteWriteMs: number;
@@ -141,13 +204,62 @@ export interface RenderCoordinatorStats {
 interface PreparedChange {
   readonly change: RenderChange;
   readonly run?: Readonly<PositionedRun>;
+  readonly ownedRun?: Readonly<PositionedRun>;
+}
+
+interface BuiltGlyphInstances {
+  readonly batch: GlyphInstanceBatch;
+  readonly atlasKeys: readonly GlyphCacheKey[];
+}
+
+interface PreparedResidentColumn {
+  readonly group: ResidentAdmitLaneGroup;
+  readonly run: Readonly<PositionedRun>;
+  readonly ownedRun: Readonly<PositionedRun>;
+  readonly snapshot: Readonly<RenderLabelSnapshot>;
+}
+
+interface PreparedSharedColumn {
+  readonly run: Readonly<PositionedRun>;
+  readonly ownedRun: Readonly<PositionedRun>;
+  readonly snapshot: Readonly<RenderLabelSnapshot>;
 }
 
 const EMPTY_ATLAS_COMMIT: Readonly<AtlasCommit> = Object.freeze({
   entries: Object.freeze([]),
   uploads: Object.freeze([]),
+  externalUploads: Object.freeze([]),
   evictedKeys: Object.freeze([]),
 });
+
+interface GlyphRasterPlan {
+  readonly baseMode: GlyphMode;
+  readonly identityMode: GlyphMode;
+  readonly identityVariationKey: string;
+  readonly outlineRequest?: Readonly<OutlineRenderingRasterRequest>;
+}
+
+const LAYER_LIFECYCLE_EPOCH = Symbol("pixi-glyphflow render lifecycle epoch");
+type LayerRenderCoordinatorOptions = RenderCoordinatorOptions & {
+  readonly [LAYER_LIFECYCLE_EPOCH]: number;
+};
+
+/** @internal Construct a coordinator whose render tokens carry the owning layer epoch. */
+export function createLayerRenderCoordinator(
+  options: Omit<RenderCoordinatorOptions, "registry">,
+  registry: FontRegistry,
+  lifecycleEpoch: number,
+): RenderCoordinator {
+  if (!Number.isSafeInteger(lifecycleEpoch) || lifecycleEpoch < 0) {
+    throw new TypeError("Render lifecycle epoch must be a non-negative safe integer");
+  }
+  const coordinatorOptions: LayerRenderCoordinatorOptions = {
+    ...options,
+    registry,
+    [LAYER_LIFECYCLE_EPOCH]: lifecycleEpoch,
+  };
+  return new RenderCoordinator(coordinatorOptions);
+}
 
 export class RenderCoordinator {
   readonly instances: GlyphInstanceStore;
@@ -163,10 +275,13 @@ export class RenderCoordinator {
   readonly #runs = new Map<number, Readonly<PositionedRun>>();
   readonly #drawStates = new Map<number, Readonly<RenderDrawState>>();
   readonly #pendingGlyphs = new Map<GlyphCacheKey, Promise<void>>();
-  readonly #prototypeSlots = new Map<string, number>();
-  readonly #slotPrototypeKeys = new Map<number, string>();
+  readonly #pendingGlyphTokens = new Map<GlyphCacheKey, Readonly<RenderToken>>();
   readonly #slotAtlasKeys = new Map<number, readonly GlyphCacheKey[]>();
   readonly #atlasKeyRefs = new Map<GlyphCacheKey, number>();
+  readonly #residentPrototypeSlots = new Set<number>();
+  #residentCompiler: GpuSceneCompiler | undefined;
+  #pendingAtlasCommit: Readonly<AtlasCommit> | undefined;
+  readonly #pendingAtlasPins: GlyphCacheKey[] = [];
   #batchPositions = new Float32Array(0);
   #batchUvs = new Float32Array(0);
   #batchPalette = new Uint32Array(0);
@@ -190,18 +305,26 @@ export class RenderCoordinator {
   #drawStatesDirty = true;
   #drawListEpoch = 0;
   readonly #ensuredRuns = new Map<Readonly<PositionedRun>, Map<string, Promise<void> | "done">>();
+  readonly #runLeases = new Map<Readonly<RenderTokenScope>, Set<Readonly<PositionedRun>>>();
   #ensuredTicket = 0;
   readonly #registry: FontRegistry;
+  readonly #destinationIdentity = Object.freeze({});
+  #lifecycleEpoch = 0;
+  #activeScope: Readonly<RenderTokenScope> | undefined;
   #runsByStyle = new WeakMap<object, Map<string, LayoutResult>>();
-  readonly #runsByFace = new Map<string, Map<number, Map<string, LayoutResult>>>();
-  readonly #runsByExtra = new Map<string, LayoutResult>();
-  readonly #prototypeByRun = new WeakMap<object, number>();
+  readonly #prototypeByRun = new WeakMap<object, Map<string, number>>();
+  readonly #slotPrototypeVariants = new Map<number, string>();
   #internRevision = -1;
   #lastLayoutMs = 0;
   #lastInstanceWriteMs = 0;
   #lastPaletteWriteMs = 0;
+  #staleGlyphResults = 0;
+  #residentLabels = 0;
+  #drawRebuildPending = false;
   readonly #tinySdf: boolean;
+  readonly #outline: OutlineRenderingPlugin | undefined;
   #destroyed = false;
+  #destroyPromise: Promise<void> | undefined;
 
   constructor(options: RenderCoordinatorOptions) {
     this.#layout = options.layoutEngine ?? new LayoutEngine(options.registry);
@@ -217,7 +340,19 @@ export class RenderCoordinator {
     this.#ownsInstances = options.instances === undefined;
     this.#ownsTransforms = options.transforms === undefined;
     this.#registry = options.registry;
+    this.#lifecycleEpoch =
+      LAYER_LIFECYCLE_EPOCH in options
+        ? (options as LayerRenderCoordinatorOptions)[LAYER_LIFECYCLE_EPOCH]
+        : 0;
     this.#tinySdf = options.rasterizerOptions?.tinySdf === true;
+    if (options.glyphMode === "outline" && options.outline === undefined) {
+      throw new TypeError("glyphMode outline requires an outline rendering plugin");
+    }
+    this.#outline = options.glyphMode === "outline" ? options.outline : undefined;
+  }
+
+  get outlineEnabled(): boolean {
+    return this.#outline !== undefined;
   }
 
   async commit(
@@ -232,142 +367,165 @@ export class RenderCoordinator {
     this.#lastLayoutMs = 0;
     this.#lastInstanceWriteMs = 0;
     this.#lastPaletteWriteMs = 0;
-    const ticket = ++this.#ticket;
-    const prepareStart = performance.now();
-    const preparedOrPending = this.#prepareChanges(changes, ticket);
-    const prepared = isPromise(preparedOrPending) ? await preparedOrPending : preparedOrPending;
-    this.#lastLayoutMs = performance.now() - prepareStart;
-    if (ticket !== this.#ticket) {
-      this.#staleRevisions += 1;
-      return this.#result(revision, true, 0, EMPTY_ATLAS_COMMIT, false);
-    }
+    const scope = this.#beginRender();
+    try {
+      const prepareStart = performance.now();
+      const preparedOrPending = this.#prepareChanges(changes, scope);
+      const prepared = isPromise(preparedOrPending) ? await preparedOrPending : preparedOrPending;
+      this.#lastLayoutMs = performance.now() - prepareStart;
+      if (!this.#isScopeCurrent(scope)) {
+        this.#discardAtlas(scope);
+        this.#staleRevisions += 1;
+        return this.#result(revision, true, 0, EMPTY_ATLAS_COMMIT, false);
+      }
 
-    const atlasCommit = this.atlas.commitFrame();
-    let appliedLabels = 0;
-    let drawOrderChanged = false;
-    let wroteInstances = false;
-    const writeStart = performance.now();
-    for (const item of prepared) {
-      const { change, run } = item;
-      if (change.snapshot === undefined) {
-        const removedState = this.#drawStates.get(change.slot);
-        if (removedState !== undefined) {
-          this.#drawStates.delete(change.slot);
-          if (removedState.zIndex !== 0) this.#nonZeroZStates -= 1;
-          drawOrderChanged = true;
-          this.#drawStatesDirty = true;
-          this.#drawListEpoch += 1;
-        }
-        if (change.retainResources === true) {
+      const atlasCommit = this.#commitAtlas(scope);
+      let appliedLabels = 0;
+      let shapedLabels = 0;
+      let transformOnlyLabels = 0;
+      let removedLabels = 0;
+      let drawOrderChanged = false;
+      let wroteInstances = false;
+      const writeStart = performance.now();
+      for (const item of prepared) {
+        const { change, run } = item;
+        if (change.snapshot === undefined) {
+          const removedState = this.#drawStates.get(change.slot);
+          if (removedState !== undefined) {
+            this.#drawStates.delete(change.slot);
+            if (removedState.zIndex !== 0) this.#nonZeroZStates -= 1;
+            drawOrderChanged = true;
+            this.#drawRebuildPending = true;
+            this.#drawStatesDirty = true;
+            this.#drawListEpoch += 1;
+          }
+          if (change.retainResources === true) {
+            appliedLabels += 1;
+            continue;
+          }
+          this.#forgetPrototype(change.slot);
+          this.#runs.delete(change.slot);
+          this.#releaseSlotKeys(change.slot);
+          const instanceStart = performance.now();
+          this.instances.remove(change.slot);
+          const paletteStart = performance.now();
+          this.#lastInstanceWriteMs += paletteStart - instanceStart;
+          this.transforms.remove(change.slot);
+          this.#lastPaletteWriteMs += performance.now() - paletteStart;
+          removedLabels += 1;
           appliedLabels += 1;
           continue;
         }
-        this.#forgetPrototype(change.slot);
-        this.#runs.delete(change.slot);
-        this.#releaseSlotKeys(change.slot);
-        const instanceStart = performance.now();
-        this.instances.remove(change.slot);
-        const paletteStart = performance.now();
-        this.#lastInstanceWriteMs += paletteStart - instanceStart;
-        this.transforms.remove(change.slot);
-        this.#lastPaletteWriteMs += performance.now() - paletteStart;
-        this.#removedLabels += 1;
-        appliedLabels += 1;
-        continue;
-      }
-      if (run === undefined) {
-        throw new Error(`Prepared render run missing for slot ${String(change.slot)}`);
-      }
-      const previousDrawState = this.#drawStates.get(change.slot);
-      if (
-        previousDrawState === undefined ||
-        previousDrawState.zIndex !== change.snapshot.zIndex ||
-        previousDrawState.order !== change.snapshot.order ||
-        previousDrawState.blendMode !== change.snapshot.blendMode
-      ) {
-        if (
-          change.snapshot.zIndex !== 0 &&
-          (previousDrawState === undefined || previousDrawState.zIndex === 0)
-        ) {
-          this.#nonZeroZStates += 1;
-        } else if (
-          change.snapshot.zIndex === 0 &&
-          previousDrawState !== undefined &&
-          previousDrawState.zIndex !== 0
-        ) {
-          this.#nonZeroZStates -= 1;
+        if (run === undefined) {
+          throw new Error(`Prepared render run missing for slot ${String(change.slot)}`);
         }
-        if (previousDrawState === undefined) {
-          // Ascending zero-z inserts append in sorted position; anything else must re-sort.
-          if (change.snapshot.order < this.#lastAddedOrder || this.#nonZeroZStates > 0) {
+        const previousDrawState = this.#drawStates.get(change.slot);
+        if (
+          previousDrawState === undefined ||
+          previousDrawState.zIndex !== change.snapshot.zIndex ||
+          previousDrawState.order !== change.snapshot.order ||
+          previousDrawState.blendMode !== change.snapshot.blendMode
+        ) {
+          if (
+            change.snapshot.zIndex !== 0 &&
+            (previousDrawState === undefined || previousDrawState.zIndex === 0)
+          ) {
+            this.#nonZeroZStates += 1;
+          } else if (
+            change.snapshot.zIndex === 0 &&
+            previousDrawState !== undefined &&
+            previousDrawState.zIndex !== 0
+          ) {
+            this.#nonZeroZStates -= 1;
+          }
+          if (previousDrawState === undefined) {
+            // Ascending zero-z inserts append in sorted position; anything else must re-sort.
+            if (change.snapshot.order < this.#lastAddedOrder || this.#nonZeroZStates > 0) {
+              this.#needsDrawSort = true;
+            }
+            this.#lastAddedOrder = Math.max(this.#lastAddedOrder, change.snapshot.order);
+          } else if (
+            previousDrawState.zIndex !== change.snapshot.zIndex ||
+            previousDrawState.order !== change.snapshot.order
+          ) {
             this.#needsDrawSort = true;
           }
-          this.#lastAddedOrder = Math.max(this.#lastAddedOrder, change.snapshot.order);
-        } else if (
-          previousDrawState.zIndex !== change.snapshot.zIndex ||
-          previousDrawState.order !== change.snapshot.order
-        ) {
-          this.#needsDrawSort = true;
+          this.#drawStates.set(
+            change.slot,
+            Object.freeze({
+              slot: change.slot,
+              zIndex: change.snapshot.zIndex,
+              order: change.snapshot.order,
+              blendMode: change.snapshot.blendMode,
+            }),
+          );
+          drawOrderChanged = true;
+          this.#drawRebuildPending = true;
+          this.#drawStatesDirty = true;
         }
-        this.#drawStates.set(
+        const sourceChanged = this.#sourceChanged(change);
+        if (sourceChanged) {
+          const ownedRun = item.ownedRun ?? run;
+          this.#writeInstances(change.slot, run, change.snapshot, ownedRun);
+          wroteInstances = true;
+          shapedLabels += 1;
+        } else {
+          transformOnlyLabels += 1;
+        }
+        const keepFill =
+          change.positionOnly === true &&
+          change.snapshot.anchorX === 0 &&
+          change.snapshot.anchorY === 0;
+        if (
+          keepFill &&
+          this.transforms.setPosition(change.slot, change.snapshot.x, change.snapshot.y)
+        ) {
+          appliedLabels += 1;
+          continue;
+        }
+        this.transforms.set(
           change.slot,
-          Object.freeze({
-            slot: change.slot,
-            zIndex: change.snapshot.zIndex,
-            order: change.snapshot.order,
-            blendMode: change.snapshot.blendMode,
-          }),
+          {
+            x: change.snapshot.x,
+            y: change.snapshot.y,
+            scaleX: change.snapshot.scaleX,
+            scaleY: change.snapshot.scaleY,
+            rotation: change.snapshot.rotation,
+            alpha: change.snapshot.alpha,
+            visible: change.snapshot.visible,
+            anchorX: change.snapshot.anchorX,
+            anchorY: change.snapshot.anchorY,
+            fill: change.snapshot.style.fill,
+            stroke: change.snapshot.style.stroke,
+            dropShadow: change.snapshot.style.dropShadow,
+          },
+          run.bounds,
         );
-        drawOrderChanged = true;
-        this.#drawStatesDirty = true;
-      }
-      const sourceChanged = this.#sourceChanged(change);
-      if (sourceChanged) {
-        this.#runs.set(change.slot, run);
-        this.#writeInstances(change.slot, run, change.snapshot);
-        wroteInstances = true;
-        this.#shapedLabels += 1;
-      } else {
-        this.#transformOnlyLabels += 1;
-      }
-      const keepFill =
-        change.positionOnly === true &&
-        change.snapshot.anchorX === 0 &&
-        change.snapshot.anchorY === 0;
-      if (
-        keepFill &&
-        this.transforms.setPosition(change.slot, change.snapshot.x, change.snapshot.y)
-      ) {
         appliedLabels += 1;
-        continue;
       }
-      this.transforms.set(
-        change.slot,
-        {
-          x: change.snapshot.x,
-          y: change.snapshot.y,
-          scaleX: change.snapshot.scaleX,
-          scaleY: change.snapshot.scaleY,
-          rotation: change.snapshot.rotation,
-          alpha: change.snapshot.alpha,
-          visible: change.snapshot.visible,
-          anchorX: change.snapshot.anchorX,
-          anchorY: change.snapshot.anchorY,
-          fill: change.snapshot.style.fill,
-          stroke: change.snapshot.style.stroke,
-          dropShadow: change.snapshot.style.dropShadow,
-        },
-        run.bounds,
+      const writeMs = performance.now() - writeStart;
+      if (wroteInstances) this.#lastInstanceWriteMs = writeMs;
+      else this.#lastPaletteWriteMs = writeMs;
+      const result = this.#result(
+        revision,
+        false,
+        appliedLabels,
+        atlasCommit,
+        drawOrderChanged || this.#drawRebuildPending,
       );
-      appliedLabels += 1;
+      this.#releaseRunLeases(scope);
+      this.#acceptAtlasCommit();
+      this.#revisions += 1;
+      this.#appliedLabels += appliedLabels;
+      this.#shapedLabels += shapedLabels;
+      this.#transformOnlyLabels += transformOnlyLabels;
+      this.#removedLabels += removedLabels;
+      this.#drawRebuildPending = false;
+      return result;
+    } catch (error: unknown) {
+      cleanupBestEffort([() => this.#discardAtlas(scope)]);
+      throw error;
     }
-    const writeMs = performance.now() - writeStart;
-    if (wroteInstances) this.#lastInstanceWriteMs = writeMs;
-    else this.#lastPaletteWriteMs = writeMs;
-    this.#revisions += 1;
-    this.#appliedLabels += appliedLabels;
-
-    return this.#result(revision, false, appliedLabels, atlasCommit, drawOrderChanged);
   }
 
   /**
@@ -380,21 +538,27 @@ export class RenderCoordinator {
     xy: Float32Array,
   ): Readonly<RenderCommitResult> {
     this.#assertActive();
+    validatePackedLane("Position lane", count, slots, xy);
     const paletteStart = performance.now();
     const written = this.transforms.writePositions(slots, count, xy);
     this.#lastPaletteWriteMs += performance.now() - paletteStart;
     this.#transformOnlyLabels += count;
     this.#appliedLabels += count;
 
-    return this.#result(0, false, written, EMPTY_ATLAS_COMMIT, false);
+    const result = this.#result(0, false, written, EMPTY_ATLAS_COMMIT, this.#drawRebuildPending);
+    this.#drawRebuildPending = false;
+    return result;
   }
 
   /** Count a position storm that the GPU storage table will patch. */
   notePositionLane(count: number): Readonly<RenderCommitResult> {
     this.#assertActive();
+    assertLaneCount("Position lane", count);
     this.#transformOnlyLabels += count;
     this.#appliedLabels += count;
-    return this.#result(0, false, count, EMPTY_ATLAS_COMMIT, false);
+    const result = this.#result(0, false, count, EMPTY_ATLAS_COMMIT, this.#drawRebuildPending);
+    this.#drawRebuildPending = false;
+    return result;
   }
 
   /**
@@ -403,38 +567,54 @@ export class RenderCoordinator {
    */
   async applyContentLane(input: ContentLaneInput): Promise<Readonly<RenderCommitResult>> {
     this.#assertActive();
+    validatePackedLane("Content lane", input.count, input.slots, input.xy);
     if (input.count <= 0) {
-      return this.#result(0, false, 0, EMPTY_ATLAS_COMMIT, false);
+      const result = this.#result(0, false, 0, EMPTY_ATLAS_COMMIT, this.#drawRebuildPending);
+      this.#drawRebuildPending = false;
+      return result;
     }
-    if (input.xy.length < input.count * 2) {
-      throw new TypeError("Content lane xy must contain one packed pair per slot");
-    }
-    const ticket = ++this.#ticket;
-    const prepareStart = performance.now();
-    const prepared = await this.#prepareSharedColumn(
-      input.text,
-      input.style,
-      input.slots[0] ?? 0,
-      ticket,
-    );
-    this.#lastLayoutMs = performance.now() - prepareStart;
-    if (prepared === undefined) {
-      this.#staleRevisions += 1;
-      return this.#result(0, true, 0, EMPTY_ATLAS_COMMIT, false);
-    }
+    const scope = this.#beginRender();
+    try {
+      const prepareStart = performance.now();
+      const prepared = await this.#prepareSharedColumn(
+        input.text,
+        input.style,
+        input.slots[0] ?? 0,
+        scope,
+        input.projectedHeightPx,
+      );
+      this.#lastLayoutMs = performance.now() - prepareStart;
+      if (prepared === undefined) {
+        this.#discardAtlas(scope);
+        this.#staleRevisions += 1;
+        return this.#result(0, true, 0, EMPTY_ATLAS_COMMIT, false);
+      }
 
-    const atlasCommit = this.atlas.commitFrame();
-    const writeStart = performance.now();
-    this.#writeInstanceColumn(input.slots, input.count, prepared.run, prepared.snapshot);
-    if (input.writePalettePositions !== false) {
-      this.transforms.writePositions(input.slots, input.count, input.xy);
+      const atlasCommit = this.#commitAtlas(scope);
+      const writeStart = performance.now();
+      this.#writeInstanceColumn(
+        input.slots,
+        input.count,
+        prepared.run,
+        prepared.ownedRun,
+        prepared.snapshot,
+      );
+      if (input.writePalettePositions !== false) {
+        this.transforms.writePositions(input.slots, input.count, input.xy);
+      }
+      this.#lastInstanceWriteMs = performance.now() - writeStart;
+      const result = this.#result(0, false, input.count, atlasCommit, this.#drawRebuildPending);
+      this.#releaseRunLeases(scope);
+      this.#acceptAtlasCommit();
+      this.#shapedLabels += input.count;
+      this.#appliedLabels += input.count;
+      this.#revisions += 1;
+      this.#drawRebuildPending = false;
+      return result;
+    } catch (error: unknown) {
+      cleanupBestEffort([() => this.#discardAtlas(scope)]);
+      throw error;
     }
-    this.#lastInstanceWriteMs = performance.now() - writeStart;
-    this.#shapedLabels += input.count;
-    this.#appliedLabels += input.count;
-    this.#revisions += 1;
-
-    return this.#result(0, false, input.count, atlasCommit, false);
   }
 
   /**
@@ -445,59 +625,331 @@ export class RenderCoordinator {
    */
   async applyAdmitLane(groups: readonly AdmitLaneGroup[]): Promise<Readonly<RenderCommitResult>> {
     this.#assertActive();
-    if (groups.length === 0) {
-      return this.#result(0, false, 0, EMPTY_ATLAS_COMMIT, false);
-    }
-    const ticket = ++this.#ticket;
-    const prepareStart = performance.now();
-    const queued: AdmitLaneGroup[] = [];
     for (const group of groups) {
-      if (group.count <= 0) continue;
-      if (group.xy.length < group.count * 2) {
-        throw new TypeError("Admit lane xy must contain one packed pair per slot");
-      }
-      if (group.orders.length < group.count) {
-        throw new TypeError("Admit lane order list is shorter than count");
-      }
-      if (group.slots.length < group.count) {
-        throw new TypeError("Admit lane slot list is shorter than count");
-      }
-      queued.push(group);
+      validatePackedLane("Admit lane", group.count, group.slots, group.xy, group.orders);
     }
-    const columns = await Promise.all(
-      queued.map((group) =>
-        this.#prepareSharedColumn(group.text, group.style, group.slots[0] ?? 0, ticket).then(
-          (column) => ({ group, column }),
+    if (groups.length === 0) {
+      const result = this.#result(0, false, 0, EMPTY_ATLAS_COMMIT, this.#drawRebuildPending);
+      this.#drawRebuildPending = false;
+      return result;
+    }
+    const scope = this.#beginRender();
+    try {
+      const prepareStart = performance.now();
+      const queued: AdmitLaneGroup[] = [];
+      for (const group of groups) {
+        if (group.count <= 0) continue;
+        queued.push(group);
+      }
+      const columns = await Promise.all(
+        queued.map((group) =>
+          this.#prepareSharedColumn(
+            group.text,
+            group.style,
+            group.slots[0] ?? 0,
+            scope,
+            group.projectedHeightPx,
+          ).then((column) => ({ group, column })),
         ),
-      ),
-    );
-    const prepared: PreparedAdmitColumn[] = [];
-    for (const item of columns) {
-      if (item.column === undefined) {
+      );
+      const prepared: PreparedAdmitColumn[] = [];
+      for (const item of columns) {
+        if (item.column === undefined) {
+          this.#discardAtlas(scope);
+          this.#lastLayoutMs = performance.now() - prepareStart;
+          this.#staleRevisions += 1;
+          return this.#result(0, true, 0, EMPTY_ATLAS_COMMIT, false);
+        }
+        prepared.push({ group: item.group, ...item.column });
+      }
+      this.#lastLayoutMs = performance.now() - prepareStart;
+
+      const atlasCommit = this.#commitAtlas(scope);
+      const writeStart = performance.now();
+      let applied = 0;
+      let drawOrderChanged = false;
+      for (const item of prepared) {
+        this.#writeInstanceColumn(
+          item.group.slots,
+          item.group.count,
+          item.run,
+          item.ownedRun,
+          item.snapshot,
+        );
+        if (this.#admitDrawStates(item.group)) drawOrderChanged = true;
+        applied += item.group.count;
+      }
+      this.#writeAdmitFills(prepared);
+      this.#lastInstanceWriteMs = performance.now() - writeStart;
+      const result = this.#result(
+        0,
+        false,
+        applied,
+        atlasCommit,
+        drawOrderChanged || this.#drawRebuildPending,
+      );
+      this.#releaseRunLeases(scope);
+      this.#acceptAtlasCommit();
+      this.#shapedLabels += applied;
+      this.#appliedLabels += applied;
+      this.#revisions += 1;
+      this.#drawRebuildPending = false;
+      return result;
+    } catch (error: unknown) {
+      cleanupBestEffort([() => this.#discardAtlas(scope)]);
+      throw error;
+    }
+  }
+
+  /**
+   * Build one prototype per resident (text, style) group and write every label palette row through
+   * typed columns. Cull records point directly at the prototype range; coordinator run, draw,
+   * prototype-key, and atlas-key state stays prototype-scoped.
+   */
+  async applyResidentAdmitLane(
+    groups: readonly ResidentAdmitLaneGroup[],
+    compiler?: GpuSceneCompiler,
+    options: Readonly<ResidentAdmitLaneOptions> = {},
+  ): Promise<Readonly<ResidentAdmitLaneResult> | undefined> {
+    this.#assertActive();
+    if (groups.length > GPU_SCENE_MAX_PROTOTYPES * GPU_SCENE_MAX_PAINTS) return undefined;
+    for (const group of groups) {
+      validatePackedLane("Resident admit lane", group.count, group.slots, group.xy, group.orders);
+    }
+    if (!residentAdmitLaneEligible(groups)) return undefined;
+    if (groups.length === 0) {
+      const result = this.#residentResult(0, EMPTY_ATLAS_COMMIT, this.#drawRebuildPending, []);
+      this.#drawRebuildPending = false;
+      return result;
+    }
+    let sceneCompiler = compiler ?? this.#residentCompiler;
+    if (sceneCompiler === undefined) {
+      let recordStart = 0xffff_ffff;
+      for (const group of groups) {
+        if (group.count > 0) recordStart = Math.min(recordStart, group.slots[0] ?? recordStart);
+      }
+      sceneCompiler = new GpuSceneCompiler({
+        recordStart: recordStart === 0xffff_ffff ? 0 : recordStart,
+      });
+      this.#residentCompiler = sceneCompiler;
+    }
+    const candidatePrototypeIndices = new Uint8Array(groups.length);
+    for (let index = 0; index < groups.length; index += 1) {
+      const group = groups[index];
+      if (group === undefined || group.count <= 0) continue;
+      const pair = sceneCompiler.admitCandidate(group.text, group.style);
+      if (pair === undefined) return undefined;
+      const prototypeCandidateIndex = Math.floor(pair / GPU_SCENE_MAX_PAINTS);
+      if (
+        group.prototypeCandidateIndex !== undefined &&
+        group.prototypeCandidateIndex !== prototypeCandidateIndex
+      ) {
+        return undefined;
+      }
+      candidatePrototypeIndices[index] = prototypeCandidateIndex;
+    }
+    const scope = this.#beginRender();
+    let scenePlan: Readonly<GpuScenePlan> | undefined;
+    try {
+      const prepareStart = performance.now();
+      const queued: ResidentAdmitLaneGroup[] = [];
+      const queuedPrototypeIndices: number[] = [];
+      for (let index = 0; index < groups.length; index += 1) {
+        const group = groups[index];
+        if (group === undefined || group.count <= 0) continue;
+        queued.push(group);
+        queuedPrototypeIndices.push(candidatePrototypeIndices[index] ?? 0);
+      }
+      const sourceGroups: ResidentAdmitLaneGroup[] = [];
+      const sourceByPrototype = new Int16Array(GPU_SCENE_MAX_PROTOTYPES).fill(-1);
+      const queuedSources = new Uint8Array(queued.length);
+      for (let index = 0; index < queued.length; index += 1) {
+        const prototypeCandidateIndex = queuedPrototypeIndices[index] ?? 0;
+        let sourceIndex = sourceByPrototype[prototypeCandidateIndex] ?? -1;
+        if (sourceIndex < 0) {
+          sourceIndex = sourceGroups.length;
+          sourceByPrototype[prototypeCandidateIndex] = sourceIndex;
+          const group = queued[index];
+          if (group === undefined) throw new Error("Resident candidate source is unavailable");
+          sourceGroups.push(group);
+        }
+        queuedSources[index] = sourceIndex;
+      }
+      const sourceColumns = await Promise.all(
+        sourceGroups.map((group) =>
+          this.#prepareSharedLayout(
+            group.text,
+            group.style,
+            group.slots[0] ?? 0,
+            scope,
+            group.projectedHeightPx,
+          ),
+        ),
+      );
+      for (const column of sourceColumns) {
+        if (column !== undefined) continue;
+        this.#discardAtlas(scope);
         this.#lastLayoutMs = performance.now() - prepareStart;
         this.#staleRevisions += 1;
-        return this.#result(0, true, 0, EMPTY_ATLAS_COMMIT, false);
+        return this.#residentResult(0, EMPTY_ATLAS_COMMIT, false, []);
       }
-      prepared.push({ group: item.group, run: item.column.run, snapshot: item.column.snapshot });
-    }
-    this.#lastLayoutMs = performance.now() - prepareStart;
+      const prepared: PreparedResidentColumn[] = [];
+      for (let index = 0; index < queued.length; index += 1) {
+        const group = queued[index];
+        const column = sourceColumns[queuedSources[index] ?? 0];
+        if (group === undefined || column === undefined) {
+          throw new Error("Resident prepared source is unavailable");
+        }
+        prepared.push({ group, ...column });
+      }
 
-    const atlasCommit = this.atlas.commitFrame();
-    const writeStart = performance.now();
-    let applied = 0;
-    let drawOrderChanged = false;
-    for (const item of prepared) {
-      this.#writeInstanceColumn(item.group.slots, item.group.count, item.run, item.snapshot);
-      if (this.#admitDrawStates(item.group)) drawOrderChanged = true;
-      applied += item.group.count;
-    }
-    this.#writeAdmitFills(prepared);
-    this.#lastInstanceWriteMs = performance.now() - writeStart;
-    this.#shapedLabels += applied;
-    this.#appliedLabels += applied;
-    this.#revisions += 1;
+      let recordCount = 0;
+      let drawInstanceCount = 0;
+      const drawableGlyphs = new Uint32Array(sourceColumns.length);
+      for (let sourceIndex = 0; sourceIndex < sourceColumns.length; sourceIndex += 1) {
+        const source = sourceColumns[sourceIndex];
+        if (source === undefined) throw new Error("Resident prepared source is unavailable");
+        let drawable = 0;
+        for (let glyphIndex = 0; glyphIndex < source.run.glyphCount; glyphIndex += 1) {
+          if (!isEmptyInkGlyph(source.run, glyphIndex)) drawable += 1;
+        }
+        drawableGlyphs[sourceIndex] = drawable;
+      }
+      for (let index = 0; index < queued.length; index += 1) {
+        const group = queued[index];
+        if (group === undefined) throw new Error("Resident prepared group is unavailable");
+        const sourceIndex = queuedSources[index] ?? 0;
+        recordCount += group.count;
+        drawInstanceCount += group.count * (drawableGlyphs[sourceIndex] ?? 0);
+        if (
+          !Number.isSafeInteger(recordCount) ||
+          !Number.isSafeInteger(drawInstanceCount) ||
+          recordCount > 0xffff_ffff ||
+          drawInstanceCount > 0xffff_ffff
+        ) {
+          this.#discardAtlas(scope);
+          this.#lastLayoutMs = performance.now() - prepareStart;
+          return Object.freeze({
+            ...this.#residentResult(0, EMPTY_ATLAS_COMMIT, false, []),
+            residentFallbackReason: "device-limit",
+          });
+        }
+      }
+      if (options.capacityFits?.(recordCount, drawInstanceCount) === false) {
+        this.#discardAtlas(scope);
+        this.#lastLayoutMs = performance.now() - prepareStart;
+        return Object.freeze({
+          ...this.#residentResult(0, EMPTY_ATLAS_COMMIT, false, []),
+          residentFallbackReason: "device-limit",
+        });
+      }
 
-    return this.#result(0, false, applied, atlasCommit, drawOrderChanged);
+      const compiled = sceneCompiler.compile(
+        prepared.map((item) => ({
+          slots: item.group.slots,
+          count: item.group.count,
+          xy: item.group.xy,
+          orders: item.group.orders,
+          run: item.run,
+          rasterIdentity: this.#residentRasterIdentity(item.run, item.snapshot),
+          paint: canonicalFillPaint(item.group.style.fill),
+        })),
+      );
+      if (compiled.status === "unsupported") {
+        this.#discardAtlas(scope);
+        return undefined;
+      }
+      scenePlan = compiled;
+
+      const missingGlyphs: Promise<void>[] = [];
+      for (const source of sourceColumns) {
+        if (source === undefined) throw new Error("Resident prepared source is unavailable");
+        const missing = this.#ensureMissingGlyphs(source.run, source.snapshot, scope);
+        if (missing !== undefined) missingGlyphs.push(missing);
+      }
+      if (missingGlyphs.length > 0) await Promise.all(missingGlyphs);
+      if (!this.#isScopeCurrent(scope)) {
+        this.#discardAtlas(scope);
+        this.#lastLayoutMs = performance.now() - prepareStart;
+        this.#staleRevisions += 1;
+        return this.#residentResult(0, EMPTY_ATLAS_COMMIT, false, []);
+      }
+      this.#lastLayoutMs = performance.now() - prepareStart;
+
+      const atlasCommit = this.#commitAtlas(scope);
+      const writeStart = performance.now();
+      const residentColumns: ResidentPrototypeColumn[] = [];
+      let drawOrderChanged = false;
+      const bound = new Uint8Array(scenePlan.prototypeCount);
+      for (const column of scenePlan.columns) {
+        if (bound[column.prototypeIndex] === 1) continue;
+        bound[column.prototypeIndex] = 1;
+        let binding = sceneCompiler.prototypeBinding(column.prototypeIndex);
+        if (binding === undefined) {
+          const source = prepared[column.sourceIndex];
+          if (source === undefined) throw new Error("GPU scene prototype source is unavailable");
+          const prototype = this.#writeResidentPrototype(source);
+          if (prototype.drawOrderChanged) drawOrderChanged = true;
+          binding = Object.freeze({
+            prototypeId: prototype.slot,
+            instanceOffset: prototype.offset,
+            instanceCount: prototype.count,
+            localBounds: new Float32Array([
+              source.run.bounds.x,
+              source.run.bounds.y,
+              source.run.bounds.width,
+              source.run.bounds.height,
+            ]),
+          }) satisfies Readonly<GpuScenePrototypeBinding>;
+          sceneCompiler.bindPrototype(column.prototypeIndex, binding);
+        }
+      }
+      for (const column of scenePlan.columns) {
+        const binding = sceneCompiler.prototypeBinding(column.prototypeIndex);
+        if (binding === undefined) throw new Error("GPU scene prototype binding is unavailable");
+        residentColumns.push({
+          slots: column.slots,
+          count: column.count,
+          xy: column.xy,
+          orders: column.orders,
+          localBounds: binding.localBounds,
+          prototypeId: binding.prototypeId,
+          instanceOffset: binding.instanceOffset,
+          instanceCount: binding.instanceCount,
+          zIndex: 0,
+          blendMode: "normal",
+        });
+        this.transforms.writeCanonicalFills(
+          column.slots,
+          column.count,
+          column.xy,
+          sceneCompiler.paint(column.paintIndex),
+        );
+      }
+      this.#lastInstanceWriteMs = performance.now() - writeStart;
+      const result = this.#residentResult(
+        scenePlan.recordCount,
+        atlasCommit,
+        drawOrderChanged || this.#drawRebuildPending,
+        residentColumns,
+      );
+      this.#releaseRunLeases(scope);
+      this.#acceptAtlasCommit();
+      this.#shapedLabels += sourceColumns.length;
+      this.#appliedLabels += scenePlan.recordCount;
+      this.#residentLabels += scenePlan.recordCount;
+      this.#revisions += 1;
+      this.#drawRebuildPending = false;
+      return result;
+    } catch (error: unknown) {
+      cleanupBestEffort([
+        () => {
+          if (scenePlan !== undefined) sceneCompiler.rollback(scenePlan);
+        },
+        () => this.#discardAtlas(scope),
+      ]);
+      throw error;
+    }
   }
 
   getRun(slot: number): Readonly<PositionedRun> | undefined {
@@ -556,43 +1008,104 @@ export class RenderCoordinator {
       removedLabels: this.#removedLabels,
       glyphs: this.instances.stats.activeInstances,
       pendingGlyphs: this.#pendingGlyphs.size,
+      staleGlyphResults: this.#staleGlyphResults,
+      residentLabels: this.#residentLabels,
+      residentPrototypeCount: this.#residentPrototypeSlots.size,
+      residentPerLabelObjectCount: 0,
       lastLayoutMs: this.#lastLayoutMs,
       lastInstanceWriteMs: this.#lastInstanceWriteMs,
       lastPaletteWriteMs: this.#lastPaletteWriteMs,
     });
   }
 
-  destroy(): void {
-    if (this.#destroyed) return;
+  /** Detach immediately, finish every owned release once, and report the first failure. */
+  destroy(): Promise<void> {
+    const existing = this.#destroyPromise;
+    if (existing !== undefined) return existing;
+
+    const teardown = createControlledTeardown();
+    this.#destroyPromise = teardown.promise;
+    this.#destroyed = true;
+    const activeScope = this.#activeScope;
+    const leasedRuns = Array.from(this.#runLeases.values(), (runs) => [...runs]).flat();
+    const pendingAtlasCommit = this.#pendingAtlasCommit;
+    const pinnedAtlasKeys = [...this.#atlasKeyRefs.keys()];
+    this.#activeScope = undefined;
+    this.#pendingAtlasCommit = undefined;
+    this.#pendingAtlasPins.length = 0;
+    this.#runLeases.clear();
+    this.#lifecycleEpoch += 1;
     this.#ticket += 1;
     this.#runs.clear();
     this.#drawStates.clear();
+    this.#drawStateList = [];
+    this.#drawStatesDirty = true;
+    this.#needsDrawSort = false;
+    this.#drawRebuildPending = false;
     this.#nonZeroZStates = 0;
     this.#pendingGlyphs.clear();
-    this.#prototypeSlots.clear();
-    this.#slotPrototypeKeys.clear();
+    this.#pendingGlyphTokens.clear();
+    this.#slotPrototypeVariants.clear();
     this.#clearIntern();
     this.#slotAtlasKeys.clear();
     this.#atlasKeyRefs.clear();
+    this.#residentPrototypeSlots.clear();
+    this.#residentLabels = 0;
     this.#ensuredRuns.clear();
-    if (this.#ownsLayout) this.#layout.destroy();
-    if (this.#ownsProvider) void this.#provider.destroy();
-    if (this.#ownsAtlas) this.atlas.destroy();
-    if (this.#ownsInstances) this.instances.destroy();
-    if (this.#ownsTransforms) this.transforms.destroy();
-    this.#destroyed = true;
+    this.#seenAtlasKeys.clear();
+
+    let providerTeardown: Promise<void> | undefined;
+    const cleanupSteps: Array<() => void> = [];
+    if (activeScope !== undefined) {
+      cleanupSteps.push(() => {
+        this.#staleGlyphResults += discardGlyphAtlasRenderFrame(this.atlas, activeScope);
+      });
+    }
+    for (const run of leasedRuns) cleanupSteps.push(() => releasePositionedRun(run));
+    if (pendingAtlasCommit !== undefined) {
+      for (const upload of pendingAtlasCommit.externalUploads) {
+        cleanupSteps.push(() => upload.release());
+      }
+    }
+    for (const key of pinnedAtlasKeys) cleanupSteps.push(() => this.atlas.unpin(key));
+    if (this.#ownsLayout) cleanupSteps.push(() => this.#layout.destroy());
+    if (this.#ownsProvider) {
+      cleanupSteps.push(() => {
+        const pending = this.#provider.destroy();
+        if (pending !== undefined) providerTeardown = Promise.resolve(pending);
+      });
+    }
+    if (this.#ownsAtlas) cleanupSteps.push(() => this.atlas.destroy());
+    if (this.#ownsInstances) cleanupSteps.push(() => this.instances.destroy());
+    if (this.#ownsTransforms) cleanupSteps.push(() => this.transforms.destroy());
+    const failure = cleanupBestEffort(cleanupSteps);
+
+    if (providerTeardown === undefined) {
+      if (failure === undefined) teardown.resolve();
+      else teardown.reject(failure.error);
+    } else {
+      void providerTeardown.then(
+        () => {
+          if (failure === undefined) teardown.resolve();
+          else teardown.reject(failure.error);
+        },
+        (error: unknown) => teardown.reject(failure?.error ?? error),
+      );
+    }
+
+    return teardown.promise;
   }
 
   #prepareChanges(
     changes: readonly RenderChange[],
-    ticket: number,
+    scope: Readonly<RenderTokenScope>,
   ): PreparedChange[] | Promise<PreparedChange[]> {
     const prepared: PreparedChange[] = [];
     const pending: Promise<void>[] = [];
     for (let index = 0; index < changes.length; index += 1) {
       const change = changes[index];
       if (change === undefined) throw new Error("Render change list is incomplete");
-      const item = this.#prepare(change, ticket);
+      const item = this.#prepare(change, scope);
       if (isPromise(item)) {
         pending.push(
           item.then((ready) => {
@@ -614,7 +1127,10 @@ export class RenderCoordinator {
     );
   }
 
-  #prepare(change: RenderChange, ticket: number): PreparedChange | Promise<PreparedChange> {
+  #prepare(
+    change: RenderChange,
+    scope: Readonly<RenderTokenScope>,
+  ): PreparedChange | Promise<PreparedChange> {
     const snapshot = change.snapshot;
     if (snapshot === undefined) {
       return { change };
@@ -629,14 +1145,14 @@ export class RenderCoordinator {
     }
 
     if (change.trustedRun !== undefined) {
-      return this.#finishPrepare(change, snapshot, ticket, change.trustedRun);
+      return this.#finishPrepare(change, snapshot, scope, change.trustedRun);
     }
     const interned = this.#lookupIntern(snapshot);
     if (interned !== undefined) {
       if (isPromise(interned)) {
-        return interned.then((run) => this.#finishPrepare(change, snapshot, ticket, run));
+        return interned.then((run) => this.#finishPrepare(change, snapshot, scope, run));
       }
-      return this.#finishPrepare(change, snapshot, ticket, interned);
+      return this.#finishPrepare(change, snapshot, scope, interned);
     }
     const laidOut = this.#layout.layout(change.slot, snapshot.sourceRevision, {
       text: snapshot.text,
@@ -648,43 +1164,48 @@ export class RenderCoordinator {
     if (isPromise(laidOut)) {
       return laidOut.then((run) => {
         this.#storeIntern(snapshot, run);
-        return this.#finishPrepare(change, snapshot, ticket, run);
+        return this.#finishPrepare(change, snapshot, scope, run);
       });
     }
-    return this.#finishPrepare(change, snapshot, ticket, laidOut);
+    return this.#finishPrepare(change, snapshot, scope, laidOut);
   }
 
   #finishPrepare(
     change: RenderChange,
     snapshot: Readonly<RenderLabelSnapshot>,
-    ticket: number,
+    scope: Readonly<RenderTokenScope>,
     run: Readonly<PositionedRun>,
   ): PreparedChange | Promise<PreparedChange> {
-    if (ticket !== this.#ticket) return { change, run };
-    const missing = this.#ensureMissingGlyphs(run, snapshot);
-    if (missing === undefined) return { change, run };
-    return missing.then(() => ({ change, run }));
+    if (!this.#trackRunLease(scope, run) || !this.#isScopeCurrent(scope)) {
+      return { change, run };
+    }
+    const missing = this.#ensureMissingGlyphs(run, snapshot, scope);
+    if (missing === undefined) return { change, run, ownedRun: ownedPositionedRun(run) };
+    return missing.then(() => ({
+      change,
+      run,
+      ...(!this.#isScopeCurrent(scope) ? {} : { ownedRun: ownedPositionedRun(run) }),
+    }));
   }
 
-  /** Duplicate strings share one run object; ensure each (run, size, weight) once per commit. */
+  /** Duplicate strings share one run object; raster-plan variants remain independent. */
   #ensureMissingGlyphs(
     run: Readonly<PositionedRun>,
     snapshot: Readonly<RenderLabelSnapshot>,
+    scope: Readonly<RenderTokenScope>,
   ): Promise<void> | undefined {
     if (this.#ensuredTicket !== this.#ticket) {
       this.#ensuredRuns.clear();
       this.#ensuredTicket = this.#ticket;
     }
-    const variantKey = `${String(resolveFontSize(snapshot.style.fontSize))}\u0000${String(
-      snapshot.style.fontWeight ?? "normal",
-    )}`;
+    const variantKey = this.#rasterVariantKey(run, snapshot);
     let variants = this.#ensuredRuns.get(run);
     const cached = variants?.get(variantKey);
     if (cached === "done") return undefined;
     if (cached !== undefined) return cached;
     const missing: Promise<void>[] = [];
     for (let index = 0; index < run.glyphCount; index += 1) {
-      const pending = this.#ensureGlyph(run, index, snapshot);
+      const pending = this.#ensureGlyph(run, index, snapshot, scope);
       if (pending !== undefined) missing.push(pending);
     }
     if (variants === undefined) {
@@ -700,86 +1221,217 @@ export class RenderCoordinator {
     return settled;
   }
 
+  #rasterVariantKey(run: Readonly<PositionedRun>, snapshot: Readonly<RenderLabelSnapshot>): string {
+    const rasterVariants: string[] = [];
+    for (let index = 0; index < run.glyphCount; index += 1) {
+      if (isEmptyInkGlyph(run, index)) {
+        rasterVariants.push("empty");
+        continue;
+      }
+      const plan = this.#glyphRasterPlan(run, index, snapshot, run.glyphIds[index] ?? 0);
+      rasterVariants.push(
+        encodeCacheKey([plan.baseMode, plan.identityMode, plan.identityVariationKey]),
+      );
+    }
+    return encodeCacheKey([
+      String(resolveFontSize(snapshot.style.fontSize)),
+      String(snapshot.style.fontWeight ?? "normal"),
+      ...rasterVariants,
+    ]);
+  }
+
+  #residentRasterIdentity(
+    run: Readonly<PositionedRun>,
+    snapshot: Readonly<RenderLabelSnapshot>,
+  ): string {
+    const identities: string[] = [];
+    for (let index = 0; index < run.glyphCount; index += 1) {
+      if (isEmptyInkGlyph(run, index)) {
+        identities.push("empty");
+        continue;
+      }
+      const glyphId = run.glyphIds[index] ?? 0;
+      const plan = this.#glyphRasterPlan(run, index, snapshot, glyphId);
+      const identity = resolveGlyphIdentity({
+        fontFamily: run.fontFamily,
+        ...(run.fontFamilies === undefined ? {} : { fontFamilies: run.fontFamilies }),
+        fontRevision: run.fontRevision,
+        glyphId,
+        glyphText: lazyGlyphText(run, index, glyphId),
+        variationKey: plan.identityVariationKey,
+        fontSize: resolveFontSize(snapshot.style.fontSize),
+        fontWeight: snapshot.style.fontWeight ?? "normal",
+        mode: plan.identityMode,
+      });
+      identities.push(
+        typeof identity.key === "number"
+          ? `number:${String(identity.key)}`
+          : `string:${identity.key}`,
+      );
+    }
+    return encodeCacheKey(identities);
+  }
+
   #ensureGlyph(
     run: Readonly<PositionedRun>,
     index: number,
     snapshot: Readonly<RenderLabelSnapshot>,
+    scope: Readonly<RenderTokenScope>,
   ): Promise<void> | undefined {
     if (isEmptyInkGlyph(run, index)) return;
-    const mode = this.#glyphMode(run, index);
     const glyphId = run.glyphIds[index] ?? 0;
     const glyphText = lazyGlyphText(run, index, glyphId);
+    const plan = this.#glyphRasterPlan(run, index, snapshot, glyphId);
     const identity = resolveGlyphIdentity({
       fontFamily: run.fontFamily,
       ...(run.fontFamilies === undefined ? {} : { fontFamilies: run.fontFamilies }),
       fontRevision: run.fontRevision,
       glyphId,
       glyphText,
+      variationKey: plan.identityVariationKey,
       fontSize: resolveFontSize(snapshot.style.fontSize),
       fontWeight: snapshot.style.fontWeight ?? "normal",
-      mode,
+      mode: plan.identityMode,
     });
     const key = identity.key;
     if (this.atlas.get(key) !== undefined) {
       return;
     }
     const pending = this.#pendingGlyphs.get(key);
-    if (pending !== undefined) {
+    const pendingToken = this.#pendingGlyphTokens.get(key);
+    if (
+      pending !== undefined &&
+      pendingToken !== undefined &&
+      sameRenderScope(pendingToken, scope)
+    ) {
       return pending;
     }
 
-    const request = this.atlas.request(key);
-    const promise = this.#provider
-      .rasterize({
-        family: run.fontFamily,
-        ...(run.fontFamilies === undefined ? {} : { fontFamilies: run.fontFamilies }),
-        fontRevision: run.fontRevision,
-        glyphId,
-        glyphText: glyphText === "" ? resolveGlyphText(run, index) : glyphText,
-        fontSize: identity.fontSize,
-        fontWeight: identity.fontWeight,
-        mode,
-      })
+    const token = requestGlyphAtlasRenderToken(this.atlas, key, scope, snapshot.sourceRevision);
+    let promise: Promise<void>;
+    promise = this.#rasterizeGlyph(plan, {
+      family: run.fontFamily,
+      ...(run.fontFamilies === undefined ? {} : { fontFamilies: run.fontFamilies }),
+      fontRevision: run.fontRevision,
+      glyphId,
+      glyphText: glyphText === "" ? resolveGlyphText(run, index) : glyphText,
+      variationKey: run.variationKey ?? "",
+      fontSize: identity.fontSize,
+      fontWeight: identity.fontWeight,
+      mode: plan.baseMode,
+    })
       .then((raster) => {
-        if (!this.atlas.stage(request, raster) && this.atlas.get(key) === undefined) {
-          throw new Error(`Glyph atlas capacity rejected: ${String(key)}`);
+        if (!this.#isScopeCurrent(token)) {
+          releaseExternalGlyphRaster(raster);
+          this.#rejectRenderToken(token);
+          return;
+        }
+        if (!stageGlyphAtlasRenderToken(this.atlas, token, raster)) {
+          this.#rejectRenderToken(token);
         }
       })
+      .catch((error: unknown) => {
+        if (error instanceof RasterProviderDisposedError && !this.#isScopeCurrent(token)) {
+          this.#rejectRenderToken(token);
+          return;
+        }
+        throw error;
+      })
       .finally(() => {
-        this.#pendingGlyphs.delete(key);
+        if (this.#pendingGlyphs.get(key) === promise) {
+          this.#pendingGlyphs.delete(key);
+          this.#pendingGlyphTokens.delete(key);
+        }
       });
     this.#pendingGlyphs.set(key, promise);
+    this.#pendingGlyphTokens.set(key, token);
     return promise;
   }
 
-  async #prepareSharedColumn(
+  #rasterizeGlyph(
+    plan: Readonly<GlyphRasterPlan>,
+    fallbackRequest: Readonly<RasterGlyphRequest>,
+  ): Promise<Readonly<AtlasGlyphRaster>> {
+    const request = plan.outlineRequest;
+    const outline = this.#outline;
+    if (request === undefined || outline === undefined) {
+      return this.#provider.rasterize(fallbackRequest);
+    }
+    return outline.rasterize(request).then<Readonly<AtlasGlyphRaster>>((result) => {
+      switch (result.status) {
+        case "ready":
+          return result.raster;
+        case "empty":
+        case "fallback":
+          return this.#provider.rasterize(fallbackRequest);
+        case "failed":
+          throw new Error(`Outline glyph raster failed (${result.reason}): ${result.message}`);
+      }
+    });
+  }
+
+  #prepareSharedColumn(
     text: string,
     style: Readonly<TextStyleOptions>,
     slotHint: number,
-    ticket: number,
-  ): Promise<
-    | {
-        readonly run: Readonly<PositionedRun>;
-        readonly snapshot: Readonly<RenderLabelSnapshot>;
-      }
-    | undefined
-  > {
-    const snapshot = contentLaneSnapshot(text, style);
-    const interned = this.#lookupIntern(snapshot);
-    let run: Readonly<PositionedRun>;
-    if (interned !== undefined) {
-      run = isPromise(interned) ? await interned : interned;
-    } else {
-      const laidOut = this.#layout.layout(slotHint, 1, { text, style });
-      this.#storeIntern(snapshot, laidOut);
-      run = isPromise(laidOut) ? await laidOut : laidOut;
-      if (isPromise(laidOut)) this.#storeIntern(snapshot, run);
+    scope: Readonly<RenderTokenScope>,
+    projectedHeightPx?: number,
+  ): Promise<Readonly<PreparedSharedColumn> | undefined> {
+    const prepared = this.#prepareSharedLayout(text, style, slotHint, scope, projectedHeightPx);
+    if (isPromise(prepared)) {
+      return prepared.then((resolved) => this.#finishSharedColumn(resolved, scope));
     }
-    if (ticket !== this.#ticket) return undefined;
-    const missing = this.#ensureMissingGlyphs(run, snapshot);
-    if (missing !== undefined) await missing;
-    if (ticket !== this.#ticket) return undefined;
-    return { run, snapshot };
+    return Promise.resolve(this.#finishSharedColumn(prepared, scope));
+  }
+
+  #finishSharedColumn(
+    prepared: Readonly<PreparedSharedColumn> | undefined,
+    scope: Readonly<RenderTokenScope>,
+  ):
+    | Readonly<PreparedSharedColumn>
+    | Promise<Readonly<PreparedSharedColumn> | undefined>
+    | undefined {
+    if (prepared === undefined) return undefined;
+    const missing = this.#ensureMissingGlyphs(prepared.run, prepared.snapshot, scope);
+    if (missing === undefined) return this.#isScopeCurrent(scope) ? prepared : undefined;
+    return missing.then(() => (this.#isScopeCurrent(scope) ? prepared : undefined));
+  }
+
+  #prepareSharedLayout(
+    text: string,
+    style: Readonly<TextStyleOptions>,
+    slotHint: number,
+    scope: Readonly<RenderTokenScope>,
+    projectedHeightPx?: number,
+  ):
+    | Readonly<PreparedSharedColumn>
+    | Promise<Readonly<PreparedSharedColumn> | undefined>
+    | undefined {
+    const snapshot = contentLaneSnapshot(text, style, projectedHeightPx);
+    const interned = this.#lookupIntern(snapshot);
+    if (interned !== undefined) {
+      return isPromise(interned)
+        ? interned.then((run) => this.#finishSharedLayout(run, snapshot, scope))
+        : this.#finishSharedLayout(interned, snapshot, scope);
+    }
+    const laidOut = this.#layout.layout(slotHint, 1, { text, style });
+    this.#storeIntern(snapshot, laidOut);
+    if (isPromise(laidOut)) {
+      return laidOut.then((run) => {
+        this.#storeIntern(snapshot, run);
+        return this.#finishSharedLayout(run, snapshot, scope);
+      });
+    }
+    return this.#finishSharedLayout(laidOut, snapshot, scope);
+  }
+
+  #finishSharedLayout(
+    run: Readonly<PositionedRun>,
+    snapshot: Readonly<RenderLabelSnapshot>,
+    scope: Readonly<RenderTokenScope>,
+  ): Readonly<PreparedSharedColumn> | undefined {
+    if (!this.#trackRunLease(scope, run) || !this.#isScopeCurrent(scope)) return undefined;
+    return { run, ownedRun: ownedPositionedRun(run), snapshot };
   }
 
   #admitDrawStates(group: AdmitLaneGroup): boolean {
@@ -817,6 +1469,7 @@ export class RenderCoordinator {
         }),
       );
       changed = true;
+      this.#drawRebuildPending = true;
       this.#drawStatesDirty = true;
     }
     return changed;
@@ -873,6 +1526,54 @@ export class RenderCoordinator {
     this.#admitFillXy = new Float32Array(capacity * 2);
   }
 
+  #writeResidentPrototype(item: Readonly<PreparedResidentColumn>): {
+    readonly slot: number;
+    readonly offset: number;
+    readonly count: number;
+    readonly drawOrderChanged: boolean;
+  } {
+    const variantKey = this.#rasterVariantKey(item.run, item.snapshot);
+    const interned = this.#prototypeByRun.get(item.ownedRun)?.get(variantKey);
+    let slot =
+      interned !== undefined && this.instances.getRange(interned) !== undefined
+        ? interned
+        : undefined;
+    if (slot === undefined) {
+      slot = item.group.slots[0];
+      if (slot === undefined) throw new Error("Resident admit slot list is incomplete");
+      this.#writeInstances(slot, item.run, item.snapshot, item.ownedRun, variantKey);
+    }
+    const range = this.instances.getRange(slot);
+    if (range === undefined) {
+      throw new Error(`Resident prototype range ${String(slot)} is unavailable`);
+    }
+    this.#residentPrototypeSlots.add(slot);
+    const drawOrderChanged = this.#admitResidentDrawState(
+      slot,
+      item.group.orders[0] ?? 0,
+      item.group.blendMode,
+    );
+    return { slot, offset: range.offset, count: range.count, drawOrderChanged };
+  }
+
+  #admitResidentDrawState(slot: number, order: number, blendMode: BLEND_MODES): boolean {
+    if (this.#drawStates.has(slot)) return false;
+    if (order < this.#lastAddedOrder || this.#nonZeroZStates > 0) this.#needsDrawSort = true;
+    this.#lastAddedOrder = Math.max(this.#lastAddedOrder, order);
+    this.#drawStates.set(
+      slot,
+      Object.freeze({
+        slot,
+        zIndex: 0,
+        order,
+        blendMode,
+      }),
+    );
+    this.#drawStatesDirty = true;
+    this.#drawRebuildPending = true;
+    return true;
+  }
+
   /**
    * Shared-string column: build or reuse one prototype, shareMany the rest, retain atlas keys once
    * per unique previous set.
@@ -881,11 +1582,12 @@ export class RenderCoordinator {
     slots: Uint32Array,
     count: number,
     run: Readonly<PositionedRun>,
+    ownedRun: Readonly<PositionedRun>,
     snapshot: Readonly<RenderLabelSnapshot>,
   ): void {
     if (count <= 0) return;
-    const key = prototypeKey(run, snapshot);
-    const prototype = this.#prototypeByRun.get(run) ?? this.#prototypeSlots.get(key);
+    const variantKey = this.#rasterVariantKey(run, snapshot);
+    const prototype = this.#prototypeByRun.get(ownedRun)?.get(variantKey);
     const source =
       prototype !== undefined && this.instances.getRange(prototype) !== undefined
         ? prototype
@@ -893,31 +1595,28 @@ export class RenderCoordinator {
     if (source === undefined) {
       const first = slots[0];
       if (first === undefined) throw new Error("Content lane slot list is incomplete");
-      this.#runs.set(first, run);
-      this.#writeInstances(first, run, snapshot);
+      this.#writeInstances(first, run, snapshot, ownedRun, variantKey);
       if (count === 1) return;
       if (this.instances.shareMany(first, slots, count) !== count) {
         for (let index = 1; index < count; index += 1) {
           const slot = slots[index];
           if (slot === undefined) throw new Error("Content lane slot list is incomplete");
-          this.#runs.set(slot, run);
-          this.#writeInstances(slot, run, snapshot);
+          this.#writeInstances(slot, run, snapshot, ownedRun, variantKey);
         }
         return;
       }
-      this.#bindInstanceColumn(slots, 1, count, run, key, first);
+      this.#bindInstanceColumn(slots, 1, count, ownedRun, variantKey, first);
       return;
     }
     if (this.instances.shareMany(source, slots, count) !== count) {
       for (let index = 0; index < count; index += 1) {
         const slot = slots[index];
         if (slot === undefined) throw new Error("Content lane slot list is incomplete");
-        this.#runs.set(slot, run);
-        this.#writeInstances(slot, run, snapshot);
+        this.#writeInstances(slot, run, snapshot, ownedRun, variantKey);
       }
       return;
     }
-    this.#bindInstanceColumn(slots, 0, count, run, key, source);
+    this.#bindInstanceColumn(slots, 0, count, ownedRun, variantKey, source);
   }
 
   #bindInstanceColumn(
@@ -925,15 +1624,14 @@ export class RenderCoordinator {
     start: number,
     count: number,
     run: Readonly<PositionedRun>,
-    key: string,
+    variantKey: string,
     keySource: number,
   ): void {
     const keys = this.#slotAtlasKeys.get(keySource);
     for (let index = start; index < count; index += 1) {
       const slot = slots[index];
       if (slot === undefined) throw new Error("Content lane slot list is incomplete");
-      this.#runs.set(slot, run);
-      this.#rememberPrototype(slot, key, run);
+      this.#rememberPrototype(slot, run, variantKey);
     }
     if (keys !== undefined) this.#retainSlotKeysColumn(slots, start, count, keys);
     else {
@@ -975,14 +1673,13 @@ export class RenderCoordinator {
     slot: number,
     run: Readonly<PositionedRun>,
     snapshot: Readonly<RenderLabelSnapshot>,
+    ownedRun: Readonly<PositionedRun> = run,
+    variantKey: string = this.#rasterVariantKey(run, snapshot),
   ): void {
-    const key = prototypeKey(run, snapshot);
-    const runPrototype = this.#prototypeByRun.get(run);
+    const runPrototype = this.#prototypeByRun.get(ownedRun)?.get(variantKey);
     const prototype =
-      runPrototype !== undefined && runPrototype !== slot
-        ? runPrototype
-        : this.#prototypeSlots.get(key);
-    if (prototype !== undefined && prototype !== slot && this.instances.share(prototype, slot)) {
+      runPrototype !== undefined && runPrototype !== slot ? runPrototype : undefined;
+    if (prototype !== undefined && this.instances.share(prototype, slot)) {
       const prototypeKeys = this.#slotAtlasKeys.get(prototype);
       if (prototypeKeys !== undefined) {
         if (this.#slotAtlasKeys.get(slot) !== prototypeKeys) {
@@ -990,9 +1687,11 @@ export class RenderCoordinator {
         }
       } else this.#releaseSlotKeys(slot);
     } else {
-      this.instances.set(slot, this.#buildInstances(slot, run, snapshot), { skipEquality: true });
+      const built = this.#buildInstances(slot, run, snapshot);
+      this.instances.set(slot, built.batch, { skipEquality: true });
+      this.#retainSlotKeys(slot, built.atlasKeys);
     }
-    this.#rememberPrototype(slot, key, run);
+    this.#rememberPrototype(slot, ownedRun, variantKey);
   }
 
   /** Pin the label's atlas entries so eviction cannot reuse rectangles live instances sample. */
@@ -1026,63 +1725,46 @@ export class RenderCoordinator {
     }
   }
 
-  #rememberPrototype(slot: number, key: string, run: Readonly<PositionedRun>): void {
-    const previous = this.#slotPrototypeKeys.get(slot);
-    if (previous !== undefined && previous !== key && this.#prototypeSlots.get(previous) === slot) {
-      this.#prototypeSlots.delete(previous);
+  #rememberPrototype(slot: number, run: Readonly<PositionedRun>, variantKey: string): void {
+    this.#forgetPrototype(slot);
+    this.#runs.set(slot, run);
+    this.#slotPrototypeVariants.set(slot, variantKey);
+    let variants = this.#prototypeByRun.get(run);
+    if (variants === undefined) {
+      variants = new Map();
+      this.#prototypeByRun.set(run, variants);
     }
-    this.#slotPrototypeKeys.set(slot, key);
-    if (this.#prototypeSlots.get(key) === undefined) this.#prototypeSlots.set(key, slot);
-    if (this.#prototypeByRun.get(run) === undefined) this.#prototypeByRun.set(run, slot);
+    if (variants.get(variantKey) === undefined) variants.set(variantKey, slot);
   }
 
   #forgetPrototype(slot: number): void {
     const run = this.#runs.get(slot);
-    if (run !== undefined && this.#prototypeByRun.get(run) === slot) {
-      this.#prototypeByRun.delete(run);
-    }
-    const key = this.#slotPrototypeKeys.get(slot);
-    this.#slotPrototypeKeys.delete(slot);
-    if (key !== undefined && this.#prototypeSlots.get(key) === slot) {
-      this.#prototypeSlots.delete(key);
+    const variantKey = this.#slotPrototypeVariants.get(slot);
+    this.#slotPrototypeVariants.delete(slot);
+    if (run === undefined || variantKey === undefined) return;
+    const variants = this.#prototypeByRun.get(run);
+    if (variants?.get(variantKey) === slot) {
+      variants.delete(variantKey);
+      if (variants.size === 0) this.#prototypeByRun.delete(run);
     }
   }
 
   #lookupIntern(snapshot: Readonly<RenderLabelSnapshot>): LayoutResult | undefined {
     this.#syncInternRevision();
-    if (!internUsesFaceMap(snapshot)) return this.#runsByExtra.get(extraInternKey(snapshot));
-    const byStyle = this.#runsByStyle.get(snapshot.style)?.get(snapshot.text);
-    if (byStyle !== undefined) return byStyle;
-    const family = internFamily(snapshot.style.fontFamily);
-    const quant = internFaceQuant(snapshot.style);
-    return this.#runsByFace.get(family)?.get(quant)?.get(snapshot.text);
+    return retainInternedResult(
+      this.#runsByStyle.get(snapshot.style)?.get(styleInternRequestKey(snapshot)),
+    );
   }
 
   #storeIntern(snapshot: Readonly<RenderLabelSnapshot>, result: LayoutResult): void {
     this.#syncInternRevision();
-    if (!internUsesFaceMap(snapshot)) {
-      this.#runsByExtra.set(extraInternKey(snapshot), result);
-      return;
+    const stored = isPromise(result) ? result : ownedPositionedRun(result);
+    let byRequest = this.#runsByStyle.get(snapshot.style);
+    if (byRequest === undefined) {
+      byRequest = new Map();
+      this.#runsByStyle.set(snapshot.style, byRequest);
     }
-    let byText = this.#runsByStyle.get(snapshot.style);
-    if (byText === undefined) {
-      byText = new Map();
-      this.#runsByStyle.set(snapshot.style, byText);
-    }
-    byText.set(snapshot.text, result);
-    const family = internFamily(snapshot.style.fontFamily);
-    let byQuant = this.#runsByFace.get(family);
-    if (byQuant === undefined) {
-      byQuant = new Map();
-      this.#runsByFace.set(family, byQuant);
-    }
-    const quant = internFaceQuant(snapshot.style);
-    let byFaceText = byQuant.get(quant);
-    if (byFaceText === undefined) {
-      byFaceText = new Map();
-      byQuant.set(quant, byFaceText);
-    }
-    byFaceText.set(snapshot.text, result);
+    byRequest.set(styleInternRequestKey(snapshot), stored);
   }
 
   #syncInternRevision(): void {
@@ -1094,16 +1776,111 @@ export class RenderCoordinator {
 
   #clearIntern(): void {
     this.#runsByStyle = new WeakMap();
-    this.#runsByFace.clear();
-    this.#runsByExtra.clear();
     this.#internRevision = -1;
+  }
+
+  #beginRender(): Readonly<RenderTokenScope> {
+    if (this.#activeScope !== undefined) this.#discardAtlas(this.#activeScope);
+    const scope = this.#nextRenderScope();
+    this.#activeScope = scope;
+    return scope;
+  }
+
+  #commitAtlas(scope: Readonly<RenderTokenScope>): Readonly<AtlasCommit> {
+    const fresh = commitGlyphAtlasRenderFrame(this.atlas, scope);
+    if (this.#activeScope !== undefined && sameRenderScope(this.#activeScope, scope)) {
+      this.#activeScope = undefined;
+    }
+    if (atlasCommitHasChanges(fresh)) {
+      for (const entry of fresh.entries) {
+        const count = this.#atlasKeyRefs.get(entry.key) ?? 0;
+        this.#atlasKeyRefs.set(entry.key, count + 1);
+        if (count === 0) this.atlas.pin(entry.key);
+        this.#pendingAtlasPins.push(entry.key);
+      }
+      this.#pendingAtlasCommit = mergeAtlasCommits(this.#pendingAtlasCommit, fresh);
+    }
+    return this.#pendingAtlasCommit ?? EMPTY_ATLAS_COMMIT;
+  }
+
+  #acceptAtlasCommit(): void {
+    const pins = this.#pendingAtlasPins.splice(0);
+    this.#pendingAtlasCommit = undefined;
+    this.#releaseKeys(pins);
+  }
+
+  #discardAtlas(scope: Readonly<RenderTokenScope>): void {
+    if (this.#activeScope !== undefined && sameRenderScope(this.#activeScope, scope)) {
+      this.#activeScope = undefined;
+    }
+    const failure = cleanupBestEffort([
+      () => {
+        this.#staleGlyphResults += discardGlyphAtlasRenderFrame(this.atlas, scope);
+      },
+      () => this.#releaseRunLeases(scope),
+    ]);
+    if (failure !== undefined) throw failure.error;
+  }
+
+  #trackRunLease(scope: Readonly<RenderTokenScope>, run: Readonly<PositionedRun>): boolean {
+    if (!isLeasedPositionedRun(run)) return true;
+    if (this.#activeScope === undefined || !sameRenderScope(this.#activeScope, scope)) {
+      releasePositionedRun(run);
+      return false;
+    }
+    let runs = this.#runLeases.get(scope);
+    if (runs === undefined) {
+      runs = new Set();
+      this.#runLeases.set(scope, runs);
+    }
+    runs.add(run);
+    return true;
+  }
+
+  #releaseRunLeases(scope: Readonly<RenderTokenScope>): void {
+    const runs = this.#runLeases.get(scope);
+    if (runs === undefined) return;
+    this.#runLeases.delete(scope);
+    const failure = cleanupBestEffort(Array.from(runs, (run) => () => releasePositionedRun(run)));
+    if (failure !== undefined) throw failure.error;
+  }
+
+  #nextRenderScope(): Readonly<RenderTokenScope> {
+    if (this.#ticket === Number.MAX_SAFE_INTEGER) {
+      throw new RangeError("Render commit ticket capacity exhausted");
+    }
+    this.#ticket += 1;
+    return Object.freeze({
+      lifecycleEpoch: this.#lifecycleEpoch,
+      commitTicket: this.#ticket,
+      fontRegistryRevision: this.#registry.stats.revision,
+      destinationIdentity: this.#destinationIdentity,
+    });
+  }
+
+  #isScopeCurrent(scope: Readonly<RenderTokenScope>): boolean {
+    return (
+      !this.#destroyed &&
+      scope.lifecycleEpoch === this.#lifecycleEpoch &&
+      scope.commitTicket === this.#ticket &&
+      scope.fontRegistryRevision === this.#registry.stats.revision &&
+      scope.destinationIdentity === this.#destinationIdentity
+    );
+  }
+
+  #rejectRenderToken(token: Readonly<RenderToken>): void {
+    const invalidatesCurrentScope = this.#isScopeCurrent(token);
+    this.#staleGlyphResults += 1;
+    this.#discardAtlas(token);
+    if (!invalidatesCurrentScope) return;
+    this.#ticket += 1;
   }
 
   #buildInstances(
     slot: number,
     run: Readonly<PositionedRun>,
     snapshot: Readonly<RenderLabelSnapshot>,
-  ): GlyphInstanceBatch {
+  ): Readonly<BuiltGlyphInstances> {
     const glyphCount = run.glyphCount;
     this.#ensureBatchCapacity(glyphCount);
     const uniqueKeys: GlyphCacheKey[] = [];
@@ -1112,18 +1889,19 @@ export class RenderCoordinator {
     let write = 0;
     for (let index = 0; index < glyphCount; index += 1) {
       if (isEmptyInkGlyph(run, index)) continue;
-      const mode = this.#glyphMode(run, index);
       const glyphId = run.glyphIds[index] ?? 0;
       const glyphText = lazyGlyphText(run, index, glyphId);
+      const plan = this.#glyphRasterPlan(run, index, snapshot, glyphId);
       const identity = resolveGlyphIdentity({
         fontFamily: run.fontFamily,
         ...(run.fontFamilies === undefined ? {} : { fontFamilies: run.fontFamilies }),
         fontRevision: run.fontRevision,
         glyphId,
         glyphText,
+        variationKey: plan.identityVariationKey,
         fontSize: resolveFontSize(snapshot.style.fontSize),
         fontWeight: snapshot.style.fontWeight ?? "normal",
-        mode,
+        mode: plan.identityMode,
       });
       const key = identity.key;
       if (!seenKeys.has(key)) {
@@ -1152,15 +1930,16 @@ export class RenderCoordinator {
       this.#batchScales[write] = rasterScale;
       write += 1;
     }
-    this.#retainSlotKeys(slot, uniqueKeys);
-
     return {
-      positions: this.#batchPositions.subarray(0, write * 4),
-      uvs: this.#batchUvs.subarray(0, write * 4),
-      paletteIndices: this.#batchPalette.subarray(0, write),
-      pages: this.#batchPages.subarray(0, write),
-      modes: this.#batchModes.subarray(0, write),
-      rasterScales: this.#batchScales.subarray(0, write),
+      batch: {
+        positions: this.#batchPositions.subarray(0, write * 4),
+        uvs: this.#batchUvs.subarray(0, write * 4),
+        paletteIndices: this.#batchPalette.subarray(0, write),
+        pages: this.#batchPages.subarray(0, write),
+        modes: this.#batchModes.subarray(0, write),
+        rasterScales: this.#batchScales.subarray(0, write),
+      },
+      atlasKeys: uniqueKeys,
     };
   }
 
@@ -1188,9 +1967,21 @@ export class RenderCoordinator {
       stale,
       appliedLabels,
       glyphs: this.instances.stats.activeInstances,
-      atlasUploads: atlasCommit.uploads.length,
+      atlasUploads: atlasCommit.uploads.length + atlasCommit.externalUploads.length,
       atlasCommit,
       drawOrderChanged,
+    });
+  }
+
+  #residentResult(
+    appliedLabels: number,
+    atlasCommit: Readonly<AtlasCommit>,
+    drawOrderChanged: boolean,
+    residentColumns: readonly Readonly<ResidentPrototypeColumn>[],
+  ): Readonly<ResidentAdmitLaneResult> {
+    return Object.freeze({
+      ...this.#result(0, false, appliedLabels, atlasCommit, drawOrderChanged),
+      residentColumns: Object.freeze([...residentColumns]),
     });
   }
 
@@ -1205,12 +1996,83 @@ export class RenderCoordinator {
     const text = resolveGlyphText(run, index);
     return /\p{Extended_Pictographic}/u.test(text) ? "color" : "alpha";
   }
+
+  #glyphRasterPlan(
+    run: Readonly<PositionedRun>,
+    index: number,
+    snapshot: Readonly<RenderLabelSnapshot>,
+    glyphId: number,
+  ): Readonly<GlyphRasterPlan> {
+    const baseMode = this.#glyphMode(run, index);
+    const variationKey = run.variationKey ?? "";
+    const projectedHeightPx = snapshot.projectedHeightPx;
+    const outline = this.#outline;
+    if (
+      outline === undefined ||
+      run.source !== "harfbuzz" ||
+      projectedHeightPx === undefined ||
+      outline.route(projectedHeightPx).path !== "outline"
+    ) {
+      return { baseMode, identityMode: baseMode, identityVariationKey: variationKey };
+    }
+    const rasterPixelHeight = outline.rasterPixelHeight(projectedHeightPx);
+    const fontSize = resolveFontSize(snapshot.style.fontSize);
+    return {
+      baseMode,
+      identityMode: "color",
+      identityVariationKey: encodeCacheKey([variationKey, "outline", String(rasterPixelHeight)]),
+      outlineRequest: Object.freeze({
+        family: run.fontFamily,
+        fontRevision: run.fontRevision,
+        glyphId,
+        variationKey,
+        fontSize,
+        projectedHeightPx,
+        rasterPixelHeight,
+        advance: run.xAdvance[index] ?? 0,
+      }),
+    };
+  }
+}
+
+/** @internal Resident records traverse slots directly, so slot order must equal draw order. */
+export function residentAdmitLaneEligible(
+  groups: readonly Readonly<ResidentAdmitLaneGroup>[],
+): boolean {
+  for (const group of groups) {
+    if (
+      group.zIndex !== 0 ||
+      group.blendMode !== "normal" ||
+      !Number.isSafeInteger(group.count) ||
+      group.count < 0 ||
+      !(group.slots instanceof Uint32Array) ||
+      !(group.xy instanceof Float32Array) ||
+      !(group.orders instanceof Uint32Array) ||
+      group.count > group.slots.length ||
+      group.count > group.orders.length ||
+      group.count * 2 > group.xy.length
+    ) {
+      return false;
+    }
+    let previousSlot = -1;
+    let previousOrder = -1;
+    for (let index = 0; index < group.count; index += 1) {
+      const slot = group.slots[index];
+      const order = group.orders[index];
+      if (slot === undefined || order === undefined) return false;
+      if (slot <= previousSlot || order <= previousOrder) return false;
+      previousSlot = slot;
+      previousOrder = order;
+    }
+  }
+  return true;
 }
 
 class LazyRasterGlyphProvider implements GlyphProviderLike {
   readonly #registry: FontRegistry;
   readonly #options: RasterGlyphProviderOptions | undefined;
   #pending: Promise<GlyphProviderLike> | undefined;
+  #destroyed = false;
 
   constructor(registry: FontRegistry, options: RasterGlyphProviderOptions | undefined) {
     this.#registry = registry;
@@ -1219,10 +2081,13 @@ class LazyRasterGlyphProvider implements GlyphProviderLike {
 
   async rasterize(request: RasterGlyphRequest): Promise<Readonly<GlyphRaster>> {
     const provider = await this.#get();
+    if (this.#destroyed) throw new RasterProviderDisposedError();
     return provider.rasterize(request);
   }
 
   async destroy(): Promise<void> {
+    if (this.#destroyed) return;
+    this.#destroyed = true;
     const pending = this.#pending;
     this.#pending = undefined;
     if (pending === undefined) return;
@@ -1233,6 +2098,7 @@ class LazyRasterGlyphProvider implements GlyphProviderLike {
   }
 
   #get(): Promise<GlyphProviderLike> {
+    if (this.#destroyed) return Promise.reject(new RasterProviderDisposedError());
     const current = this.#pending;
     if (current !== undefined) return current;
     const pending = import("../atlas/RasterGlyphProvider").then(
@@ -1251,9 +2117,15 @@ function isPromise<T>(value: T | Promise<T>): value is Promise<T> {
   return value instanceof Promise;
 }
 
+function retainInternedResult(result: LayoutResult | undefined): LayoutResult | undefined {
+  if (result === undefined) return undefined;
+  return isPromise(result) ? result.then((run) => retainPositionedRun(run)) : result;
+}
+
 function contentLaneSnapshot(
   text: string,
   style: Readonly<TextStyleOptions>,
+  projectedHeightPx?: number,
 ): Readonly<RenderLabelSnapshot> {
   return {
     sourceRevision: 1,
@@ -1271,75 +2143,91 @@ function contentLaneSnapshot(
     anchorX: 0,
     anchorY: 0,
     style,
+    ...(projectedHeightPx === undefined ? {} : { projectedHeightPx }),
   };
 }
 
-function internUsesFaceMap(snapshot: Readonly<RenderLabelSnapshot>): boolean {
-  const writingMode = snapshot.layout?.writingMode;
-  if (writingMode !== undefined && writingMode !== "horizontal-tb") return false;
-  if (snapshot.shaping !== undefined) return false;
-  const italic = snapshot.style.fontStyle;
-  if (italic !== undefined && italic !== "normal") return false;
-  const family = snapshot.style.fontFamily;
-  return typeof family === "string" || family === undefined;
-}
-
-function internFamily(family: unknown): string {
-  return typeof family === "string" && family.length > 0 ? family : "Arial";
-}
-
-function internFaceQuant(style: Readonly<TextStyleOptions>): number {
-  return resolveFontSize(style.fontSize) * 1024 + internWeightClass(style.fontWeight);
-}
-
-function internWeightClass(weight: unknown): number {
-  if (typeof weight === "number" && Number.isFinite(weight)) {
-    return Math.max(1, Math.min(1000, Math.round(weight)));
-  }
-  if (weight === "bold") return 700;
-  if (weight === "lighter") return 300;
-  if (weight === "bolder") return 800;
-  return 400;
-}
-
-function extraInternKey(snapshot: Readonly<RenderLabelSnapshot>): string {
+function styleInternRequestKey(snapshot: Readonly<RenderLabelSnapshot>): string {
   const shaping = snapshot.shaping;
   const variations =
     shaping?.variations === undefined
       ? ""
-      : Object.entries(shaping.variations)
-          .sort(([left], [right]) => left.localeCompare(right))
-          .map(([axis, value]) => `${axis}=${String(value)}`)
-          .join(",");
-  return [
+      : encodeCacheKey(
+          Object.entries(shaping.variations)
+            .sort(([left], [right]) => left.localeCompare(right))
+            .map(([axis, value]) => encodeCacheKey([axis, String(value)])),
+        );
+  return encodeCacheKey([
     snapshot.text,
-    String(snapshot.style.fontFamily ?? ""),
-    String(resolveFontSize(snapshot.style.fontSize)),
-    String(snapshot.style.fontWeight ?? ""),
-    String(snapshot.style.fontStyle ?? ""),
     snapshot.layout?.writingMode ?? "",
     shaping?.direction ?? "",
     shaping?.language ?? "",
     shaping?.script ?? "",
-    shaping?.features?.join(",") ?? "",
+    encodeCacheKey(shaping?.features ?? []),
     variations,
-  ].join("\0");
+  ]);
 }
 
-function prototypeKey(
-  run: Readonly<PositionedRun>,
-  snapshot: Readonly<RenderLabelSnapshot>,
-): string {
-  return [
-    run.source,
-    run.fontFamily,
-    String(run.fontRevision),
-    run.text,
-    String(resolveFontSize(snapshot.style.fontSize)),
-    String(snapshot.style.fontWeight ?? "normal"),
-    snapshot.layout?.writingMode ?? "horizontal-tb",
-    String(run.glyphCount),
-  ].join("\0");
+function releaseExternalGlyphRaster(raster: Readonly<AtlasGlyphRaster>): void {
+  if ("source" in raster) raster.release();
+}
+
+function atlasCommitHasChanges(commit: Readonly<AtlasCommit>): boolean {
+  return (
+    commit.entries.length > 0 ||
+    commit.uploads.length > 0 ||
+    commit.externalUploads.length > 0 ||
+    commit.evictedKeys.length > 0
+  );
+}
+
+function mergeAtlasCommits(
+  retained: Readonly<AtlasCommit> | undefined,
+  fresh: Readonly<AtlasCommit>,
+): Readonly<AtlasCommit> {
+  if (retained === undefined) return fresh;
+  return Object.freeze({
+    entries: Object.freeze([...retained.entries, ...fresh.entries]),
+    uploads: Object.freeze([...retained.uploads, ...fresh.uploads]),
+    externalUploads: Object.freeze([...retained.externalUploads, ...fresh.externalUploads]),
+    evictedKeys: Object.freeze([...retained.evictedKeys, ...fresh.evictedKeys]),
+  });
+}
+
+const MAX_RENDER_SLOT = 0x100_0000 - 1;
+
+function assertLaneCount(name: string, count: number): void {
+  if (!Number.isSafeInteger(count) || count < 0) {
+    throw new TypeError(`${name} count must be a non-negative safe integer`);
+  }
+}
+
+function validatePackedLane(
+  name: string,
+  count: number,
+  slots: Uint32Array,
+  xy: Float32Array,
+  orders?: Uint32Array,
+): void {
+  assertLaneCount(name, count);
+  if (!(slots instanceof Uint32Array)) throw new TypeError(`${name} slots must be a Uint32Array`);
+  if (!(xy instanceof Float32Array)) throw new TypeError(`${name} xy must be a Float32Array`);
+  if (orders !== undefined && !(orders instanceof Uint32Array)) {
+    throw new TypeError(`${name} orders must be a Uint32Array`);
+  }
+  if (slots.length < count) throw new TypeError(`${name} slot list is shorter than count`);
+  if (xy.length < count * 2) {
+    throw new TypeError(`${name} xy must contain one packed pair per slot`);
+  }
+  if (orders !== undefined && orders.length < count) {
+    throw new TypeError(`${name} order list is shorter than count`);
+  }
+  for (let index = 0; index < count; index += 1) {
+    const slot = slots[index];
+    if (slot === undefined || slot > MAX_RENDER_SLOT) {
+      throw new RangeError(`${name} slot exceeds the render capacity domain`);
+    }
+  }
 }
 
 function validateChanges(changes: readonly RenderChange[]): void {
@@ -1354,8 +2242,8 @@ function validateChanges(changes: readonly RenderChange[]): void {
 }
 
 /**
- * Packed atlas identities ignore `glyphText` when a glyph id is present, and HarfBuzz runs carry no
- * glyph keys, so deriving the text there would slice the remaining code points per glyph.
+ * Packed default-axis identities use the font-local glyph id. Exact cluster text stays lazy until a
+ * raster miss needs it; variation identities use the run's canonical axis key.
  */
 function lazyGlyphText(run: Readonly<PositionedRun>, index: number, glyphId: number): string {
   return glyphId > 0 && run.source === "harfbuzz" ? "" : resolveGlyphText(run, index);
@@ -1379,6 +2267,10 @@ function isEmptyInkGlyph(run: Readonly<PositionedRun>, index: number): boolean {
   const codePoint = run.text.codePointAt(cluster);
   if (codePoint === undefined) return false;
   const units = codePoint > 0xffff ? 2 : 1;
+  const exactEnd = run.clusterEnds?.[index];
+  if (exactEnd !== undefined) {
+    return exactEnd === cluster + units && isEmptyInkCodePoint(codePoint);
+  }
   const end = cluster + units;
   let glyphAtEnd = end >= run.text.length;
   for (let other = 0; other < run.glyphCount; other += 1) {
@@ -1414,6 +2306,10 @@ function resolveGlyphText(run: Readonly<PositionedRun>, index: number): string {
   const key = run.glyphKeys?.[index];
   if (key !== undefined && key.length > 0) return key;
   const cluster = run.clusters[index] ?? 0;
+  const clusterEnd = run.clusterEnds?.[index];
+  if (clusterEnd !== undefined && clusterEnd > cluster && clusterEnd <= run.text.length) {
+    return run.text.slice(cluster, clusterEnd);
+  }
   const suffix = run.text.slice(cluster);
   return Array.from(suffix)[0] ?? "�";
 }

@@ -1,4 +1,11 @@
 import { packF16, unpackF16 } from "../render/pack";
+import {
+  PALETTE_DENSE_MOVE_STRIDE,
+  PALETTE_DENSE_MOVE_WORDS,
+  PALETTE_MOVE_STRIDE,
+  PALETTE_MOVE_WORDS,
+  type PaletteMoveMode,
+} from "../render/paletteStorage";
 import type { TextId } from "../types";
 import { assertBlendMode, decodeBlendMode, encodeBlendMode } from "./blendModes";
 import {
@@ -47,6 +54,38 @@ export interface TextStoreColumnUpdateResult {
   readonly mask: TextDirtyMask;
 }
 
+interface TextStoreResidentPositionUpdatesBase {
+  readonly commands: ArrayBuffer;
+  readonly slots: Uint32Array;
+  readonly count: number;
+}
+
+/** @internal Ownership-transfer payload for one GPU-resident mover revision. */
+export type TextStoreResidentPositionUpdates = TextStoreResidentPositionUpdatesBase &
+  ({ readonly mode: "dense"; readonly baseSlot: number } | { readonly mode: "indexed" });
+
+/** @internal Focused allocation and ownership telemetry for the resident fast lane. */
+export interface TextStoreResidentPositionStats {
+  readonly pending: number;
+  readonly leased: number;
+  readonly allocations: number;
+  readonly reuses: number;
+  readonly takes: number;
+  readonly releases: number;
+  readonly materializations: number;
+}
+
+interface ResidentPositionStorage {
+  mode: PaletteMoveMode;
+  baseSlot: number;
+  capacity: number;
+  readonly commands: ArrayBuffer;
+  readonly commandUints: Uint32Array;
+  readonly commandFloats: Float32Array;
+  readonly slots: Uint32Array;
+  count: number;
+}
+
 export class TextStore {
   readonly #idBase: number;
   #capacity: number;
@@ -72,6 +111,15 @@ export class TextStore {
   #lastStyleKey: string | undefined;
   readonly #freeSlots: number[] = [];
   #positionSlots = new Uint32Array();
+  #residentPositionIndices = new Uint32Array();
+  #residentPositionStorage: ResidentPositionStorage | undefined;
+  readonly #residentPositionPool: ResidentPositionStorage[] = [];
+  readonly #residentPositionLeases = new Map<ArrayBuffer, ResidentPositionStorage>();
+  #residentPositionAllocations = 0;
+  #residentPositionReuses = 0;
+  #residentPositionTakes = 0;
+  #residentPositionReleases = 0;
+  #residentPositionMaterializations = 0;
   readonly #journal: DirtyJournal;
 
   constructor(options: TextStoreOptions = {}) {
@@ -141,6 +189,8 @@ export class TextStore {
       this.#anchorX.byteLength +
       this.#anchorY.byteLength +
       this.#positionSlots.byteLength +
+      this.#residentPositionIndices.byteLength +
+      this.#residentPositionAllocatedBytes() +
       this.#journal.allocatedBytes;
     const referenceSlotBytes = this.#capacity * 2 * 8;
 
@@ -315,6 +365,39 @@ export class TextStore {
     }
   }
 
+  /** Number of unique slot commands waiting for a GPU-resident commit. @internal */
+  get pendingResidentPositionUpdates(): number {
+    return this.#residentPositionStorage?.count ?? 0;
+  }
+
+  /** Exact union of the ordinary dirty journal and captured resident movers. @internal */
+  get pendingDirtyIncludingResidentPositions(): Readonly<PendingDirty> {
+    const dirty = this.#journal.pending;
+    const storage = this.#residentPositionStorage;
+    if (storage === undefined || storage.count === 0) return dirty;
+    if (dirty.labels === 0) {
+      return Object.freeze({ labels: storage.count, mask: TextDirty.Transform });
+    }
+    let labels = dirty.labels;
+    for (let index = 0; index < storage.count; index += 1) {
+      if (this.#journal.maskAt(storage.slots[index] ?? 0) === TextDirty.None) labels += 1;
+    }
+    return Object.freeze({ labels, mask: dirty.mask | TextDirty.Transform });
+  }
+
+  /** Resident mover journal allocation/lease telemetry. @internal */
+  get residentPositionStats(): Readonly<TextStoreResidentPositionStats> {
+    return Object.freeze({
+      pending: this.pendingResidentPositionUpdates,
+      leased: this.#residentPositionLeases.size,
+      allocations: this.#residentPositionAllocations,
+      reuses: this.#residentPositionReuses,
+      takes: this.#residentPositionTakes,
+      releases: this.#residentPositionReleases,
+      materializations: this.#residentPositionMaterializations,
+    });
+  }
+
   update(id: TextId, patch: TextStoreLabelPatch): TextDirtyMask {
     assertPatch(patch);
     const slot = this.#requireSlot(id);
@@ -446,10 +529,14 @@ export class TextStore {
     return true;
   }
 
+  /** Apply one validated position wave; resident hooks bracket the mutation pass. @internal */
   updatePositions(
     ids: readonly TextId[] | Float64Array,
     positions: Float32Array | Float64Array,
     visitor?: (slot: number, x: number, y: number, previousX: number, previousY: number) => void,
+    captureResidentPositions = false,
+    preflight?: (slots: Uint32Array, count: number) => void,
+    residentBatchVisitor?: (slots: Uint32Array, count: number) => void,
   ): number {
     if (positions.length !== ids.length * 2) {
       throw new TypeError("positions must contain one packed x/y pair for every TextId");
@@ -459,6 +546,12 @@ export class TextStore {
       this.#positionSlots = new Uint32Array(nextPowerOfTwo(ids.length));
     }
     const slots = this.#positionSlots;
+    let inputSlotsContiguous = ids.length > 0;
+    let previousSlot = -1;
+    let firstChangedSlot = -1;
+    let previousChangedSlot = -1;
+    let denseChangedCount = 0;
+    let changedSlotsContiguous = true;
     for (let index = 0; index < ids.length; index += 1) {
       const id = ids[index];
       if (id === undefined) {
@@ -467,35 +560,172 @@ export class TextStore {
       const slot = this.#requireSlot(id as TextId);
       const x = positions[index * 2];
       const y = positions[index * 2 + 1];
-      if (x === undefined || y === undefined || !Number.isFinite(x) || !Number.isFinite(y)) {
+      const nextX = Math.fround(x ?? Number.NaN);
+      const nextY = Math.fround(y ?? Number.NaN);
+      if (!Number.isFinite(nextX) || !Number.isFinite(nextY)) {
         throw new TypeError(`Position at index ${String(index)} must contain finite x/y values`);
       }
       slots[index] = slot;
+      if (index > 0 && slot !== previousSlot + 1) inputSlotsContiguous = false;
+      previousSlot = slot;
+      if (nextX !== this.#x[slot] || nextY !== this.#y[slot]) {
+        if (firstChangedSlot < 0) firstChangedSlot = slot;
+        else if (slot !== previousChangedSlot + 1) changedSlotsContiguous = false;
+        previousChangedSlot = slot;
+        denseChangedCount += 1;
+      }
     }
+
+    if (captureResidentPositions && denseChangedCount > 0) {
+      const current = this.#residentPositionStorage;
+      const denseSource = inputSlotsContiguous && changedSlotsContiguous;
+      const canExtendDense =
+        current?.mode === "dense" &&
+        denseSource &&
+        firstChangedSlot === current.baseSlot + current.count;
+      const mode: PaletteMoveMode =
+        denseSource && (current === undefined || current.count === 0 || canExtendDense)
+          ? "dense"
+          : "indexed";
+      const baseSlot =
+        mode === "dense" && current?.mode === "dense" && current.count > 0
+          ? current.baseSlot
+          : mode === "dense"
+            ? firstChangedSlot
+            : 0;
+      this.#ensureResidentPositionCapacity(
+        Math.min(this.#capacity, this.pendingResidentPositionUpdates + ids.length),
+        mode,
+        baseSlot,
+      );
+    }
+    preflight?.(slots, ids.length);
 
     let changed = 0;
-    for (let index = 0; index < ids.length; index += 1) {
-      const slot = slots[index];
-      if (slot === undefined) {
-        throw new Error(`TextStore position slot missing at index ${String(index)}`);
-      }
-      const x = Math.fround(positions[index * 2] ?? 0);
-      const y = Math.fround(positions[index * 2 + 1] ?? 0);
-      const previousX = this.#x[slot] ?? 0;
-      const previousY = this.#y[slot] ?? 0;
-      if (x === previousX && y === previousY) {
-        continue;
-      }
+    if (captureResidentPositions && visitor === undefined) {
+      changed = this.#applyResidentPositions(slots, ids.length, positions);
+    } else {
+      for (let index = 0; index < ids.length; index += 1) {
+        const slot = slots[index]!;
+        const x = Math.fround(positions[index * 2] ?? 0);
+        const y = Math.fround(positions[index * 2 + 1] ?? 0);
+        const previousX = this.#x[slot] ?? 0;
+        const previousY = this.#y[slot] ?? 0;
+        if (x === previousX && y === previousY) {
+          continue;
+        }
 
-      this.#x[slot] = x;
-      this.#y[slot] = y;
-      this.#markTransformKind(slot, POSITION_ONLY);
-      this.#journal.record(slot, TextDirty.Transform);
-      visitor?.(slot, x, y, previousX, previousY);
-      changed += 1;
+        this.#x[slot] = x;
+        this.#y[slot] = y;
+        if (captureResidentPositions) {
+          this.#recordResidentPosition(slot, x, y);
+        } else {
+          this.#markTransformKind(slot, POSITION_ONLY);
+          this.#journal.record(slot, TextDirty.Transform);
+        }
+        visitor?.(slot, x, y, previousX, previousY);
+        if (captureResidentPositions) slots[changed] = slot;
+        changed += 1;
+      }
     }
 
+    if (captureResidentPositions && changed > 0) residentBatchVisitor?.(slots, changed);
+
     return changed;
+  }
+
+  /** Transfer the current packed mover buffer to one commit. The caller releases the lease. */
+  takeResidentPositionUpdates(): Readonly<TextStoreResidentPositionUpdates> | undefined {
+    const storage = this.#residentPositionStorage;
+    if (storage === undefined || storage.count === 0) return undefined;
+    this.#residentPositionStorage = undefined;
+    this.#residentPositionLeases.set(storage.commands, storage);
+    this.#residentPositionTakes += 1;
+    return storage.mode === "dense"
+      ? Object.freeze({
+          mode: "dense" as const,
+          baseSlot: storage.baseSlot,
+          commands: storage.commands,
+          slots: storage.slots,
+          count: storage.count,
+        })
+      : Object.freeze({
+          mode: "indexed" as const,
+          commands: storage.commands,
+          slots: storage.slots,
+          count: storage.count,
+        });
+  }
+
+  /** Return a transferred mover buffer to the bounded reuse pool. @internal */
+  releaseResidentPositionUpdates(batch: Readonly<TextStoreResidentPositionUpdates>): boolean {
+    const storage = this.#residentPositionLeases.get(batch.commands);
+    if (
+      storage === undefined ||
+      storage.mode !== batch.mode ||
+      storage.slots !== batch.slots ||
+      storage.count !== batch.count
+    ) {
+      return false;
+    }
+    if (
+      storage.mode === "dense" &&
+      (batch.mode !== "dense" || storage.baseSlot !== batch.baseSlot)
+    ) {
+      return false;
+    }
+    this.#residentPositionLeases.delete(batch.commands);
+    storage.count = 0;
+    if (this.#residentPositionPool.length < 2) this.#residentPositionPool.push(storage);
+    this.#residentPositionReleases += 1;
+    return true;
+  }
+
+  /** Visit transferred mover revisions in commit order for same-context failure recovery. @internal */
+  visitResidentPositionLeases(
+    visitor: (batch: Readonly<TextStoreResidentPositionUpdates>) => void,
+  ): number {
+    if (typeof visitor !== "function") {
+      throw new TypeError("Resident position lease visitor must be a function");
+    }
+    let visited = 0;
+    for (const storage of this.#residentPositionLeases.values()) {
+      if (storage.mode === "dense") {
+        visitor({
+          mode: "dense",
+          baseSlot: storage.baseSlot,
+          commands: storage.commands,
+          slots: storage.slots,
+          count: storage.count,
+        });
+      } else {
+        visitor({
+          mode: "indexed",
+          commands: storage.commands,
+          slots: storage.slots,
+          count: storage.count,
+        });
+      }
+      visited += 1;
+    }
+    return visited;
+  }
+
+  /** Publish captured movers back to the ordinary dirty journal before a resident fallback. */
+  materializeResidentPositionUpdates(): number {
+    const storage = this.#residentPositionStorage;
+    if (storage === undefined || storage.count === 0) return 0;
+    let materialized = 0;
+    for (let index = 0; index < storage.count; index += 1) {
+      const slot = storage.slots[index] ?? 0;
+      if (!this.#occupied(slot)) continue;
+      this.#markTransformKind(slot, POSITION_ONLY);
+      this.#journal.record(slot, TextDirty.Transform);
+      materialized += 1;
+    }
+    storage.count = 0;
+    this.#residentPositionMaterializations += 1;
+    return materialized;
   }
 
   /** Apply one text value plus packed x/y columns through a single validation pass. @internal */
@@ -696,6 +926,9 @@ export class TextStore {
       this.#anchorY = resizeTypedArray(this.#anchorY, afterCapacity);
       this.#texts.length = afterCapacity;
       this.#styles.length = afterCapacity;
+      if (this.#residentPositionIndices.length > afterCapacity) {
+        this.#residentPositionIndices = this.#residentPositionIndices.slice(0, afterCapacity);
+      }
       if (this.#journal.capacity > afterCapacity) {
         this.#journal.resize(afterCapacity);
       }
@@ -736,7 +969,187 @@ export class TextStore {
     this.#lastStyleKey = undefined;
     this.#freeSlots.length = 0;
     this.#positionSlots = new Uint32Array();
+    this.#residentPositionIndices = new Uint32Array();
+    this.#residentPositionStorage = undefined;
+    this.#residentPositionPool.length = 0;
+    this.#residentPositionLeases.clear();
     this.#journal.dispose();
+  }
+
+  #ensureResidentPositionCapacity(required: number, mode: PaletteMoveMode, baseSlot: number): void {
+    if (this.#residentPositionIndices.length < this.#capacity) {
+      this.#residentPositionIndices = resizeTypedArray(
+        this.#residentPositionIndices,
+        this.#capacity,
+      );
+    }
+    const current = this.#residentPositionStorage;
+    if (current !== undefined && current.mode === mode && current.capacity >= required) {
+      if (current.count === 0) current.baseSlot = baseSlot;
+      return;
+    }
+
+    let replacement: ResidentPositionStorage | undefined;
+    let replacementIndex = -1;
+    for (let index = 0; index < this.#residentPositionPool.length; index += 1) {
+      const candidate = this.#residentPositionPool[index];
+      if (candidate === undefined || candidate.mode !== mode || candidate.capacity < required) {
+        continue;
+      }
+      if (replacement === undefined || candidate.capacity < replacement.capacity) {
+        replacement = candidate;
+        replacementIndex = index;
+      }
+    }
+    if (replacement !== undefined) {
+      this.#residentPositionPool.splice(replacementIndex, 1);
+      this.#residentPositionReuses += 1;
+    } else {
+      const capacity = nextPowerOfTwo(Math.max(1, required));
+      const commands = new ArrayBuffer(capacity * residentMoveStride(mode));
+      replacement = {
+        mode,
+        baseSlot,
+        capacity,
+        commands,
+        commandUints: new Uint32Array(commands),
+        commandFloats: new Float32Array(commands),
+        slots: new Uint32Array(capacity),
+        count: 0,
+      };
+      this.#residentPositionAllocations += 1;
+    }
+    replacement.baseSlot = baseSlot;
+    if (current !== undefined && current.count > 0) {
+      replacement.slots.set(current.slots.subarray(0, current.count));
+      if (current.mode === mode) {
+        new Uint8Array(replacement.commands).set(
+          new Uint8Array(current.commands, 0, current.count * residentMoveStride(mode)),
+        );
+        replacement.baseSlot = current.baseSlot;
+      } else if (current.mode === "dense" && mode === "indexed") {
+        for (let index = 0; index < current.count; index += 1) {
+          const denseBase = index * PALETTE_DENSE_MOVE_WORDS;
+          const indexedBase = index * PALETTE_MOVE_WORDS;
+          const slot = current.baseSlot + index;
+          replacement.commandUints[indexedBase] = slot;
+          replacement.commandUints[indexedBase + 1] = current.commandUints[denseBase + 0] ?? 0;
+          replacement.commandUints[indexedBase + 2] = current.commandUints[denseBase + 1] ?? 0;
+          this.#residentPositionIndices[slot] = index + 1;
+        }
+      } else {
+        throw new Error("Resident indexed positions cannot narrow to dense storage");
+      }
+      replacement.count = current.count;
+      current.count = 0;
+      if (this.#residentPositionPool.length < 2) this.#residentPositionPool.push(current);
+    }
+    this.#residentPositionStorage = replacement;
+  }
+
+  #recordResidentPosition(slot: number, x: number, y: number): void {
+    const storage = this.#residentPositionStorage;
+    if (storage === undefined) {
+      throw new Error("Resident position storage was not prepared before apply");
+    }
+    if (storage.mode === "dense") {
+      const index = storage.count;
+      if (slot !== storage.baseSlot + index) {
+        throw new Error("Dense resident position slots lost strict contiguity during apply");
+      }
+      storage.slots[index] = slot;
+      const base = index * PALETTE_DENSE_MOVE_WORDS;
+      storage.commandFloats[base] = x;
+      storage.commandFloats[base + 1] = y;
+      storage.count += 1;
+      return;
+    }
+    const encoded = this.#residentPositionIndices[slot] ?? 0;
+    let index = encoded - 1;
+    if (encoded === 0 || index >= storage.count || storage.slots[index] !== slot) {
+      index = storage.count;
+      storage.slots[index] = slot;
+      storage.count += 1;
+      this.#residentPositionIndices[slot] = index + 1;
+    }
+    const base = index * PALETTE_MOVE_WORDS;
+    storage.commandUints[base] = slot;
+    storage.commandFloats[base + 1] = x;
+    storage.commandFloats[base + 2] = y;
+  }
+
+  #applyResidentPositions(
+    slots: Uint32Array,
+    count: number,
+    positions: Float32Array | Float64Array,
+  ): number {
+    const storage = this.#residentPositionStorage;
+    if (storage === undefined) {
+      throw new Error("Resident position storage was not prepared before apply");
+    }
+    const originX = this.#x;
+    const originY = this.#y;
+    const indices = this.#residentPositionIndices;
+    const residentSlots = storage.slots;
+    const commandUints = storage.commandUints;
+    const commandFloats = storage.commandFloats;
+    let residentCount = storage.count;
+    let changed = 0;
+    for (let inputIndex = 0; inputIndex < count; inputIndex += 1) {
+      const slot = slots[inputIndex] ?? 0;
+      const x = Math.fround(positions[inputIndex * 2] ?? 0);
+      const y = Math.fround(positions[inputIndex * 2 + 1] ?? 0);
+      if (x === originX[slot] && y === originY[slot]) continue;
+      originX[slot] = x;
+      originY[slot] = y;
+
+      let residentIndex: number;
+      if (storage.mode === "dense") {
+        residentIndex = residentCount;
+        if (slot !== storage.baseSlot + residentIndex) {
+          throw new Error("Dense resident position slots lost strict contiguity during apply");
+        }
+        residentSlots[residentIndex] = slot;
+        residentCount += 1;
+        const commandBase = residentIndex * PALETTE_DENSE_MOVE_WORDS;
+        commandFloats[commandBase] = x;
+        commandFloats[commandBase + 1] = y;
+      } else {
+        const encoded = indices[slot] ?? 0;
+        residentIndex = encoded - 1;
+        if (
+          encoded === 0 ||
+          residentIndex >= residentCount ||
+          residentSlots[residentIndex] !== slot
+        ) {
+          residentIndex = residentCount;
+          residentSlots[residentIndex] = slot;
+          residentCount += 1;
+          indices[slot] = residentIndex + 1;
+        }
+        const commandBase = residentIndex * PALETTE_MOVE_WORDS;
+        commandUints[commandBase] = slot;
+        commandFloats[commandBase + 1] = x;
+        commandFloats[commandBase + 2] = y;
+      }
+      slots[changed] = slot;
+      changed += 1;
+    }
+    storage.count = residentCount;
+    return changed;
+  }
+
+  #residentPositionAllocatedBytes(): number {
+    let bytes = 0;
+    const active = this.#residentPositionStorage;
+    if (active !== undefined) bytes += active.commands.byteLength + active.slots.byteLength;
+    for (const storage of this.#residentPositionPool) {
+      bytes += storage.commands.byteLength + storage.slots.byteLength;
+    }
+    for (const storage of this.#residentPositionLeases.values()) {
+      bytes += storage.commands.byteLength + storage.slots.byteLength;
+    }
+    return bytes;
   }
 
   #allocateSlot(): number {
@@ -880,6 +1293,10 @@ export class TextStore {
 
     return slot;
   }
+}
+
+function residentMoveStride(mode: PaletteMoveMode): number {
+  return mode === "dense" ? PALETTE_DENSE_MOVE_STRIDE : PALETTE_MOVE_STRIDE;
 }
 
 function assertPositiveCapacity(capacity: number): void {

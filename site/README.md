@@ -28,13 +28,16 @@ points through exact aliases to `dist/`.
 - `?renderer=webgl` and `?renderer=webgpu` as hard overrides;
 - `computeCull: "auto"` plus a compact HUD and `data-cull-path` / `data-palette-path` readouts of
   `stats.cullPath` (`compute-cull` or `cpu-grid`) and `stats.palettePath` (`storage` or `texture`);
+- WebGPU requests `residency: "gpu-scene"` with a bounded 24-prototype / 8-paint scene, while the
+  HUD and `data-residency-active` / `data-residency-fallback` expose the live residency decision;
 - a first camera view framed on the multilingual specimen band, painted before the rest of the
   million-label set is allocated;
 - 1,000,000 resident labels and viewport culling;
 - 100,000 packed position updates every 100 milliseconds;
 - five registered Noto subsets covering CJKV, Arabic, Devanagari, Hebrew, and Thai;
 - `charsetSdfPrebuilt` pages for those language samples after `FontFace.load`;
-- Greek, Cyrillic, Vietnamese, emoji, language/script overrides, and system fallback samples;
+- Greek, Cyrillic, Vietnamese, emoji, and system fallback samples; the Fonts section demonstrates
+  explicit language/script overrides on the public API;
 - explicitly bundled MSDF worker and WebAssembly assets for deterministic production startup;
 - pixi-viewport drag, deceleration, wheel, pinch, zoom, and rotation;
 - keyboard pan and zoom controls plus reduced-motion behavior;

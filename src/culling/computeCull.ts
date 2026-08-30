@@ -10,7 +10,16 @@ export type CullAabbSpace = "world" | "local";
 
 export const CULL_RECORD_STRIDE = 32;
 export const CULL_WORKGROUP = 256;
+/** Two parallel scan levels cover 256^3 fixed-slot records. */
+export const CULL_MAX_RECORDS: number = CULL_WORKGROUP ** 3;
 const FLOATS_PER_RECORD = CULL_RECORD_STRIDE / Float32Array.BYTES_PER_ELEMENT;
+
+export interface ComputeCullDispatchPlan {
+  readonly recordGroups: number;
+  readonly groupBlocks: number;
+  readonly dispatchRecordGroups: number;
+  readonly dispatchGroupBlocks: number;
+}
 
 export interface CullViewport {
   readonly x: number;
@@ -29,6 +38,8 @@ export interface CullRecordInput {
   readonly instanceCount: number;
   /** Slot / palette row. Scatter writes this into each compacted instance. */
   readonly paletteIndex?: number;
+  /** Index of the shared `x, y, width, height` local bounds used by fused position patches. */
+  readonly localBoundsIndex?: number;
 }
 
 export interface CompactInstancesResult {
@@ -155,6 +166,24 @@ export function planComputeCullStorageBytes(needed: number, limit: number): numb
   return undefined;
 }
 
+/** Plan the fixed two-level prefix dispatch, including legal one-group zero-record dispatches. */
+export function planComputeCullDispatch(recordCount: number): Readonly<ComputeCullDispatchPlan> {
+  if (!Number.isSafeInteger(recordCount) || recordCount < 0) {
+    throw new TypeError("compute-cull record count must be a non-negative safe integer");
+  }
+  if (recordCount > CULL_MAX_RECORDS) {
+    throw new RangeError("compute-cull record count exceeds the two-level prefix capacity");
+  }
+  const recordGroups = Math.ceil(recordCount / CULL_WORKGROUP);
+  const groupBlocks = Math.ceil(recordGroups / CULL_WORKGROUP);
+  return Object.freeze({
+    recordGroups,
+    groupBlocks,
+    dispatchRecordGroups: Math.max(1, recordGroups),
+    dispatchGroupBlocks: Math.max(1, groupBlocks),
+  });
+}
+
 export function computeCullStructurallyEligible(input: {
   readonly segmentCount: number;
   readonly highWater: number;
@@ -279,7 +308,81 @@ export type AdmitSlotKind = "tight" | "offscreen" | "skip";
 
 export interface OffscreenAdmitBudget {
   remainingBytes: number;
+  remainingInspections: number;
   deferred: boolean;
+}
+
+export interface OffscreenAdmissionCursor {
+  readonly generation: number;
+  readonly index: number;
+}
+
+export interface OffscreenAdmissionWindow {
+  readonly start: number;
+  readonly end: number;
+  readonly nextCursor: OffscreenAdmissionCursor;
+  readonly reset: boolean;
+  readonly completedCycle: boolean;
+  readonly deferred: boolean;
+}
+
+/**
+ * Bound one reproducible ring-query pass before any per-label materialization. The caller owns
+ * generation changes whenever the ring or candidate policy changes. A completed pass wraps to zero
+ * so a later cycle keeps the query's stable insertion order.
+ */
+export function planOffscreenAdmissionWindow(input: {
+  readonly generation: number;
+  readonly cursor: OffscreenAdmissionCursor | undefined;
+  readonly candidateCount: number;
+  readonly maxInspections: number;
+}): OffscreenAdmissionWindow {
+  if (!Number.isSafeInteger(input.generation) || input.generation < 0) {
+    throw new TypeError("Off-screen admission generation must be a non-negative safe integer");
+  }
+  if (!Number.isSafeInteger(input.candidateCount) || input.candidateCount < 0) {
+    throw new TypeError("Off-screen admission candidate count must be a non-negative safe integer");
+  }
+  if (!Number.isSafeInteger(input.maxInspections) || input.maxInspections < 0) {
+    throw new TypeError("Off-screen admission inspection cap must be a non-negative safe integer");
+  }
+  const reset =
+    input.cursor === undefined ||
+    input.cursor.generation !== input.generation ||
+    input.cursor.index < 0 ||
+    input.cursor.index >= input.candidateCount;
+  const start = reset ? 0 : input.cursor.index;
+  const end = Math.min(input.candidateCount, start + input.maxInspections);
+  const completedCycle = end >= input.candidateCount;
+  return {
+    start,
+    end,
+    nextCursor: {
+      generation: input.generation,
+      index: completedCycle ? 0 : end,
+    },
+    reset,
+    completedCycle,
+    deferred: !completedCycle,
+  };
+}
+
+/** Consume one off-screen inspection window from the commit-scoped CPU budget. */
+export function planBudgetedOffscreenAdmissionWindow(input: {
+  readonly generation: number;
+  readonly cursor: OffscreenAdmissionCursor | undefined;
+  readonly candidateCount: number;
+  readonly budget: OffscreenAdmitBudget;
+}): OffscreenAdmissionWindow {
+  const window = planOffscreenAdmissionWindow({
+    generation: input.generation,
+    cursor: input.cursor,
+    candidateCount: input.candidateCount,
+    maxInspections: input.budget.remainingInspections,
+  });
+  input.budget.remainingInspections -= window.end - window.start;
+  if (window.deferred) input.budget.deferred = true;
+  return window;
 }
 
 export function createOffscreenAdmitBudget(input: {
@@ -288,9 +391,17 @@ export function createOffscreenAdmitBudget(input: {
 }): OffscreenAdmitBudget {
   switch (input.cullPath) {
     case "cpu-grid":
-      return { remainingBytes: Number.POSITIVE_INFINITY, deferred: false };
+      return {
+        remainingBytes: Number.POSITIVE_INFINITY,
+        remainingInspections: Number.POSITIVE_INFINITY,
+        deferred: false,
+      };
     case "compute-cull":
-      return { remainingBytes: input.budgetBytes, deferred: false };
+      return {
+        remainingBytes: input.budgetBytes,
+        remainingInspections: Math.floor(input.budgetBytes / OFFSCREEN_ADMIT_LABEL_BYTES),
+        deferred: false,
+      };
     default: {
       const _exhaustive: never = input.cullPath;
       return _exhaustive;
@@ -455,6 +566,7 @@ export function writeCullRecordAt(
   uints[base + 4] = record.instanceOffset;
   uints[base + 5] = record.instanceCount;
   uints[base + 6] = record.paletteIndex ?? 0;
+  uints[base + 7] = record.localBoundsIndex ?? 0;
 }
 
 export function aabbVisible(
@@ -487,7 +599,7 @@ export function packCullRecords(records: readonly CullRecordInput[]): ArrayBuffe
 export function compactVisibleInstances(
   records: ArrayBuffer,
   recordCount: number,
-  instances: ArrayBuffer,
+  _instances: ArrayBuffer,
   viewport: CullViewport,
   options: {
     readonly aabbSpace?: CullAabbSpace;
@@ -507,7 +619,6 @@ export function compactVisibleInstances(
     counts[index] = count;
     instanceCount += count;
   }
-  void instances;
   const compact = new Uint8Array(instanceCount * GLYPH_DRAW_STRIDE);
   const words = new Uint32Array(compact.buffer, compact.byteOffset, compact.byteLength / 4);
   let write = 0;

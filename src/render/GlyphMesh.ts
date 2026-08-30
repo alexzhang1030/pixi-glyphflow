@@ -12,7 +12,12 @@ import {
 } from "pixi.js";
 
 import { readyPalettePath, type PalettePath } from "./paletteStorage";
-import { GLYPH_FRAGMENT_GLSL, glyphShaderWgsl, GLYPH_VERTEX_GLSL } from "./shaders";
+import {
+  GLYPH_FRAGMENT_GLSL,
+  glyphShaderWgsl,
+  GLYPH_VERTEX_GLSL,
+  type GlyphShaderVariant,
+} from "./shaders";
 import { GLYPH_DRAW_STRIDE, GLYPH_PROTO_TEXTURE_WIDTH, GLYPH_TEXTURE_BANK_SIZE } from "./types";
 
 /** Owned sampler. Do not bind `source.style` — destroying that source nulls it. */
@@ -20,6 +25,12 @@ const ATLAS_SAMPLER_STYLE = new TextureStyle({
   addressMode: "clamp-to-edge",
   scaleMode: "linear",
 });
+
+export const RESIDENT_RUN_MIN_GLYPHS = 2;
+export const RESIDENT_RUN_MAX_GLYPHS = 8;
+const RESIDENT_PROTO_FLOATS_PER_GLYPH = 8;
+const RESIDENT_RUN_UNIFORM_VEC4S = RESIDENT_RUN_MAX_GLYPHS * 2;
+const RESIDENT_RUN_UNIFORM_FLOATS = RESIDENT_RUN_UNIFORM_VEC4S * 4;
 
 export interface GlyphMeshOptions {
   readonly texture: Texture;
@@ -38,6 +49,12 @@ export interface GlyphMeshOptions {
   readonly effectBase?: number;
   readonly instanceData: ArrayBuffer;
   readonly instanceCount: number;
+  /** Built-in WebGPU program. The resident fill variant requires the storage palette path. */
+  readonly shaderVariant?: GlyphShaderVariant;
+  /** Packed RGBA32F prototype texels for a resident uniform variant. */
+  readonly residentPrototype?: Float32Array;
+  /** Absolute prototype index represented by the first run-uniform glyph. */
+  readonly residentPrototypeBase?: number;
   readonly shader?: Shader;
 }
 
@@ -46,6 +63,8 @@ export class GlyphMesh extends Mesh<Geometry, Shader> {
   readonly palettePath: PalettePath;
   readonly #ownedGeometry: Geometry;
   readonly #ownedShader: Shader;
+  readonly #shaderVariant: GlyphShaderVariant;
+  readonly #residentPrototypeFloats: number;
   #prototypeTexture: Texture;
 
   constructor(options: GlyphMeshOptions) {
@@ -61,6 +80,14 @@ export class GlyphMesh extends Mesh<Geometry, Shader> {
     const palettePath = readyPalettePath(
       options.palettePath ?? "texture",
       options.paletteStorage !== undefined,
+    );
+    const shaderVariant =
+      palettePath === "storage" ? (options.shaderVariant ?? "general") : "general";
+    const residentPrototype = options.residentPrototype;
+    const residentPrototypeFloats = validateResidentPrototype(
+      shaderVariant,
+      residentPrototype,
+      options.residentPrototypeBase,
     );
     const vertexBuffer = new Buffer({
       data: new Float32Array([0, 0, 1, 0, 1, 1, 0, 1]),
@@ -107,11 +134,11 @@ export class GlyphMesh extends Mesh<Geometry, Shader> {
         gpuProgram: GpuProgram.from({
           name: "pixi-glyphflow",
           vertex: {
-            source: glyphShaderWgsl(palettePath),
+            source: glyphShaderWgsl(palettePath, shaderVariant),
             entryPoint: "mainVertex",
           },
           fragment: {
-            source: glyphShaderWgsl(palettePath),
+            source: glyphShaderWgsl(palettePath, shaderVariant),
             entryPoint: "mainFragment",
           },
           gpuLayout: [
@@ -169,10 +196,13 @@ export class GlyphMesh extends Mesh<Geometry, Shader> {
           uSampler: ATLAS_SAMPLER_STYLE,
           ...glyphPaletteResources(palettePath, options.paletteTexture, options.paletteStorage),
           uPrototype: options.prototypeTexture.source,
-          glyphUniforms: {
-            uPaletteWidth: { value: options.paletteWidth, type: "f32" },
-            uEffectBase: { value: options.effectBase ?? 0, type: "f32" },
-          },
+          glyphUniforms: glyphUniformResources(
+            options.paletteWidth,
+            options.effectBase ?? 0,
+            shaderVariant,
+            residentPrototype,
+            options.residentPrototypeBase,
+          ),
         },
       });
     super({ geometry, shader, texture: options.texture });
@@ -180,6 +210,8 @@ export class GlyphMesh extends Mesh<Geometry, Shader> {
     this.palettePath = palettePath;
     this.#ownedGeometry = geometry;
     this.#ownedShader = shader;
+    this.#shaderVariant = shaderVariant;
+    this.#residentPrototypeFloats = residentPrototypeFloats;
     this.#prototypeTexture = options.prototypeTexture;
     this.onRender = this.#bindPrototype;
   }
@@ -195,7 +227,7 @@ export class GlyphMesh extends Mesh<Geometry, Shader> {
   }
 
   setInstanceCount(instanceCount: number): void {
-    validateInstanceData(this.instanceBuffer.data.buffer as ArrayBuffer, instanceCount);
+    validateInstanceData(this.instanceBuffer.data.buffer, instanceCount);
     this.geometry.instanceCount = instanceCount;
   }
 
@@ -218,16 +250,8 @@ export class GlyphMesh extends Mesh<Geometry, Shader> {
     if (!Number.isFinite(effectBase) || effectBase < 0) {
       throw new TypeError("effectBase must be a finite non-negative number");
     }
-    switch (this.palettePath) {
-      case "texture":
-        this.#ownedShader.resources.uTransformTexture = texture.source;
-        break;
-      case "storage":
-        break;
-      default: {
-        const _exhaustive: never = this.palettePath;
-        return _exhaustive;
-      }
+    if (this.palettePath === "texture") {
+      this.#ownedShader.resources.uTransformTexture = texture.source;
     }
     this.#ownedShader.resources.glyphUniforms.uniforms.uPaletteWidth = width;
     this.#ownedShader.resources.glyphUniforms.uniforms.uEffectBase = effectBase;
@@ -236,32 +260,15 @@ export class GlyphMesh extends Mesh<Geometry, Shader> {
 
   /** Drop the live palette sampler so a later GPU rewrite is not a bound vertex texture. */
   unbindPaletteTexture(): void {
-    switch (this.palettePath) {
-      case "texture":
-        this.#ownedShader.resources.uTransformTexture = Texture.EMPTY.source;
-        return;
-      case "storage":
-        return;
-      default: {
-        const _exhaustive: never = this.palettePath;
-        return _exhaustive;
-      }
+    if (this.palettePath === "texture") {
+      this.#ownedShader.resources.uTransformTexture = Texture.EMPTY.source;
     }
   }
 
   setPaletteStorage(buffer: Buffer): void {
-    switch (this.palettePath) {
-      case "texture":
-        return;
-      case "storage":
-        this.#ownedShader.resources.uTransforms = buffer;
-        this.#bindPrototype();
-        return;
-      default: {
-        const _exhaustive: never = this.palettePath;
-        return _exhaustive;
-      }
-    }
+    if (this.palettePath !== "storage") return;
+    this.#ownedShader.resources.uTransforms = buffer;
+    this.#bindPrototype();
   }
 
   setPrototypeTexture(texture: Texture, width: number): void {
@@ -270,6 +277,41 @@ export class GlyphMesh extends Mesh<Geometry, Shader> {
     }
     this.#prototypeTexture = texture;
     this.#bindPrototype();
+  }
+
+  setResidentPrototype(prototype: Float32Array): void {
+    const group = this.#ownedShader.resources.glyphUniforms;
+    if (this.#shaderVariant === "resident-fill-single") {
+      if (!(prototype instanceof Float32Array) || prototype.length < 8) {
+        throw new TypeError("single-glyph resident shader requires two prototype texels");
+      }
+      const proto0 = group.uniforms.uResidentProto0;
+      const proto1 = group.uniforms.uResidentProto1;
+      if (!(proto0 instanceof Float32Array) || !(proto1 instanceof Float32Array)) {
+        throw new Error("single-glyph resident uniforms are unavailable on this mesh");
+      }
+      proto0.set(prototype.subarray(0, 4));
+      proto1.set(prototype.subarray(4, 8));
+      group.update();
+      return;
+    }
+    if (this.#shaderVariant === "resident-fill-run") {
+      if (
+        !(prototype instanceof Float32Array) ||
+        prototype.length !== this.#residentPrototypeFloats
+      ) {
+        throw new TypeError("resident run update must preserve the packed prototype count");
+      }
+      const protos = group.uniforms.uResidentProtos;
+      if (!(protos instanceof Float32Array) || protos.length !== RESIDENT_RUN_UNIFORM_FLOATS) {
+        throw new Error("resident run uniforms are unavailable on this mesh");
+      }
+      protos.fill(0);
+      protos.set(prototype);
+      group.update();
+      return;
+    }
+    throw new Error("resident prototype uniforms are unavailable on this mesh");
   }
 
   #bindPrototype = (): void => {
@@ -326,28 +368,15 @@ export function glyphPaletteBindSpec(path: PalettePath): GlyphPaletteBindSpec {
 }
 
 function paletteVertexBinding(path: PalettePath): GPUBindGroupLayoutEntry {
-  switch (path) {
-    case "texture":
-      return {
-        binding: 3,
-        visibility: ShaderStage.VERTEX,
-        texture: {
-          sampleType: "unfilterable-float",
-          viewDimension: "2d",
-          multisampled: false,
-        },
-      };
-    case "storage":
-      return {
-        binding: 3,
-        visibility: ShaderStage.VERTEX,
-        buffer: { type: "read-only-storage" },
-      };
-    default: {
-      const _exhaustive: never = path;
-      return _exhaustive;
-    }
+  const spec = glyphPaletteBindSpec(path);
+  if (spec.texture !== undefined) {
+    return { binding: spec.binding, visibility: spec.visibility, texture: spec.texture };
   }
+  return {
+    binding: spec.binding,
+    visibility: spec.visibility,
+    buffer: { type: "read-only-storage" },
+  };
 }
 
 /**
@@ -375,7 +404,7 @@ export function glyphPaletteResources(
   }
 }
 
-function validateInstanceData(data: ArrayBuffer, instanceCount: number): void {
+function validateInstanceData(data: ArrayBufferLike, instanceCount: number): void {
   if (!(data instanceof ArrayBuffer)) {
     throw new TypeError("instanceData must be an ArrayBuffer");
   }
@@ -402,4 +431,74 @@ function normalizeAtlasArrays(
     throw new TypeError("texture must be the first atlas-array entry");
   }
   return [supplied[0] ?? primary, supplied[1] ?? primary];
+}
+
+function glyphUniformResources(
+  paletteWidth: number,
+  effectBase: number,
+  shaderVariant: GlyphShaderVariant,
+  residentPrototype: Float32Array | undefined,
+  residentPrototypeBase: number | undefined,
+): Record<
+  string,
+  { readonly value: number | Float32Array; readonly type: string; readonly size?: number }
+> {
+  const uniforms: Record<
+    string,
+    { readonly value: number | Float32Array; readonly type: string; readonly size?: number }
+  > = {
+    uPaletteWidth: { value: paletteWidth, type: "f32" },
+    uEffectBase: { value: effectBase, type: "f32" },
+  };
+  if (shaderVariant === "resident-fill-single" && residentPrototype !== undefined) {
+    uniforms.uResidentProto0 = { value: residentPrototype.subarray(0, 4), type: "vec4<f32>" };
+    uniforms.uResidentProto1 = { value: residentPrototype.subarray(4, 8), type: "vec4<f32>" };
+  }
+  if (shaderVariant === "resident-fill-run" && residentPrototype !== undefined) {
+    const protos = new Float32Array(RESIDENT_RUN_UNIFORM_FLOATS);
+    protos.set(residentPrototype);
+    uniforms.uResidentProtoBase = { value: residentPrototypeBase ?? 0, type: "i32" };
+    uniforms.uResidentProtoPadding = { value: 0, type: "f32" };
+    uniforms.uResidentProtos = {
+      value: protos,
+      type: "f32",
+      size: RESIDENT_RUN_UNIFORM_FLOATS,
+    };
+  }
+  return uniforms;
+}
+
+function validateResidentPrototype(
+  shaderVariant: GlyphShaderVariant,
+  prototype: Float32Array | undefined,
+  base: number | undefined,
+): number {
+  if (shaderVariant === "resident-fill-single") {
+    if (
+      !(prototype instanceof Float32Array) ||
+      prototype.length < RESIDENT_PROTO_FLOATS_PER_GLYPH
+    ) {
+      throw new TypeError("single-glyph resident shader requires two prototype texels");
+    }
+    return RESIDENT_PROTO_FLOATS_PER_GLYPH;
+  }
+  if (shaderVariant === "resident-fill-run") {
+    if (!(prototype instanceof Float32Array)) {
+      throw new TypeError("resident run shader requires 2 to 8 packed prototypes");
+    }
+    const glyphs = prototype.length / RESIDENT_PROTO_FLOATS_PER_GLYPH;
+    if (
+      !Number.isSafeInteger(glyphs) ||
+      glyphs < RESIDENT_RUN_MIN_GLYPHS ||
+      glyphs > RESIDENT_RUN_MAX_GLYPHS
+    ) {
+      throw new TypeError("resident run shader requires 2 to 8 packed prototypes");
+    }
+    const resolvedBase = base ?? 0;
+    if (!Number.isSafeInteger(resolvedBase) || resolvedBase < 0 || resolvedBase > 0x7fff_ffff) {
+      throw new TypeError("resident prototype base must be a non-negative i32");
+    }
+    return prototype.length;
+  }
+  return 0;
 }

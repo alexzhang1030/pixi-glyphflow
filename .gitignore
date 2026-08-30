@@ -6,6 +6,32 @@ site/.output/
 coverage/
 playwright-report/
 test-results/
+benchmarks/gpu-resident-compute.results.json
+benchmarks/results/budgets-1.2.0.json
+# Byte-exact browser evidence is versioned as .json.gz and materialized locally when needed.
+benchmarks/results/browser-gpu-scene-heterogeneous-64-webgpu-candidate-legacy-12b-1.2.0.json
+benchmarks/results/browser-gpu-scene-heterogeneous-64-webgpu-formal-1-1.2.0.json
+benchmarks/results/browser-gpu-scene-resident-webgpu-candidate-legacy-16b-1.2.0.json
+benchmarks/results/browser-gpu-scene-resident-webgpu-canonical-source-1.2.0.json
+benchmarks/results/browser-gpu-scene-resident-webgpu-fastlane-fused-600-1.2.0.json
+benchmarks/results/browser-gpu-scene-resident-webgpu-formal-1-1.2.0.json
+benchmarks/results/browser-gpu-scene-resident-webgpu-formal-2-1.2.0.json
+benchmarks/results/browser-gpu-scene-resident-webgpu-formal-3-1.2.0.json
+benchmarks/results/browser-gpu-scene-resident-webgpu-formal-4-1.2.0.json
+benchmarks/results/browser-label-collision-webgl-formal-1-1.2.0.json
+benchmarks/results/browser-label-collision-webgl-formal-2-1.2.0.json
+benchmarks/results/browser-label-collision-webgpu-formal-1-1.2.0.json
+benchmarks/results/browser-label-collision-webgpu-formal-2-1.2.0.json
+# Superseded local benchmark captures; current and hash-locked legacy evidence stays versioned.
+benchmarks/results/browser-gpu-scene-heterogeneous-64-webgpu-formal-1-legacy-12b-1.2.0.json
+benchmarks/results/browser-gpu-scene-resident-webgpu-fastlane-fused-600-legacy-16b-1.2.0.json
+benchmarks/results/browser-gpu-scene-resident-webgpu-formal-1-legacy-16b-1.2.0.json
+benchmarks/results/browser-gpu-scene-resident-webgpu-formal-2-legacy-16b-1.2.0.json
+benchmarks/results/browser-gpu-scene-resident-webgpu-formal-3-legacy-16b-1.2.0.json
+benchmarks/results/browser-gpu-scene-resident-webgpu-formal-4-legacy-16b-1.2.0.json
+benchmarks/results/browser-gpu-scene-resident-webgpu-promotion-repeatability-legacy-16b-1.2.0.json
+benchmarks/results/browser-label-collision-webgl-candidate-legacy-pre-whole-frame-1.2.0.json
+benchmarks/results/browser-label-collision-webgpu-candidate-legacy-pre-whole-frame-1.2.0.json
 *.tgz
 .DS_Store
 .env

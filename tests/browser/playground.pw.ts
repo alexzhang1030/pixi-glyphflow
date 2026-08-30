@@ -1,5 +1,7 @@
 import { expect, test } from "@playwright/test";
 
+import { hasWebGpuAdapter } from "./webgpu-support";
+
 test("runs the interactive pixi-viewport position-storm playground", async ({ page }) => {
   const errors: string[] = [];
   page.on("console", (message) => {
@@ -8,10 +10,18 @@ test("runs the interactive pixi-viewport position-storm playground", async ({ pa
   page.on("pageerror", (error) => errors.push(error.message));
 
   await page.goto("/playground/?labels=1000000&moving=100000");
-  await expect(page.locator("#state")).toHaveText("Live", { timeout: 20_000 });
+  const webGpuAvailable = await hasWebGpuAdapter(page);
+  await expect(page.locator("#state")).toHaveText(
+    webGpuAvailable ? "Live · GPU scene" : "Live · viewport",
+    { timeout: 20_000 },
+  );
   await expect(page.locator("#resident")).toHaveText("1,000,000");
   await expect(page.locator("#moving")).toHaveText("100,000");
   await expect(page.locator("#visible")).toHaveText(/^[1-9][0-9,]*$/u);
+  await expect(page.locator("#renderer")).toHaveText(webGpuAvailable ? "WebGPU" : "WebGL 2");
+  await expect(page.locator("#residency")).toHaveText(
+    webGpuAvailable ? "gpu-scene" : "viewport · webgpu-required",
+  );
 
   await page.locator("#rotation").fill("25");
   await page.locator("#toggle-storm").click();

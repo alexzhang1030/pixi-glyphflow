@@ -1,5 +1,11 @@
 import type { PalettePath } from "./paletteStorage";
 
+export type GlyphShaderVariant =
+  | "general"
+  | "resident-fill"
+  | "resident-fill-single"
+  | "resident-fill-run";
+
 export const GLYPH_VERTEX_GLSL = /* glsl */ `
 #version 300 es
 
@@ -226,8 +232,7 @@ void main(void) {
 }
 `;
 
-const GLYPH_SHADER_WGSL_TEXTURE: string = /* wgsl */ `
-struct GlobalUniforms {
+const GLYPH_COMMON_UNIFORMS_WGSL = `struct GlobalUniforms {
     uProjectionMatrix: mat3x3<f32>,
     uWorldTransformMatrix: mat3x3<f32>,
     uWorldColorAlpha: vec4<f32>,
@@ -238,22 +243,57 @@ struct LocalUniforms {
     uTransformMatrix: mat3x3<f32>,
     uColor: vec4<f32>,
     uRound: f32,
-};
+};`;
 
-@group(0) @binding(0) var<uniform> globalUniforms: GlobalUniforms;
+const GLYPH_COMMON_BINDINGS_WGSL = `@group(0) @binding(0) var<uniform> globalUniforms: GlobalUniforms;
 @group(1) @binding(0) var<uniform> localUniforms: LocalUniforms;
 @group(2) @binding(0) var uAtlasR: texture_2d_array<f32>;
 @group(2) @binding(1) var uAtlasRGBA: texture_2d_array<f32>;
-@group(2) @binding(2) var uSampler: sampler;
-@group(2) @binding(3) var uTransformTexture: texture_2d<f32>;
+@group(2) @binding(2) var uSampler: sampler;`;
 
-struct GlyphUniforms {
+const GLYPH_UNIFORMS_WGSL = `struct GlyphUniforms {
     uPaletteWidth: f32,
     uEffectBase: f32,
-};
+};`;
 
-@group(2) @binding(4) var<uniform> glyphUniforms: GlyphUniforms;
-@group(2) @binding(5) var uPrototype: texture_2d<f32>;
+const GLYPH_COMMON_RESOURCE_TAIL_WGSL = `@group(2) @binding(4) var<uniform> glyphUniforms: GlyphUniforms;
+@group(2) @binding(5) var uPrototype: texture_2d<f32>;`;
+
+const GLYPH_MEDIAN_WGSL = `fn median3(value: vec3<f32>) -> f32 {
+    return max(min(value.r, value.g), min(max(value.r, value.g), value.b));
+}`;
+
+const GLYPH_UNPACK_RGB_WGSL = `fn unpackRgb(packed: f32) -> vec3<f32> {
+    let value = u32(round(packed));
+    return vec3<f32>(
+        f32((value >> 16u) & 255u),
+        f32((value >> 8u) & 255u),
+        f32(value & 255u),
+    ) / 255.0;
+}`;
+
+const GLYPH_ATLAS_SAMPLE_WGSL = `fn atlasSample(
+    input: VertexOutput,
+    uv: vec2<f32>,
+    uvDx: vec2<f32>,
+    uvDy: vec2<f32>,
+) -> vec4<f32> {
+    let layer = i32(input.textureSlot);
+    if (input.mode == 0u || input.mode == 3u) {
+        return textureSampleGrad(uAtlasRGBA, uSampler, uv, layer, uvDx, uvDy);
+    }
+    return textureSampleGrad(uAtlasR, uSampler, uv, layer, uvDx, uvDy);
+}`;
+
+const GLYPH_SHADER_WGSL_TEXTURE: string = /* wgsl */ `
+${GLYPH_COMMON_UNIFORMS_WGSL}
+
+${GLYPH_COMMON_BINDINGS_WGSL}
+@group(2) @binding(3) var uTransformTexture: texture_2d<f32>;
+
+${GLYPH_UNIFORMS_WGSL}
+
+${GLYPH_COMMON_RESOURCE_TAIL_WGSL}
 
 struct VertexOutput {
     @builtin(position) position: vec4<f32>,
@@ -338,31 +378,11 @@ fn mainVertex(
     );
 }
 
-fn median3(value: vec3<f32>) -> f32 {
-    return max(min(value.r, value.g), min(max(value.r, value.g), value.b));
-}
+${GLYPH_MEDIAN_WGSL}
 
-fn unpackRgb(packed: f32) -> vec3<f32> {
-    let value = u32(round(packed));
-    return vec3<f32>(
-        f32((value >> 16u) & 255u),
-        f32((value >> 8u) & 255u),
-        f32(value & 255u),
-    ) / 255.0;
-}
+${GLYPH_UNPACK_RGB_WGSL}
 
-fn atlasSample(
-    input: VertexOutput,
-    uv: vec2<f32>,
-    uvDx: vec2<f32>,
-    uvDy: vec2<f32>,
-) -> vec4<f32> {
-    let layer = i32(input.textureSlot);
-    if (input.mode == 0u || input.mode == 3u) {
-        return textureSampleGrad(uAtlasRGBA, uSampler, uv, layer, uvDx, uvDy);
-    }
-    return textureSampleGrad(uAtlasR, uSampler, uv, layer, uvDx, uvDy);
-}
+${GLYPH_ATLAS_SAMPLE_WGSL}
 
 fn atlasSampleLevel(input: VertexOutput, uv: vec2<f32>) -> vec4<f32> {
     let layer = i32(input.textureSlot);
@@ -490,9 +510,166 @@ const GLYPH_SHADER_WGSL_STORAGE: string = GLYPH_SHADER_WGSL_TEXTURE.replace(
     "        uTransforms[u32(glyphUniforms.uEffectBase) + aPaletteIndex]",
   );
 
+const RESIDENT_PROTOTYPE_TEXTURE_WGSL = `fn textureIndex(linear: u32, width: u32) -> vec2<i32> {
+    return vec2<i32>(i32(linear % width), i32(linear / width));
+}
+
+fn protoFetch(proto: u32, texelOffset: u32) -> vec4<f32> {
+    let width = textureDimensions(uPrototype).x;
+    let texel = proto * 2u + texelOffset;
+    return textureLoad(uPrototype, textureIndex(texel, width), 0);
+}`;
+
+/**
+ * WebGPU GPU-scene resident shader. Its caller guarantees fill-only identity transforms, zero
+ * anchors, normal blending, and storage-palette residency. Keep atlas-mode and alpha/color
+ * composition identical to the general shader while leaving effect and transform work out of the
+ * hot draw.
+ */
+const GLYPH_SHADER_WGSL_RESIDENT_FILL_STORAGE: string = /* wgsl */ `
+${GLYPH_COMMON_UNIFORMS_WGSL}
+
+${GLYPH_COMMON_BINDINGS_WGSL}
+@group(2) @binding(3) var<storage, read> uTransforms: array<vec4<f32>>;
+
+${GLYPH_UNIFORMS_WGSL}
+
+${GLYPH_COMMON_RESOURCE_TAIL_WGSL}
+
+struct VertexOutput {
+    @builtin(position) position: vec4<f32>,
+    @location(0) uv: vec2<f32>,
+    @location(1) worldColor: vec4<f32>,
+    @location(2) @interpolate(flat) mode: u32,
+    @location(3) @interpolate(flat) fill: vec4<f32>,
+    @location(4) @interpolate(flat) textureSlot: u32,
+};
+
+${RESIDENT_PROTOTYPE_TEXTURE_WGSL}
+
+${GLYPH_UNPACK_RGB_WGSL}
+
+@vertex
+fn mainVertex(
+    @location(0) aVertex: vec2<f32>,
+    @location(1) aProtoIndex: u32,
+    @location(2) aPaletteIndex: u32,
+) -> VertexOutput {
+    let proto0 = protoFetch(aProtoIndex, 0u);
+    let proto1 = protoFetch(aProtoIndex, 1u);
+    let instanceRect = vec4<f32>(
+        unpack2x16float(bitcast<u32>(proto0.x)),
+        unpack2x16float(bitcast<u32>(proto0.y)),
+    );
+    let instanceUv = vec4<f32>(
+        unpack2x16float(bitcast<u32>(proto0.z)),
+        unpack2x16float(bitcast<u32>(proto0.w)),
+    );
+    let metadata = u32(round(proto1.y)) | (u32(round(proto1.z)) << 16u);
+    let isActive = (metadata & 0x80000000u) != 0u;
+    let paletteBase = aPaletteIndex * 2u;
+    let transform0 = uTransforms[paletteBase];
+    let transform1 = uTransforms[paletteBase + 1u];
+    let localPosition = instanceRect.xy + aVertex * instanceRect.zw + transform0.xy;
+    let projected = globalUniforms.uProjectionMatrix
+        * globalUniforms.uWorldTransformMatrix
+        * localUniforms.uTransformMatrix
+        * vec3<f32>(localPosition, 1.0);
+    var clip = vec4<f32>(projected.xy, 0.0, 1.0);
+    if (!isActive) {
+        clip = vec4<f32>(2.0, 2.0, 0.0, 1.0);
+    }
+    return VertexOutput(
+        clip,
+        mix(instanceUv.xy, instanceUv.zw, aVertex),
+        globalUniforms.uWorldColorAlpha * localUniforms.uColor,
+        (metadata >> 16u) & 3u,
+        vec4<f32>(unpackRgb(transform1.z), transform1.w),
+        metadata & 255u,
+    );
+}
+
+${GLYPH_MEDIAN_WGSL}
+
+${GLYPH_ATLAS_SAMPLE_WGSL}
+
+@fragment
+fn mainFragment(input: VertexOutput) -> @location(0) vec4<f32> {
+    let sampleColor = atlasSample(input, input.uv, dpdx(input.uv), dpdy(input.uv));
+    let distanceValue = select(sampleColor.r, median3(sampleColor.rgb), input.mode == 0u);
+    let smoothing = max(fwidth(distanceValue), 1.0 / 255.0);
+    let distanceCoverage = smoothstep(0.5 - smoothing, 0.5 + smoothing, distanceValue);
+    let fillCoverage = select(distanceCoverage, sampleColor.a, input.mode == 3u);
+    if (fillCoverage == 0.0) {
+        discard;
+    }
+    let fillAlphaPacked = u32(round(input.fill.a));
+    let fillAlpha = f32(fillAlphaPacked & 255u) / 255.0;
+    let labelAlpha = f32((fillAlphaPacked >> 8u) & 255u) / 255.0;
+    let fillTint = vec4<f32>(input.fill.rgb * fillAlpha, fillAlpha);
+    let distanceColor = vec4<f32>(
+        fillTint.rgb * fillCoverage,
+        fillTint.a * fillCoverage,
+    );
+    let fill = select(distanceColor, sampleColor * fillTint, input.mode == 3u);
+    // Match the general shader's runtime over() arithmetic byte-for-byte at antialiased edges.
+    // Vertex metadata masks mode to two bits, so this remains a dynamic zero for every valid glyph.
+    let referenceParity = vec4<f32>(select(0.0, 1.0, input.mode == 4u));
+    return (fill + referenceParity * (1.0 - fill.a)) * labelAlpha * input.worldColor;
+}
+`;
+
+const GLYPH_SHADER_WGSL_RESIDENT_FILL_SINGLE_STORAGE: string =
+  GLYPH_SHADER_WGSL_RESIDENT_FILL_STORAGE.replace(
+    GLYPH_UNIFORMS_WGSL,
+    `struct GlyphUniforms {
+    uPaletteWidth: f32,
+    uEffectBase: f32,
+    uResidentProto0: vec4<f32>,
+    uResidentProto1: vec4<f32>,
+};`,
+  )
+    .replace(`${RESIDENT_PROTOTYPE_TEXTURE_WGSL}\n\n`, "")
+    .replace(
+      `    let proto0 = protoFetch(aProtoIndex, 0u);
+    let proto1 = protoFetch(aProtoIndex, 1u);`,
+      `    let proto0 = glyphUniforms.uResidentProto0;
+    let proto1 = glyphUniforms.uResidentProto1;`,
+    );
+
+const GLYPH_SHADER_WGSL_RESIDENT_FILL_RUN_STORAGE: string =
+  GLYPH_SHADER_WGSL_RESIDENT_FILL_STORAGE.replace(
+    GLYPH_UNIFORMS_WGSL,
+    `struct GlyphUniforms {
+    uPaletteWidth: f32,
+    uEffectBase: f32,
+    uResidentProtoBase: i32,
+    uResidentProtoPadding: f32,
+    uResidentProtos: array<vec4<f32>, 16>,
+};`,
+  ).replace(
+    RESIDENT_PROTOTYPE_TEXTURE_WGSL,
+    `fn protoFetch(proto: u32, texelOffset: u32) -> vec4<f32> {
+    let glyph = proto - u32(glyphUniforms.uResidentProtoBase);
+    return glyphUniforms.uResidentProtos[glyph * 2u + texelOffset];
+}`,
+  );
+
 export const GLYPH_SHADER_WGSL: string = GLYPH_SHADER_WGSL_TEXTURE;
 
-export function glyphShaderWgsl(path: PalettePath): string {
+export function glyphShaderWgsl(
+  path: PalettePath,
+  variant: GlyphShaderVariant = "general",
+): string {
+  if (path === "storage" && variant === "resident-fill-single") {
+    return GLYPH_SHADER_WGSL_RESIDENT_FILL_SINGLE_STORAGE;
+  }
+  if (path === "storage" && variant === "resident-fill-run") {
+    return GLYPH_SHADER_WGSL_RESIDENT_FILL_RUN_STORAGE;
+  }
+  if (path === "storage" && variant === "resident-fill") {
+    return GLYPH_SHADER_WGSL_RESIDENT_FILL_STORAGE;
+  }
   switch (path) {
     case "texture":
       return GLYPH_SHADER_WGSL_TEXTURE;

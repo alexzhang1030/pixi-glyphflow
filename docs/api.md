@@ -34,16 +34,83 @@ and diagnostics.
 | `hitTest(point, space?)`                     | `TextId \| undefined`            | Return the topmost visible label                   |
 | `attach(renderer)`                           | `void`                           | Associate a WebGL or WebGPU renderer               |
 | `detach()`                                   | `void`                           | Release renderer resources and retain label state  |
+| `whenRendererReleased()`                     | `Promise<void>`                  | Observe the latest actual renderer graph release   |
+| `destroy(options?)`                          | `void`                           | Start best-effort owned-resource teardown          |
+| `whenDestroyed()`                            | `Promise<void>`                  | Observe completion and the first teardown failure  |
 | `stats`                                      | `TextLayerStats`                 | Read an immutable diagnostics snapshot             |
 
 `TextId` includes a layer namespace, slot, and generation. Stale and foreign identities fail bulk
 validation before state publication.
+
+`destroy()` retains PixiJS's synchronous `void` signature, runs every best-effort cleanup step,
+and throws the first synchronous teardown failure after the remaining steps run. `whenDestroyed()`
+returns one stable tracked promise. It settles after internally owned asynchronous provider release
+and rejects with the first teardown failure. Await it when resource-release completion belongs to
+the caller's lifecycle boundary.
+
+`attach()` and `detach()` retain synchronous `void` signatures. Each actual renderer graph release
+publishes a tracked promise through `whenRendererReleased()`, including asynchronous provider
+teardown and first-error rejection. A repeated empty `detach()` returns the same stable, internally
+handled promise for the most recent release.
+
+The constructor's `renderer` option and `attach()` prepare a coordinator, surface, and residency
+capability as a local activation transaction, then publish the complete renderer graph atomically.
+An activation failure leaves the layer detached, releases the local graph best-effort, preserves
+the activation error, and permits a same-renderer retry. `whenRendererReleased()` includes any
+asynchronous activation rollback.
 
 `TextLayerCullingOptions.computeCull` accepts `true`, `false`, or `"auto"`. The default is `"auto"`.
 Automatic mode uses compute compaction when the attached WebGPU device is ready and the live
 glyphs fit one atlas bank. WebGL, unavailable devices, multi-segment meshes, and `false` use the
 CPU grid. `lod: true` drops labels whose projected font height is below one pixel. That changes
 pixels and stays off by default.
+
+`TextLayerCullingOptions.residency` accepts `"viewport"` or `"gpu-scene"`. The default is
+`"viewport"`. `"gpu-scene"` is an explicit WebGPU opt-in that retains the complete supported
+scene as GPU cull records and shared prototype data. Activation requires all of these conditions:
+
+- culling is enabled and collision is disabled;
+- the renderer is WebGPU with compute culling and a storage transform palette;
+- device storage limits fit the complete cull-record, compact-draw, transform, and local-bounds
+  buffers;
+- every effective-visible label belongs to a bounded set of up to 64 rendered prototypes and 8
+  canonical fill paints, forming at most 512 prototype/paint columns; all labels use fill-only
+  styling, alpha 1, unit scale, zero rotation and anchors, z index 0, and normal blend;
+- initial slots and insertion orders are dense and increasing.
+
+The layer evaluates capability and eligibility in deterministic order. A requested GPU scene that
+uses viewport residency exposes one stable `TextLayerResidencyFallbackReason`:
+
+| Reason                        | Meaning                                                      |
+| ----------------------------- | ------------------------------------------------------------ |
+| `collision-enabled`           | Screen-space collision owns the current visibility selection |
+| `renderer-unavailable`        | The layer has no supported attached renderer                 |
+| `webgpu-required`             | The attached renderer is WebGL                               |
+| `compute-cull-unavailable`    | The WebGPU compute pass is unavailable                       |
+| `storage-palette-unavailable` | Vertex-stage transform storage is unavailable                |
+| `device-limit`                | A required GPU buffer exceeds the live device limit          |
+| `unsupported-scene`           | Label state or mutation leaves the supported uniform lane    |
+| `setup-failed`                | Resident coordinator or GPU setup could not complete         |
+
+An active resident camera commit refreshes the compute viewport uniform and records zero CPU
+spatial queries, admission, coordinator work, and cull-record uploads. Sorted, unique, strictly
+contiguous active position commits use one 8-byte `x`/`y` command per moved label; the 16-byte
+header carries `baseSlot` and `count`. A 100,000-label dense move uploads 800,016 transform bytes
+and zero CPU cull-record bytes. Sparse, reordered, duplicate, and holed commits use the indexed
+12-byte `slot`/`x`/`y` fallback with last-write-wins identity. The fused WebGPU pass patches
+transform origins and absolute cull AABBs before cull dispatch. Spatial rebucketing stays deferred
+until `getBoundsFor`, `hitTest`, a CPU query, or a viewport fallback needs the grid.
+
+Monotonic appends that remain within the 64-prototype / 8-paint matrix extend the scene. Removes
+write tombstones. Slot reuse, content/style edits, visibility/effect changes, and full-transform
+edits select `unsupported-scene` and rebuild through viewport residency. `detach()` selects
+`renderer-unavailable`; a later `attach()` evaluates the requested residency again. `destroy()`
+releases the resident records, local-bounds storage, palette binding, and deferred spatial journal.
+
+WebGPU resources belong to one live `GPUDevice`, pass epoch, and Pixi encoder epoch. Device
+replacement rebuilds palette and cull pipelines, indirect draw storage, resident local bounds, and
+renderer hooks. Encoder replacement moves pending work to the fresh epoch; late callbacks from the
+retired epoch only release their owned resources.
 
 `offscreenAdmitBudgetBytes` caps compute-cull first-seen admission for labels that sit only
 in the 0.25-viewport prepare ring. Each intern-hit ring label charges 32 bytes, one fill-only
@@ -147,12 +214,63 @@ observation.
 - `HarfBuzzWorkerShaper` moves shaping and font transfer to a worker boundary.
 - `StaleShapeResultError` identifies superseded worker responses.
 
+## `pixi-glyphflow/outline`
+
+`createOutlineRendering(options)` creates a caller-owned WebGPU plugin for projected huge glyphs.
+Pass it through `rendering: { glyphMode: "outline", outline }`. Eligible HarfBuzz glyphs load one
+packed curve blob, rasterize through compute into an RGBA8 color-atlas entry, and join the existing
+renderer color array. `projectedSizeThresholdPx` defaults to 128. Capability, source, resource, and
+device failures return an explicit plugin fallback so the existing atlas provider can serve the
+glyph. The default `glyphMode: "auto"` keeps the atlas route.
+
+The caller owns the plugin lifetime and calls `outline.destroy()` after the layer releases it. The
+side entry also exports preparation, route, CPU reference, compute-capability, WGSL, and diagnostic
+types for browser tests and custom integrations.
+
+The side entry also exposes the opt-in sparse-strip laboratory. `encodeSparseStripGlyph()` converts
+an RGBA coverage bitmap into versioned 4x4 tile strips, `SparseGlyphStripCache` retains immutable
+CPU copies under a byte ceiling, and `createSparseStripComputeRasterizer()` batch-rehydrates those
+strips into an `OutlineColorAtlas`-compatible `rgba8unorm` texture. Cache identity includes schema,
+font family and revision, glyph and variation identity, the power-of-two physical pixel bucket,
+padding, and AA mode. `packSparseStripComputeBatch()` and `SPARSE_STRIP_COMPUTE_WGSL` expose the
+storage contract for diagnostics and custom adapters. `preflightSparseStripComputePacking()`
+checks u32 metadata and typed-allocation boundaries, while packed dispatch statistics expose
+overlap-validation operations, padded invocations, and effective pixels. The production outline
+router keeps its current path while sustained atlas-pressure promotion evidence is collected.
+
+## `pixi-glyphflow/hb-gpu`
+
+`HbGpuDrawWorkerEncoder` owns the packaged HarfBuzz 14.4 Worker/Wasm encoder. `encode()` accepts a
+font key, glyph id, and font bytes for the first request of that font; later requests reuse the
+worker-side font. `releaseFont()` and `destroy()` release synchronized resources.
+`HbGpuWasmRuntime` exposes the lower-level Wasm lifecycle. The entry exports ABI/version constants,
+request/result types, and worker protocol types. Packed outline blobs use the 16-bit representation
+validated by the browser GPU Draw workload.
+
 ## `pixi-glyphflow/advanced`
 
 The advanced entry exposes `SpatialIndex`, `GlyphAtlas`, `PrebuiltGlyphProvider`,
-`prebuiltGlyphKey`, `RasterGlyphProvider`, `BitmapLayoutAdapter`, `LayoutEngine`, `GlyphInstanceStore`, `TransformPalette`,
-`GlyphMesh`, `RenderCoordinator`, `WebGLAdapter`, and `WebGPUAdapter` with their public option and
-diagnostic types.
+`prebuiltGlyphKey`, `RasterGlyphProvider`, `BitmapLayoutAdapter`, `LayoutEngine`,
+`GlyphInstanceStore`, `TransformPalette`, `GlyphMesh`, `RenderCoordinator`, `WebGLAdapter`,
+`WebGPUAdapter`, `SymbolContinuityIndex`, `SabShapeTransport`, and
+`detectSabShapeTransportCapability` with their public option and diagnostic types.
+
+`SymbolContinuityIndex` is the opt-in Map Symbol Continuity laboratory. Call `reserve()` before a
+large admission, then bracket each monotonic scene/camera/zoom revision with `beginFrame()` and
+`endFrame()`. `resolve()` accepts one logical key plus an explicit tile/anchor candidate; repeated
+logical keys select by f32 priority, retained candidate, insertion order, and deterministic typed
+identity. Call `place()` after collision admission, or use the idempotent `resolveAndPlace()` fast
+path. `abortFrame()` rolls provisional ids, reclaimed tombstones, map edits, and counters back.
+`read()` exposes committed phase, opacity, retained candidate, anchor, revisions, and source-retire
+deadline. `stateHashMode` defaults to `"manual"`; call `computeStateHash()` at an inactive WAL
+checkpoint. `"every-frame"` returns the same complete hash from `endFrame()` through the single
+commit scan. The 100k dual-mode microbenchmark clears 16.67 ms p95 locally; TextLayer/WAL product
+integration keeps its independent sustained gate.
+
+`SabShapeTransport` is an advanced single-producer/single-consumer ring for leased zero-copy
+positioned-run views. Supply it as `HarfBuzzWorkerShaperOptions.shapeTransport`. Browser support
+requires `SharedArrayBuffer`, `Atomics`, and cross-origin isolation. The shaper owns the supplied
+transport lifecycle.
 
 These primitives support custom renderer pipelines that preserve the package storage and shader
 contracts. `GLYPH_TEXTURE_BANK_SIZE` is `2` (R8 and RGBA8 arrays). `GLYPH_ATLAS_ARRAY_LAYERS` is
@@ -171,9 +289,10 @@ clamp to that minimum intern one physical field and keep a per-request raster sc
 scalars skip raster and instance quads; layout advance stays. `tinySdf: true` builds
 those HarfBuzz glyphs as a local SDF from the canvas mask and skips `@zappar/msdf-generator`. That
 changes pixels. `prebuilt` serves packed pages before TinySDF or MSDF. Record keys come from
-`prebuiltGlyphKey` and omit font revision so a re-registered family keeps the same page. A miss
-with a non-zero glyph id retries `glyphId: 0` when `glyphText` is a single Unicode scalar, so a
-family page can ignore HarfBuzz ids. Ligatures stay on the exact key. A miss whose physical
+`prebuiltGlyphKey` and omit font revision so a re-registered family keeps the same page. The
+[`pixi-glyphflow/prebuilt`](#pixi-glyphflowprebuilt) section defines its wire-format migration
+boundary. A miss with a non-zero glyph id retries `glyphId: 0` when `glyphText` is a single Unicode
+scalar, so a family page can ignore HarfBuzz ids. Ligatures stay on the exact key. A miss whose physical
 size (`max(fontSize, distanceFieldMinFontSize)`) matches a baked field's
 `fontSize * (rasterScale ?? 1)` crops that field and interns it, so a 14px bake serves a 13px
 or 32px first sight without starting TinySDF or MSDF. Sizes above the minimum still generate.
@@ -186,13 +305,45 @@ worker serializes font loading and atlas generation; separate workers execute in
 latest draw preparation. `TextLayerStats.palettePath` is either `"storage"` or `"texture"` and
 names the transform table used by that draw. WebGPU storage skips a CPU gather of the full
 palette on a position-only or camera-only commit. A position-only storm uploads packed
-move commands so the GPU can write live x/y. On storage plus compute-cull the same table
-feeds the cull shader, so that storm does not upload mover world AABBs. WebGL stays on
+move commands so the GPU can write live x/y. Storage-backed viewport compute culling stores local
+boxes and adds those live origins in the cull shader, which keeps mover cull-record uploads at zero.
+GPU-scene residency uses its fused transform and absolute-AABB patch path. WebGL stays on
 `"texture"`. The root entry
-exports the `CullPath` and `PalettePath` types and `requestComputeCullGpu`. Compute shader and
-pass internals are not root exports.
+exports the `CullPath`, `PalettePath`, `TextLayerResidency`, and
+`TextLayerResidencyFallbackReason` types plus `requestComputeCullGpu`. Compute shader and pass
+internals stay on advanced/internal entry points.
+
+GPU-scene diagnostics add these fields to `TextLayerStats`:
+
+| Field                                   | Contract                                                             |
+| --------------------------------------- | -------------------------------------------------------------------- |
+| `residencyRequested`                    | Configured `"viewport"` or `"gpu-scene"` policy                      |
+| `residencyActive`                       | Residency policy used by the current scene                           |
+| `residencyFallbackReason`               | Stable fallback reason, or `undefined` for the requested active path |
+| `gpuResidentLabels`                     | Active labels represented by GPU-scene records                       |
+| `gpuScenePrototypeCount`                | Shared prototype count in the current resident generation            |
+| `gpuScenePaintCount`                    | Canonical fill-paint count in the current resident generation        |
+| `gpuScenePerLabelObjectCount`           | Live per-label object count owned by the active GPU-resident scene   |
+| `deferredSpatialLabels`                 | Position changes waiting for CPU-grid rebucketing                    |
+| `cullRecordUploadBytes`                 | Cumulative CPU-to-GPU cull-record upload bytes                       |
+| `lastSceneSetupMs`                      | Duration of the latest successful resident setup                     |
+| `frameTransactionSubmissions`           | Cumulative fused plus standalone WebGPU transaction submissions      |
+| `frameTransactionFusedSubmissions`      | Transactions encoded into Pixi's frame command buffer                |
+| `frameTransactionStandaloneSubmissions` | Explicit capacity, recovery, or retirement flushes                   |
+
+Viewport residency and resident fallbacks report zero GPU-resident labels, prototypes, and
+per-label scene objects.
+`lastSceneSetupMs` retains the latest successful setup value across later commits.
+Steady resident camera and position frames each advance the total and fused counters by one while
+the standalone counter stays unchanged.
 
 ## `pixi-glyphflow/prebuilt`
+
+`prebuiltGlyphKey` returns an opaque key in the stable `pixi-glyphflow/prebuilt/v2:` wire format.
+UTF-16 length-prefixed fields preserve tuple boundaries. `PrebuiltGlyphProvider` canonicalizes
+valid legacy six-field NUL-delimited keys during page ingestion and lookup, so pages passed through
+the provider retain their aliases. External persisted maps keyed directly by an earlier exported
+string require a cache rebuild or a v2-first, legacy-alias lookup during migration.
 
 `uiSdfPrebuilt({ family, fontSize?, fontWeight? })` returns `rasterizerOptions.prebuilt` pages for
 printable ASCII (U+0020–U+007E). The bitmaps are a public-domain VGA 8×8 set scaled to 16 px ink
@@ -204,7 +355,10 @@ call encodes; later calls remap keys only.
 bakes host text with the same TinySDF path. It skips empty-ink scalars, encodes at
 `max(fontSize, distanceFieldMinFontSize)`, and stores `rasterScale` on each glyph. The first bake
 for a family + physical size + weight + charset paints; later calls remap keys. It does not ship
-CJK bitmaps. `mergePrebuilt` concatenates family pages. `uniqueInkCharset` is the scalar filter.
+CJK bitmaps. Generated page ids use the stable `pixi-glyphflow/charset-sdf/v2:` prefix with
+length-prefixed family, physical-size, and page-index fields. Persisted generated pages should be
+rebaked once for v2; self-contained legacy payloads remain readable through their stored
+glyph-to-page references. `mergePrebuilt` concatenates family pages. `uniqueInkCharset` is the scalar filter.
 The pages are not in the core ESM graph — import `pixi-glyphflow/prebuilt` and pass the result
 into `rasterizerOptions.prebuilt` with `tinySdf: true` when the host wants known ink to be a crop.
 

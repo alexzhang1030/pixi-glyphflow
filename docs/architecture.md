@@ -135,9 +135,10 @@ and upload one packed move-command buffer (`slot`, `x`, `y`); a compute pass wri
 `transforms[slot * 2].xy`. Camera-only frames do not gather the table. WebGL and devices with
 `maxStorageBuffersInVertexStage` 0 keep the texture palette. `requestComputeCullGpu()` raises that
 vertex-storage limit when the adapter allows it. Hit-test stays on the aliased store columns.
-On the storage plus compute-cull path, cull records store the local box. The cull shader
-adds palette origin. Position storms do not rewrite or upload those records. Texture and
-cpu-grid still store world AABB and patch it on the CPU.
+Storage-backed viewport compute-cull records store local boxes; the cull shader adds the live
+palette origin, so position storms upload zero cull-record bytes. Texture-backed viewport records
+store world AABBs and receive CPU patches. GPU-scene records store absolute AABBs and receive mover
+patches in the fused palette compute pass.
 
 ## Culling and camera integration
 
@@ -154,8 +155,7 @@ prepared ring. It still queries the tight view so a deferred unique miss is admi
 crosses on screen. Crossing the working-set edge refreshes residency. GPU mirrors sync incrementally:
 commits upload dirty prototype texels and changed or appended cull records, keyed by a
 draw-list epoch that appends preserve; re-sorts, removals, and cull-path fallbacks force a full
-repack or resync. A storage-path position storm does not mark mover cull records dirty when
-the local box is unchanged. The GPU still re-culls from live palette x/y. Scatter writes 8-byte draw records and does not read the store.
+repack or resync. Scatter writes 8-byte draw records and does not read the store.
 
 The direct `GlyphMesh` rebinds its instance attributes to the compact buffer and uses an indexed
 indirect draw. The encoder hook checks geometry ownership and is removed when the pass is
@@ -165,6 +165,102 @@ when CPU instance order is not spatial order. PixiJS devices keep the 128 MiB st
 `requestComputeCullGpu()` raises those limits to the adapter maximum, including
 `maxStorageBuffersInVertexStage` when the adapter exposes a non-zero value.
 
+Collision selection consumes monotonic candidate slots through `selectRankedCandidates`, whose
+admission order proof skips the rank scratch sort. Contiguous candidates with identical padded
+bounds share cached identical-bound run lengths, so one accepted or rejected leader settles the rest of that run.
+Packed collision-record writes invalidate every touched run; structural changes retire the full
+cache. The selected output receives a final draw-order sort and preserves its stable selection hash.
+
+### Full GPU-scene residency
+
+`culling.residency: "gpu-scene"` selects a separate, explicit WebGPU path for a bounded scene. The
+default `"viewport"` path keeps the general label model. `GpuSceneCompiler` retains up to 64 exact
+rendered prototypes and 8 canonical paints, partitions labels into at most 512 prototype/paint
+columns, uploads every typed transform row, and builds one 32-byte absolute-AABB cull record per
+slot. Record word 7 indexes a prototype-local `vec4<f32>` bounds table. The compute pass owns the
+resident record buffer and exposes its buffer/epoch binding to the storage-palette pass.
+
+The structural submission order is:
+
+1. ensure cull capacity and upload setup, append, remove, or repack record dirties;
+2. ensure the local-bounds table and bind the current resident record buffer epoch;
+3. dispatch fused palette/AABB position moves;
+4. dispatch stable compute culling and the indexed indirect draw.
+
+`WebGPUFrameTransaction` stages every palette slice in commit order and coalesces each owner's cull
+work to its latest viewport. Pixi's `renderStart` hook snapshots all owners, encodes every palette
+stage followed by every cull stage into Pixi's active command encoder, and then opens the existing
+render pass. Pixi's `postrender` performs the product submission and completes the staged work. A
+steady resident camera or position frame therefore advances one fused transaction submission and
+zero standalone submissions. Capacity growth, resource retirement, and recovery may flush staged
+work through the counted standalone path before a new epoch begins.
+
+The compute and palette passes scope every resource and queued callback to one live `GPUDevice`
+identity and pass epoch. `WebGPUFrameTransaction` also scopes staged work to the current Pixi command
+encoder epoch. Device replacement rebuilds pipelines, storage, the indirect Pixi buffer, and
+renderer hooks. Encoder replacement cancels encoded work in the retired epoch and requeues pending
+work on the replacement encoder. Late lifecycle callbacks release their captured resources while
+current-epoch callbacks alone publish success or failure. Resident recovery retransmits local
+bounds when palette full-sync state outlives the scene snapshot's structural dirty flag, then binds
+the replacement cull-record epoch.
+
+Camera-only commits start at step 4 with a refreshed viewport uniform. They skip the spatial query,
+admission collector, render coordinator, and cull-record upload. Position-only commits with sorted,
+unique, strictly contiguous active slots queue one 8-byte exact-f32 `x`/`y` command per slot. Their
+16-byte header carries `baseSlot` and `count`, producing exact uploads of 80,016 bytes for 10,000
+movers and 800,016 bytes for 100,000 movers. Sparse, reordered, duplicate, and holed inputs use the
+indexed 12-byte `slot`/`x`/`y` fallback with last-write-wins identity. The fused pass writes the GPU
+transform origin and derives its absolute AABB from indexed local bounds. CPU spatial rebucketing
+records those slots in a typed journal. Bounds reads, hit tests, CPU culling, and resident fallback
+flush the journal first.
+
+Monotonic appends that stay within the retained 64-prototype / 8-paint compiler extend the record
+high-water mark. Removes set `instanceCount = 0` tombstones. Slot reuse and changes outside the
+bounded fill-only lane retire the resident generation and route the next commit through viewport residency. Detach,
+reattach, and destruction follow the layer render-lifecycle epoch, so each resident buffer and
+palette binding belongs to one renderer destination.
+
+### Map symbol-continuity laboratory
+
+The `pixi-glyphflow/advanced` side entry retains one logical symbol record across scene, camera,
+zoom, tile, and collision revisions. A frame may submit several candidate keys and anchors for the
+same logical key. Selection uses f32 priority descending, retained-candidate preference, insertion
+order ascending, then typed candidate and anchor order. Source presence and collision placement use
+separate frame epochs, so a continuously sourced collision loser keeps its continuity id and anchor
+history while its visual phase fades.
+
+Each frame is a staged transaction. Provisional ids stay hidden from committed reads; reclaimed
+tombstones carry an undo snapshot; `abortFrame()` restores arrays, maps, queues, counters, and id
+allocation. `endFrame()` preflights every touched invariant before the synchronous commit scan.
+Fade transitions, source-retention deadlines, typed logical/candidate/anchor identity, f32 priority,
+per-symbol revisions, and bit-level timing state participate in the deterministic hash. The index
+has an explicit reserve path, a 1,048,576-record hard ceiling, and terminal u32 id exhaustion.
+The default manual hash policy keeps complete hashing at explicit inactive checkpoints;
+`every-frame` folds identical hash bytes into the commit/absence scan.
+Product integration waits for the revisioned Scene WAL/delta source so absent-symbol detection can
+arrive as patches instead of a 100k full reconciliation scan.
+
+### Sparse glyph-strip laboratory
+
+The `pixi-glyphflow/outline` side entry can encode an outline coverage bitmap into a versioned
+4x4-tile `SparseStripGlyph`. Row-major records retain horizontal tile spans; solid spans use an
+implicit coverage sentinel, boundary tiles retain 16 coverage bytes, and transparent tiles consume
+zero records. A two-pass typed builder counts exact record and boundary payload sizes before its
+single allocation. Coverage stays independent from color so one retained glyph can be recolored.
+
+`SparseGlyphStripCache` owns defensive copies and applies a byte-bounded LRU. Its key covers every
+raster-affecting field, including padding and AA mode. Oversized candidates fail preflight while
+resident entries keep their recency and bytes. The WebGPU adapter concatenates headers, tile-row
+prefixes, strip records, and coverage into four storage buffers, then writes a batched premultiplied
+RGBA8 texture through an 8x8 compute kernel. Atlas geometry, metadata offsets, and allocation
+products pass u32 and safe-arithmetic preflight. An x-axis sweep with a compressed range-max tree
+validates disjoint placements near O(N log N). Requests then form stable exact-workgroup-size
+dispatch groups, keeping padded invocations proportional to each glyph. The packed storage and
+copied quad metadata become an owned snapshot before asynchronous pipeline compilation. The result
+implements the existing `OutlineColorAtlas` seam. Device limits, shader compilation, queue
+completion, destruction races, and exact-once GPU resource release have explicit outcomes. Product
+routing remains gated by sustained atlas-pressure, stable-atlas-hit, and whole-frame tail evidence.
+
 ## Diagnostics
 
 `TextLayer.stats` allocates one immutable snapshot at read time. It reports CPU capacity, dirty
@@ -173,3 +269,9 @@ palette path, draw calls, glyphs, pending glyphs, pending admissions, upload byt
 instance-write, palette-write, spatial, and upload milliseconds. `visibleLabelCount` is the instanced
 working set. On the CPU grid that set is the tight padded viewport. On compute cull it is the
 expanded residency query. The getter does not walk the grid.
+
+Resident diagnostics separate requested and active policy, stable fallback reason, active GPU
+labels, prototype and paint counts, deferred spatial labels, cumulative cull-record upload bytes, and latest
+successful setup duration. Transaction diagnostics report cumulative total, fused, and standalone
+submissions. Per-frame deltas let a camera or position workload prove one fused product submission
+and the intended resident path.

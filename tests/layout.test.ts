@@ -55,6 +55,60 @@ describe("BitmapLayoutAdapter", () => {
     expect(adapter.clear()).toBe(2);
   });
 
+  test("keeps caller text and ellipsis boundaries distinct in the layout cache", () => {
+    const middle = [
+      '{"fontFamily":"Fixture","fontSize":20}',
+      "0",
+      "0",
+      "ltr",
+      "true",
+      "undefined",
+    ].join("\u0000");
+    const firstText = `caller\u0000${middle}`;
+    const secondText = "caller";
+    const adapter = new BitmapLayoutAdapter(collisionManager(firstText, secondText));
+    const style = { fontFamily: "Fixture", fontSize: 20 } as const;
+
+    const first = adapter.layout({ text: firstText, style, ellipsis: "!" });
+    const second = adapter.layout({ text: secondText, style, ellipsis: `${middle}\u0000!` });
+
+    expect(first.glyphKeys).toEqual(["A"]);
+    expect(second).not.toBe(first);
+    expect(second.text).toBe(secondText);
+    expect(second.glyphKeys).toEqual(["B"]);
+  });
+
+  test("keeps explicit layout policy tuples distinct across caller boundaries", () => {
+    const middle = [
+      '{"fontFamily":"Fixture","fontSize":20,"letterSpacing":2}',
+      "7",
+      "9",
+      "rtl",
+      "false",
+      "1",
+    ].join("\u0000");
+    const firstText = `policy\u0000${middle}`;
+    const secondText = "policy";
+    const adapter = new BitmapLayoutAdapter(collisionManager(firstText, secondText));
+    const shared = {
+      style: { fontFamily: "Fixture", fontSize: 20, letterSpacing: 2 },
+      fontRevision: 7,
+      cacheRevision: 9,
+      direction: "rtl",
+      trimEnd: false,
+      maxLines: 1,
+    } as const;
+
+    const first = adapter.layout({ ...shared, text: firstText, ellipsis: "?" });
+    const second = adapter.layout({ ...shared, text: secondText, ellipsis: `${middle}\u0000?` });
+
+    expect(first.glyphKeys).toEqual(["A"]);
+    expect(second).not.toBe(first);
+    expect(second.text).toBe(secondText);
+    expect(second.glyphKeys).toEqual(["B"]);
+    expect(second.direction).toBe("rtl");
+  });
+
   test("limits wrapped lines and appends an ellipsis within the wrap width", () => {
     const adapter = new BitmapLayoutAdapter(fakeManager());
     const run = adapter.layout({
@@ -147,6 +201,27 @@ function fakeManager(): ConstructorParameters<typeof BitmapLayoutAdapter>[0] {
           { width: 20, charPositions: [0, 10], chars: ["A", "B"] },
           { width: 20, charPositions: [0], chars: ["中"] },
         ],
+      };
+    },
+  };
+}
+
+function collisionManager(
+  firstText: string,
+  secondText: string,
+): ConstructorParameters<typeof BitmapLayoutAdapter>[0] {
+  return {
+    getFont() {
+      return { chars: { A: { id: 101 }, B: { id: 102 } }, lineHeight: 20 };
+    },
+    getLayout(text) {
+      const glyph = text === firstText ? "A" : text === secondText ? "B" : "!";
+      return {
+        width: 10,
+        height: 20,
+        scale: 1,
+        offsetY: 0,
+        lines: [{ width: 10, charPositions: [0], chars: [glyph] }],
       };
     },
   };

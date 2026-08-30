@@ -1,0 +1,621 @@
+{
+  "schemaVersion": 1,
+  "kind": "pixi-glyphflow-label-collision-active-scatter-repeatability",
+  "capturedAt": "2026-08-29T09:01:28.832Z",
+  "packageVersion": "1.2.0",
+  "workload": "label-collision",
+  "renderer": "webgpu",
+  "runtime": {
+    "bun": "1.4.0",
+    "cpu": "Apple M1 Pro",
+    "platform": "darwin",
+    "architecture": "arm64"
+  },
+  "configuration": {
+    "residentLabels": 1000000,
+    "warmupFrames": 5,
+    "sampleFrames": 120,
+    "runs": 3,
+    "cpuBudgetMs": 16.67
+  },
+  "implementation": {
+    "commandStrideBytes": 64,
+    "maximumCommandBytes": 16777216,
+    "maximumActiveLabels": 262144,
+    "fixedDispatchCostBytes": 65536
+  },
+  "before": {
+    "sourceArtifact": "browser-label-collision-repeatability-1.2.0.json",
+    "formalRuns": [
+      {
+        "index": 1,
+        "renderer": "webgpu",
+        "timings": {
+          "frameMs": {
+            "p50": 17.3,
+            "p95": 22.6
+          },
+          "cpuMs": {
+            "p50": 15.4,
+            "p95": 19.9
+          },
+          "commitMs": {
+            "p50": 15.2,
+            "p95": 19.8
+          },
+          "collisionMs": {
+            "p50": 5.8,
+            "p95": 7.1
+          }
+        },
+        "submittedLabels": 512,
+        "submittedGlyphs": 4096,
+        "selectionHash": 1628931525,
+        "accountingPassed": true,
+        "budgetPassed": false
+      },
+      {
+        "index": 2,
+        "renderer": "webgpu",
+        "timings": {
+          "frameMs": {
+            "p50": 16.6,
+            "p95": 21
+          },
+          "cpuMs": {
+            "p50": 14.8,
+            "p95": 18.6
+          },
+          "commitMs": {
+            "p50": 14.6,
+            "p95": 18.5
+          },
+          "collisionMs": {
+            "p50": 5.7,
+            "p95": 6.8
+          }
+        },
+        "submittedLabels": 512,
+        "submittedGlyphs": 4096,
+        "selectionHash": 1628931525,
+        "accountingPassed": true,
+        "budgetPassed": false
+      },
+      {
+        "index": 3,
+        "renderer": "webgpu",
+        "timings": {
+          "frameMs": {
+            "p50": 16.8,
+            "p95": 21
+          },
+          "cpuMs": {
+            "p50": 14.7,
+            "p95": 18.5
+          },
+          "commitMs": {
+            "p50": 14.5,
+            "p95": 18.4
+          },
+          "collisionMs": {
+            "p50": 5.6,
+            "p95": 6.7
+          }
+        },
+        "submittedLabels": 512,
+        "submittedGlyphs": 4096,
+        "selectionHash": 1628931525,
+        "accountingPassed": true,
+        "budgetPassed": false
+      }
+    ],
+    "webgpuPhaseDiagnostic": {
+      "renderer": "webgpu",
+      "sampleFrames": 30,
+      "palettePath": "storage",
+      "timings": {
+        "frameMs": {
+          "p50": 16.8,
+          "p95": 23.8
+        },
+        "cpuMs": {
+          "p50": 15.1,
+          "p95": 19.8
+        },
+        "commitMs": {
+          "p50": 15,
+          "p95": 19.6
+        },
+        "collisionMs": {
+          "p50": 5.8,
+          "p95": 7.2
+        },
+        "visibilitySelectionMs": {
+          "p50": 14.2,
+          "p95": 15.7
+        },
+        "renderPreparationMs": {
+          "p50": 0.2,
+          "p95": 0.5
+        },
+        "renderCoordinatorMs": {
+          "p50": 0,
+          "p95": 0.4
+        },
+        "surfaceApplyMs": {
+          "p50": 0,
+          "p95": 3.8
+        },
+        "uploadMs": {
+          "p50": 0,
+          "p95": 3.8
+        },
+        "uploadBytes": {
+          "p50": 0,
+          "p95": 16810240
+        }
+      },
+      "submittedLabels": 512,
+      "submittedGlyphs": 4096,
+      "selectionHash": 934053317,
+      "accountingPassed": true,
+      "gpuTimestampSamples": 35
+    },
+    "webglControl": {
+      "renderer": "webgl",
+      "sampleFrames": 30,
+      "palettePath": "texture",
+      "timings": {
+        "frameMs": {
+          "p50": 18.8,
+          "p95": 26.4
+        },
+        "cpuMs": {
+          "p50": 13.6,
+          "p95": 15.9
+        },
+        "commitMs": {
+          "p50": 13.5,
+          "p95": 15.8
+        },
+        "collisionMs": {
+          "p50": 5.2,
+          "p95": 7.7
+        },
+        "visibilitySelectionMs": {
+          "p50": 12.8,
+          "p95": 15.2
+        },
+        "renderPreparationMs": {
+          "p50": 0.2,
+          "p95": 0.4
+        },
+        "renderCoordinatorMs": {
+          "p50": 0,
+          "p95": 0.4
+        },
+        "surfaceApplyMs": {
+          "p50": 0,
+          "p95": 1.9
+        },
+        "uploadMs": {
+          "p50": 0,
+          "p95": 1.9
+        },
+        "uploadBytes": {
+          "p50": 0,
+          "p95": 1081344
+        }
+      },
+      "submittedLabels": 512,
+      "submittedGlyphs": 4096,
+      "selectionHash": 934053317,
+      "accountingPassed": true,
+      "gpuTimestampSamples": 35
+    }
+  },
+  "after": {
+    "sourceCandidateArtifact": "browser-label-collision-webgpu-candidate-1.2.0.json",
+    "formalRuns": [
+      {
+        "index": 1,
+        "capturedAt": "2026-08-29T09:00:57.097Z",
+        "timings": {
+          "frameMs": {
+            "p50": 16,
+            "p95": 18
+          },
+          "cpuMs": {
+            "p50": 14.3,
+            "p95": 16.1
+          },
+          "commitMs": {
+            "p50": 14.2,
+            "p95": 15.9
+          },
+          "collisionMs": {
+            "p50": 5.6,
+            "p95": 6.7
+          },
+          "visibilitySelectionMs": {
+            "p50": 13.8,
+            "p95": 15
+          },
+          "renderPreparationMs": {
+            "p50": 0.1,
+            "p95": 0.3
+          },
+          "renderCoordinatorMs": {
+            "p50": 0,
+            "p95": 0.2
+          },
+          "surfaceApplyMs": {
+            "p50": 0.1,
+            "p95": 0.5
+          },
+          "uploadMs": {
+            "p50": 0.1,
+            "p95": 0.5
+          },
+          "uploadBytes": {
+            "p50": 32000,
+            "p95": 65552
+          }
+        },
+        "submittedLabels": 512,
+        "submittedGlyphs": 4096,
+        "selectionHash": 1628931525,
+        "accountingPassed": true,
+        "gpuTimestampSamples": 125,
+        "budgetPassed": true
+      },
+      {
+        "index": 2,
+        "capturedAt": "2026-08-29T09:01:08.149Z",
+        "timings": {
+          "frameMs": {
+            "p50": 16.4,
+            "p95": 18.1
+          },
+          "cpuMs": {
+            "p50": 14.6,
+            "p95": 16.4
+          },
+          "commitMs": {
+            "p50": 14.4,
+            "p95": 16.2
+          },
+          "collisionMs": {
+            "p50": 5.7,
+            "p95": 6.8
+          },
+          "visibilitySelectionMs": {
+            "p50": 14.1,
+            "p95": 15.3
+          },
+          "renderPreparationMs": {
+            "p50": 0.1,
+            "p95": 0.3
+          },
+          "renderCoordinatorMs": {
+            "p50": 0,
+            "p95": 0.2
+          },
+          "surfaceApplyMs": {
+            "p50": 0.1,
+            "p95": 0.6
+          },
+          "uploadMs": {
+            "p50": 0.1,
+            "p95": 0.6
+          },
+          "uploadBytes": {
+            "p50": 32000,
+            "p95": 65552
+          }
+        },
+        "submittedLabels": 512,
+        "submittedGlyphs": 4096,
+        "selectionHash": 1628931525,
+        "accountingPassed": true,
+        "gpuTimestampSamples": 125,
+        "budgetPassed": true
+      },
+      {
+        "index": 3,
+        "capturedAt": "2026-08-29T09:01:28.832Z",
+        "timings": {
+          "frameMs": {
+            "p50": 16.1,
+            "p95": 18
+          },
+          "cpuMs": {
+            "p50": 14.4,
+            "p95": 16.1
+          },
+          "commitMs": {
+            "p50": 14.3,
+            "p95": 16
+          },
+          "collisionMs": {
+            "p50": 5.7,
+            "p95": 6.8
+          },
+          "visibilitySelectionMs": {
+            "p50": 13.8,
+            "p95": 15.1
+          },
+          "renderPreparationMs": {
+            "p50": 0.1,
+            "p95": 0.3
+          },
+          "renderCoordinatorMs": {
+            "p50": 0,
+            "p95": 0.2
+          },
+          "surfaceApplyMs": {
+            "p50": 0.1,
+            "p95": 0.6
+          },
+          "uploadMs": {
+            "p50": 0.1,
+            "p95": 0.6
+          },
+          "uploadBytes": {
+            "p50": 32000,
+            "p95": 65552
+          }
+        },
+        "submittedLabels": 512,
+        "submittedGlyphs": 4096,
+        "selectionHash": 1628931525,
+        "accountingPassed": true,
+        "gpuTimestampSamples": 125,
+        "budgetPassed": true
+      }
+    ],
+    "webglControl": {
+      "renderer": "webgl",
+      "sampleFrames": 30,
+      "palettePath": "texture",
+      "timings": {
+        "frameMs": {
+          "p50": 19,
+          "p95": 26.1
+        },
+        "cpuMs": {
+          "p50": 13.6,
+          "p95": 15.7
+        },
+        "commitMs": {
+          "p50": 13.5,
+          "p95": 15.5
+        },
+        "collisionMs": {
+          "p50": 5.3,
+          "p95": 7.7
+        },
+        "visibilitySelectionMs": {
+          "p50": 12.9,
+          "p95": 15.2
+        },
+        "renderPreparationMs": {
+          "p50": 0.2,
+          "p95": 0.4
+        },
+        "renderCoordinatorMs": {
+          "p50": 0,
+          "p95": 0.4
+        },
+        "surfaceApplyMs": {
+          "p50": 0,
+          "p95": 1.8
+        },
+        "uploadMs": {
+          "p50": 0,
+          "p95": 1.8
+        },
+        "uploadBytes": {
+          "p50": 0,
+          "p95": 1081344
+        }
+      },
+      "submittedLabels": 512,
+      "submittedGlyphs": 4096,
+      "selectionHash": 934053317,
+      "accountingPassed": true,
+      "gpuTimestampSamples": 35
+    },
+    "aggregateP95": {
+      "frameMs": {
+        "mean": 18.033333,
+        "min": 18,
+        "max": 18.1,
+        "range": 0.1,
+        "coefficientOfVariation": 0.002614
+      },
+      "cpuMs": {
+        "mean": 16.2,
+        "min": 16.1,
+        "max": 16.4,
+        "range": 0.3,
+        "coefficientOfVariation": 0.00873
+      },
+      "commitMs": {
+        "mean": 16.033333,
+        "min": 15.9,
+        "max": 16.2,
+        "range": 0.3,
+        "coefficientOfVariation": 0.007779
+      },
+      "collisionMs": {
+        "mean": 6.766667,
+        "min": 6.7,
+        "max": 6.8,
+        "range": 0.1,
+        "coefficientOfVariation": 0.006967
+      },
+      "visibilitySelectionMs": {
+        "mean": 15.133333,
+        "min": 15,
+        "max": 15.3,
+        "range": 0.3,
+        "coefficientOfVariation": 0.008242
+      },
+      "renderPreparationMs": {
+        "mean": 0.3,
+        "min": 0.3,
+        "max": 0.3,
+        "range": 0,
+        "coefficientOfVariation": 0
+      },
+      "renderCoordinatorMs": {
+        "mean": 0.2,
+        "min": 0.2,
+        "max": 0.2,
+        "range": 0,
+        "coefficientOfVariation": 0
+      },
+      "surfaceApplyMs": {
+        "mean": 0.566667,
+        "min": 0.5,
+        "max": 0.6,
+        "range": 0.1,
+        "coefficientOfVariation": 0.083189
+      },
+      "uploadMs": {
+        "mean": 0.566667,
+        "min": 0.5,
+        "max": 0.6,
+        "range": 0.1,
+        "coefficientOfVariation": 0.083189
+      },
+      "uploadBytes": {
+        "mean": 65552,
+        "min": 65552,
+        "max": 65552,
+        "range": 0,
+        "coefficientOfVariation": 0
+      }
+    }
+  },
+  "comparison": {
+    "frameP95Ms": {
+      "before": [
+        22.6,
+        21,
+        21
+      ],
+      "after": [
+        18,
+        18.1,
+        18
+      ],
+      "beforeMean": 21.533333,
+      "afterMean": 18.033333,
+      "delta": -3.5,
+      "reductionRatio": 0.162539
+    },
+    "cpuP95Ms": {
+      "before": [
+        19.9,
+        18.6,
+        18.5
+      ],
+      "after": [
+        16.1,
+        16.4,
+        16.1
+      ],
+      "beforeMean": 19,
+      "afterMean": 16.2,
+      "delta": -2.8,
+      "reductionRatio": 0.147368
+    },
+    "commitP95Ms": {
+      "before": [
+        19.8,
+        18.5,
+        18.4
+      ],
+      "after": [
+        15.9,
+        16.2,
+        16
+      ],
+      "beforeMean": 18.9,
+      "afterMean": 16.033333,
+      "delta": -2.866667,
+      "reductionRatio": 0.151676
+    },
+    "collisionP95Ms": {
+      "before": [
+        7.1,
+        6.8,
+        6.7
+      ],
+      "after": [
+        6.7,
+        6.8,
+        6.8
+      ],
+      "beforeMean": 6.866667,
+      "afterMean": 6.766667,
+      "delta": -0.1,
+      "reductionRatio": 0.014563
+    },
+    "surfaceApplyP95Ms": {
+      "before": [
+        3.8
+      ],
+      "after": [
+        0.5,
+        0.6,
+        0.6
+      ],
+      "beforeMean": 3.8,
+      "afterMean": 0.566667,
+      "delta": -3.233333,
+      "reductionRatio": 0.850877
+    },
+    "uploadP95Ms": {
+      "before": [
+        3.8
+      ],
+      "after": [
+        0.5,
+        0.6,
+        0.6
+      ],
+      "beforeMean": 3.8,
+      "afterMean": 0.566667,
+      "delta": -3.233333,
+      "reductionRatio": 0.850877
+    },
+    "uploadP95Bytes": {
+      "before": [
+        16810240
+      ],
+      "after": [
+        65552,
+        65552,
+        65552
+      ],
+      "beforeMean": 16810240,
+      "afterMean": 65552,
+      "delta": -16744688,
+      "reductionRatio": 0.9961
+    }
+  },
+  "invariants": {
+    "formalSelectionHashStable": true,
+    "submittedGlyphsMatchLabels": true,
+    "accountingPassed": true,
+    "beforeBudgetsPassed": false,
+    "afterBudgetsPassed": true,
+    "afterCpuBudgetPassed": true,
+    "afterCollisionBudgetPassed": true,
+    "afterWholeFrameBudgetPassed": false,
+    "webglControlStable": true
+  }
+}

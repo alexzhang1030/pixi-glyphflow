@@ -1,0 +1,479 @@
+{
+  "schemaVersion": 2,
+  "kind": "pixi-glyphflow-label-collision-repeatability",
+  "capturedAt": "2026-08-29T20:32:00.244Z",
+  "packageVersion": "1.2.0",
+  "workload": "label-collision",
+  "runtime": {
+    "bun": "1.4.0",
+    "cpu": "Apple M1 Pro",
+    "platform": "darwin",
+    "release": "27.0.0",
+    "architecture": "arm64"
+  },
+  "configuration": {
+    "residentLabels": 1000000,
+    "warmupFrames": 5,
+    "sampleFrames": 120,
+    "runsPerRenderer": 3,
+    "wholeFrameBudgetMs": 16.67
+  },
+  "provenance": {
+    "buildFingerprintSha256": "1cb31044438ee914eb5525b97c751488641312f4271127e32d08fdb0f0b27ef4",
+    "harnessFingerprintSha256": "2c27dffff28bd1029c6c227471cff106f2bcf120ad6f7395c8c5382d8027244e",
+    "runtimeFingerprintSha256": "729f12e690e74533144b300892f17a62136b72f003960ff67e4db84e47884863"
+  },
+  "renderers": {
+    "webgl": {
+      "sourceCandidateArtifact": "browser-label-collision-webgl-formal-1-1.2.0.json",
+      "sourceCandidateArtifacts": [
+        {
+          "artifactFile": "browser-label-collision-webgl-formal-1-1.2.0.json",
+          "sha256": "214e0726e4d05175e9fb479145fa3fb2b9585c4b173bdbbca3e2e9b6cad465ee"
+        },
+        {
+          "artifactFile": "browser-label-collision-webgl-formal-2-1.2.0.json",
+          "sha256": "2b676645c0adfcb0db15d64f7c570492fd5444837dc2280278a67beeaef046fc"
+        },
+        {
+          "artifactFile": "browser-label-collision-webgl-candidate-1.2.0.json",
+          "sha256": "d69e57ecf3532810c2c729027f5e2c52da2c2ede581f0cfc54ef2c0ef2324cac"
+        }
+      ],
+      "runs": [
+        {
+          "renderer": "webgl",
+          "artifactFile": "browser-label-collision-webgl-formal-1-1.2.0.json",
+          "candidateSha256": "214e0726e4d05175e9fb479145fa3fb2b9585c4b173bdbbca3e2e9b6cad465ee",
+          "capturedAt": "2026-08-29T20:31:18.552Z",
+          "sampleCapturedAt": "2026-08-29T20:31:18.259Z",
+          "runId": "7e8111e2-0384-4309-84d1-d5d38dcad119",
+          "buildFingerprintSha256": "1cb31044438ee914eb5525b97c751488641312f4271127e32d08fdb0f0b27ef4",
+          "harnessFingerprintSha256": "2c27dffff28bd1029c6c227471cff106f2bcf120ad6f7395c8c5382d8027244e",
+          "evidenceSha256": "9972a3de5466722046e274afc9936e8315942d9c0c798a4c5857d92a9dcb6496",
+          "runtimeFingerprintSha256": "729f12e690e74533144b300892f17a62136b72f003960ff67e4db84e47884863",
+          "provenanceValid": true,
+          "currentCandidate": true,
+          "budgetSealValid": true,
+          "timings": {
+            "frameMs": {
+              "p50": 12.1,
+              "p95": 21
+            },
+            "cpuMs": {
+              "p50": 6,
+              "p95": 9.3
+            },
+            "commitMs": {
+              "p50": 5.9,
+              "p95": 9.3
+            },
+            "collisionMs": {
+              "p50": 1.6,
+              "p95": 2.7
+            }
+          },
+          "submittedLabels": 512,
+          "submittedGlyphs": 4096,
+          "selectionHash": 1628931525,
+          "accountingPassed": true,
+          "budgetPassed": true,
+          "wholeFrameBudgetPassed": true,
+          "failures": [],
+          "eligible": true,
+          "index": 1
+        },
+        {
+          "renderer": "webgl",
+          "artifactFile": "browser-label-collision-webgl-formal-2-1.2.0.json",
+          "candidateSha256": "2b676645c0adfcb0db15d64f7c570492fd5444837dc2280278a67beeaef046fc",
+          "capturedAt": "2026-08-29T20:31:24.943Z",
+          "sampleCapturedAt": "2026-08-29T20:31:24.701Z",
+          "runId": "241ac711-11b7-4efd-8351-9f32725eff0b",
+          "buildFingerprintSha256": "1cb31044438ee914eb5525b97c751488641312f4271127e32d08fdb0f0b27ef4",
+          "harnessFingerprintSha256": "2c27dffff28bd1029c6c227471cff106f2bcf120ad6f7395c8c5382d8027244e",
+          "evidenceSha256": "9145e2dcc17149405c6e785a4bcef4dabe98a54be5d4f285d52a60e074e72eeb",
+          "runtimeFingerprintSha256": "729f12e690e74533144b300892f17a62136b72f003960ff67e4db84e47884863",
+          "provenanceValid": true,
+          "currentCandidate": true,
+          "budgetSealValid": true,
+          "timings": {
+            "frameMs": {
+              "p50": 11.9,
+              "p95": 20.3
+            },
+            "cpuMs": {
+              "p50": 5.9,
+              "p95": 9.1
+            },
+            "commitMs": {
+              "p50": 5.8,
+              "p95": 9.1
+            },
+            "collisionMs": {
+              "p50": 1.6,
+              "p95": 2.7
+            }
+          },
+          "submittedLabels": 512,
+          "submittedGlyphs": 4096,
+          "selectionHash": 1628931525,
+          "accountingPassed": true,
+          "budgetPassed": true,
+          "wholeFrameBudgetPassed": true,
+          "failures": [],
+          "eligible": true,
+          "index": 2
+        },
+        {
+          "renderer": "webgl",
+          "artifactFile": "browser-label-collision-webgl-candidate-1.2.0.json",
+          "candidateSha256": "88a9e40fae2d41e0c128fa9cc08700f06f19bb883b8d0de774c71d8f734d5447",
+          "capturedAt": "2026-08-29T20:31:31.555Z",
+          "sampleCapturedAt": "2026-08-29T20:31:31.256Z",
+          "runId": "e3269d5a-0887-42c4-bc36-7fd5d5cea750",
+          "buildFingerprintSha256": "1cb31044438ee914eb5525b97c751488641312f4271127e32d08fdb0f0b27ef4",
+          "harnessFingerprintSha256": "2c27dffff28bd1029c6c227471cff106f2bcf120ad6f7395c8c5382d8027244e",
+          "evidenceSha256": "2d74d2db4fb548569c96143ce7898516197322bd90ee1a12b643798d1233328f",
+          "runtimeFingerprintSha256": "729f12e690e74533144b300892f17a62136b72f003960ff67e4db84e47884863",
+          "provenanceValid": true,
+          "currentCandidate": true,
+          "budgetSealValid": true,
+          "timings": {
+            "frameMs": {
+              "p50": 14.6,
+              "p95": 21.1
+            },
+            "cpuMs": {
+              "p50": 6,
+              "p95": 9.2
+            },
+            "commitMs": {
+              "p50": 5.9,
+              "p95": 9.1
+            },
+            "collisionMs": {
+              "p50": 1.6,
+              "p95": 2.8
+            }
+          },
+          "submittedLabels": 512,
+          "submittedGlyphs": 4096,
+          "selectionHash": 1628931525,
+          "accountingPassed": true,
+          "budgetPassed": true,
+          "wholeFrameBudgetPassed": true,
+          "failures": [],
+          "eligible": true,
+          "index": 3
+        }
+      ],
+      "aggregate": {
+        "frameP50Ms": {
+          "mean": 12.866667,
+          "min": 11.9,
+          "max": 14.6,
+          "range": 2.7,
+          "coefficientOfVariation": 0.095469
+        },
+        "frameP95Ms": {
+          "mean": 20.8,
+          "min": 20.3,
+          "max": 21.1,
+          "range": 0.8,
+          "coefficientOfVariation": 0.017111
+        },
+        "cpuP50Ms": {
+          "mean": 5.966667,
+          "min": 5.9,
+          "max": 6,
+          "range": 0.1,
+          "coefficientOfVariation": 0.007901
+        },
+        "cpuP95Ms": {
+          "mean": 9.2,
+          "min": 9.1,
+          "max": 9.3,
+          "range": 0.2,
+          "coefficientOfVariation": 0.008875
+        },
+        "commitP50Ms": {
+          "mean": 5.866667,
+          "min": 5.8,
+          "max": 5.9,
+          "range": 0.1,
+          "coefficientOfVariation": 0.008035
+        },
+        "commitP95Ms": {
+          "mean": 9.166667,
+          "min": 9.1,
+          "max": 9.3,
+          "range": 0.2,
+          "coefficientOfVariation": 0.010285
+        },
+        "collisionP50Ms": {
+          "mean": 1.6,
+          "min": 1.6,
+          "max": 1.6,
+          "range": 0,
+          "coefficientOfVariation": 0
+        },
+        "collisionP95Ms": {
+          "mean": 2.733333,
+          "min": 2.7,
+          "max": 2.8,
+          "range": 0.1,
+          "coefficientOfVariation": 0.017247
+        }
+      },
+      "invariants": {
+        "exactlyThreeRuns": true,
+        "isolatedCandidateArtifacts": true,
+        "everyRunCurrentCandidate": true,
+        "everyRunProvenanceValid": true,
+        "submittedGlyphsMatchLabels": true,
+        "selectionHashStable": true,
+        "accountingPassed": true,
+        "budgetsPassed": true,
+        "wholeFrameBudgetPassed": true
+      }
+    },
+    "webgpu": {
+      "sourceCandidateArtifact": "browser-label-collision-webgpu-formal-1-1.2.0.json",
+      "sourceCandidateArtifacts": [
+        {
+          "artifactFile": "browser-label-collision-webgpu-formal-1-1.2.0.json",
+          "sha256": "80316eb45846a1ebf995421e4ba0a179ad24cd1f139b850036cc3e42c216e04f"
+        },
+        {
+          "artifactFile": "browser-label-collision-webgpu-formal-2-1.2.0.json",
+          "sha256": "f85fd33f967e94bdef0c17d56eb71f8035875d11db1fcf22995b0f7d199ecd86"
+        },
+        {
+          "artifactFile": "browser-label-collision-webgpu-candidate-1.2.0.json",
+          "sha256": "a425e2413f62ea869df911c1c7dc90bc275c8cb8effcbf40cd1e79e6224ab84a"
+        }
+      ],
+      "runs": [
+        {
+          "renderer": "webgpu",
+          "artifactFile": "browser-label-collision-webgpu-formal-1-1.2.0.json",
+          "candidateSha256": "80316eb45846a1ebf995421e4ba0a179ad24cd1f139b850036cc3e42c216e04f",
+          "capturedAt": "2026-08-29T20:31:37.836Z",
+          "sampleCapturedAt": "2026-08-29T20:31:37.570Z",
+          "runId": "bcd75564-65ab-43a9-b84d-043145c547e4",
+          "buildFingerprintSha256": "1cb31044438ee914eb5525b97c751488641312f4271127e32d08fdb0f0b27ef4",
+          "harnessFingerprintSha256": "2c27dffff28bd1029c6c227471cff106f2bcf120ad6f7395c8c5382d8027244e",
+          "evidenceSha256": "89483fdd0618a72c7ad990f889b06da035d9639ceec09d4aa2c96179835e73e9",
+          "runtimeFingerprintSha256": "729f12e690e74533144b300892f17a62136b72f003960ff67e4db84e47884863",
+          "provenanceValid": true,
+          "currentCandidate": true,
+          "budgetSealValid": true,
+          "timings": {
+            "frameMs": {
+              "p50": 8,
+              "p95": 12.2
+            },
+            "cpuMs": {
+              "p50": 6.1,
+              "p95": 8.3
+            },
+            "commitMs": {
+              "p50": 5.9,
+              "p95": 8.2
+            },
+            "collisionMs": {
+              "p50": 1.7,
+              "p95": 2.9
+            }
+          },
+          "submittedLabels": 512,
+          "submittedGlyphs": 4096,
+          "selectionHash": 1628931525,
+          "accountingPassed": true,
+          "budgetPassed": true,
+          "wholeFrameBudgetPassed": true,
+          "failures": [],
+          "eligible": true,
+          "index": 1
+        },
+        {
+          "renderer": "webgpu",
+          "artifactFile": "browser-label-collision-webgpu-formal-2-1.2.0.json",
+          "candidateSha256": "f85fd33f967e94bdef0c17d56eb71f8035875d11db1fcf22995b0f7d199ecd86",
+          "capturedAt": "2026-08-29T20:31:43.516Z",
+          "sampleCapturedAt": "2026-08-29T20:31:43.266Z",
+          "runId": "7ac777a2-f42c-4fc7-862c-f073106b8661",
+          "buildFingerprintSha256": "1cb31044438ee914eb5525b97c751488641312f4271127e32d08fdb0f0b27ef4",
+          "harnessFingerprintSha256": "2c27dffff28bd1029c6c227471cff106f2bcf120ad6f7395c8c5382d8027244e",
+          "evidenceSha256": "fbe799e56a9e43b669faa0c83b5f55215b639e6dcc292d92425ce96007e3cbb7",
+          "runtimeFingerprintSha256": "729f12e690e74533144b300892f17a62136b72f003960ff67e4db84e47884863",
+          "provenanceValid": true,
+          "currentCandidate": true,
+          "budgetSealValid": true,
+          "timings": {
+            "frameMs": {
+              "p50": 7.9,
+              "p95": 11.5
+            },
+            "cpuMs": {
+              "p50": 6.1,
+              "p95": 8.5
+            },
+            "commitMs": {
+              "p50": 5.9,
+              "p95": 8.3
+            },
+            "collisionMs": {
+              "p50": 1.7,
+              "p95": 2.9
+            }
+          },
+          "submittedLabels": 512,
+          "submittedGlyphs": 4096,
+          "selectionHash": 1628931525,
+          "accountingPassed": true,
+          "budgetPassed": true,
+          "wholeFrameBudgetPassed": true,
+          "failures": [],
+          "eligible": true,
+          "index": 2
+        },
+        {
+          "renderer": "webgpu",
+          "artifactFile": "browser-label-collision-webgpu-candidate-1.2.0.json",
+          "candidateSha256": "f286161f44eb402c2ff0940e89c9990ef337fd914f4621a4d841cabf9d09bbcc",
+          "capturedAt": "2026-08-29T20:31:49.700Z",
+          "sampleCapturedAt": "2026-08-29T20:31:49.450Z",
+          "runId": "e8c1de4b-96bc-44ad-b269-6cd5a6162130",
+          "buildFingerprintSha256": "1cb31044438ee914eb5525b97c751488641312f4271127e32d08fdb0f0b27ef4",
+          "harnessFingerprintSha256": "2c27dffff28bd1029c6c227471cff106f2bcf120ad6f7395c8c5382d8027244e",
+          "evidenceSha256": "3f5e8b5351354daf6ccac51300eb4fc9c8e616e081faf28eecbbeef78da66559",
+          "runtimeFingerprintSha256": "729f12e690e74533144b300892f17a62136b72f003960ff67e4db84e47884863",
+          "provenanceValid": true,
+          "currentCandidate": true,
+          "budgetSealValid": true,
+          "timings": {
+            "frameMs": {
+              "p50": 7.9,
+              "p95": 11.9
+            },
+            "cpuMs": {
+              "p50": 6.2,
+              "p95": 8.3
+            },
+            "commitMs": {
+              "p50": 5.9,
+              "p95": 8.1
+            },
+            "collisionMs": {
+              "p50": 1.7,
+              "p95": 2.9
+            }
+          },
+          "submittedLabels": 512,
+          "submittedGlyphs": 4096,
+          "selectionHash": 1628931525,
+          "accountingPassed": true,
+          "budgetPassed": true,
+          "wholeFrameBudgetPassed": true,
+          "failures": [],
+          "eligible": true,
+          "index": 3
+        }
+      ],
+      "aggregate": {
+        "frameP50Ms": {
+          "mean": 7.933333,
+          "min": 7.9,
+          "max": 8,
+          "range": 0.1,
+          "coefficientOfVariation": 0.005942
+        },
+        "frameP95Ms": {
+          "mean": 11.866667,
+          "min": 11.5,
+          "max": 12.2,
+          "range": 0.7,
+          "coefficientOfVariation": 0.024164
+        },
+        "cpuP50Ms": {
+          "mean": 6.133333,
+          "min": 6.1,
+          "max": 6.2,
+          "range": 0.1,
+          "coefficientOfVariation": 0.007686
+        },
+        "cpuP95Ms": {
+          "mean": 8.366667,
+          "min": 8.3,
+          "max": 8.5,
+          "range": 0.2,
+          "coefficientOfVariation": 0.011269
+        },
+        "commitP50Ms": {
+          "mean": 5.9,
+          "min": 5.9,
+          "max": 5.9,
+          "range": 0,
+          "coefficientOfVariation": 0
+        },
+        "commitP95Ms": {
+          "mean": 8.2,
+          "min": 8.1,
+          "max": 8.3,
+          "range": 0.2,
+          "coefficientOfVariation": 0.009957
+        },
+        "collisionP50Ms": {
+          "mean": 1.7,
+          "min": 1.7,
+          "max": 1.7,
+          "range": 0,
+          "coefficientOfVariation": 0
+        },
+        "collisionP95Ms": {
+          "mean": 2.9,
+          "min": 2.9,
+          "max": 2.9,
+          "range": 0,
+          "coefficientOfVariation": 0
+        }
+      },
+      "invariants": {
+        "exactlyThreeRuns": true,
+        "isolatedCandidateArtifacts": true,
+        "everyRunCurrentCandidate": true,
+        "everyRunProvenanceValid": true,
+        "submittedGlyphsMatchLabels": true,
+        "selectionHashStable": true,
+        "accountingPassed": true,
+        "budgetsPassed": true,
+        "wholeFrameBudgetPassed": true
+      }
+    }
+  },
+  "invariants": {
+    "exactlySixRuns": true,
+    "isolatedCandidateArtifacts": true,
+    "everyRunCurrentCandidate": true,
+    "everyRunProvenanceValid": true,
+    "uniqueRunIds": true,
+    "uniqueEvidenceSha256": true,
+    "uniqueCapturedAt": true,
+    "uniqueSampleCapturedAt": true,
+    "buildFingerprintStable": true,
+    "harnessFingerprintStable": true,
+    "runtimeFingerprintStable": true,
+    "selectionHashStable": true,
+    "submittedStateStable": true,
+    "everyRunAccountingPassed": true,
+    "everyRunBudgetPassed": true,
+    "webgpuWholeFrameBudgetPassed": true,
+    "allPassed": true
+  },
+  "gate": {
+    "status": "GO",
+    "reasons": []
+  }
+}

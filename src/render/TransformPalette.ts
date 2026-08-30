@@ -6,7 +6,7 @@ import {
   DIRTY_WHOLE_BUFFER_BPS,
   DirtyRanges,
 } from "./DirtyRanges";
-import { packHalf2x16 } from "./pack";
+import { bitsFromFloat, packHalf2x16 } from "./pack";
 import type {
   DirtyByteRange,
   TransformPaletteInput,
@@ -26,6 +26,21 @@ const EFFECT_FLAG = 65_536;
 const DEFAULT_CAPACITY = 1_024;
 const DEFAULT_TEXTURE_WIDTH = 1_024;
 const DEFAULT_MAX_CAPACITY = 0x100_0000;
+
+/** @internal Exact u32 image of the two fill fields stored in a palette row. */
+export interface CanonicalFillPaint {
+  readonly colorBits: number;
+  readonly alphaBits: number;
+}
+
+/** @internal Resolve a Pixi fill through the same f32 fields used by {@link TransformPalette}. */
+export function canonicalFillPaint(fill: unknown): Readonly<CanonicalFillPaint> {
+  const paint = resolvePaint(fill, 0xffffff);
+  return Object.freeze({
+    colorBits: bitsFromFloat(paint.color),
+    alphaBits: bitsFromFloat(packFillAlpha(paint.alpha, 1)),
+  });
+}
 
 export class TransformPalette {
   readonly #textureWidth: number;
@@ -179,6 +194,16 @@ export class TransformPalette {
    * visible alpha 1) and packed x/y. Resolves `fill` once. Used for first-seen admit.
    */
   writeFills(slots: Uint32Array, count: number, xy: Float32Array, fill: unknown): number {
+    return this.writeCanonicalFills(slots, count, xy, canonicalFillPaint(fill));
+  }
+
+  /** Occupy a fill-only slot column from the compiler's exact packed palette identity. */
+  writeCanonicalFills(
+    slots: Uint32Array,
+    count: number,
+    xy: Float32Array,
+    paint: Readonly<CanonicalFillPaint>,
+  ): number {
     this.#assertActive();
     if (count <= 0) return 0;
     if (xy.length < count * 2) {
@@ -194,8 +219,7 @@ export class TransformPalette {
       if (slot > maxSlot) maxSlot = slot;
     }
     this.#ensureCapacity(maxSlot + 1);
-    const paint = resolvePaint(fill, 0xffffff);
-    const packedAlpha = packFillAlpha(paint.alpha, 1);
+    assertCanonicalPaint(paint);
     const rotationBits = packHalf2x16(0, 1);
     const anchorBits = packHalf2x16(0, 0);
     const data = this.#data;
@@ -215,8 +239,8 @@ export class TransformPalette {
         data[offset + 3] === 1 &&
         bits[offset + 4] === rotationBits &&
         bits[offset + 5] === anchorBits &&
-        data[offset + 6] === paint.color &&
-        data[offset + 7] === packedAlpha
+        bits[offset + 6] === paint.colorBits &&
+        bits[offset + 7] === paint.alphaBits
       ) {
         continue;
       }
@@ -226,8 +250,8 @@ export class TransformPalette {
       data[offset + 3] = 1;
       bits[offset + 4] = rotationBits;
       bits[offset + 5] = anchorBits;
-      data[offset + 6] = paint.color;
-      data[offset + 7] = packedAlpha;
+      bits[offset + 6] = paint.colorBits;
+      bits[offset + 7] = paint.alphaBits;
       if (occupied[slot] !== 1) {
         occupied[slot] = 1;
         this.#activeLabels += 1;
@@ -561,6 +585,19 @@ function validateInput(input: TransformPaletteInput, bounds: TransformRunBounds)
 function assertSlot(slot: number): void {
   if (!Number.isSafeInteger(slot) || slot < 0) {
     throw new TypeError("Transform palette slot must be a non-negative safe integer");
+  }
+}
+
+function assertCanonicalPaint(paint: Readonly<CanonicalFillPaint>): void {
+  if (
+    !Number.isSafeInteger(paint.colorBits) ||
+    paint.colorBits < 0 ||
+    paint.colorBits > 0xffff_ffff ||
+    !Number.isSafeInteger(paint.alphaBits) ||
+    paint.alphaBits < 0 ||
+    paint.alphaBits > 0xffff_ffff
+  ) {
+    throw new TypeError("Canonical palette paint fields must fit uint32");
   }
 }
 

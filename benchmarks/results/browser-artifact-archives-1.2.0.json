@@ -1,0 +1,96 @@
+{
+  "schemaVersion": 1,
+  "artifacts": [
+    {
+      "file": "browser-gpu-scene-heterogeneous-64-webgpu-candidate-legacy-12b-1.2.0.json",
+      "archive": "browser-gpu-scene-heterogeneous-64-webgpu-candidate-legacy-12b-1.2.0.json.gz",
+      "bytes": 720952,
+      "archiveBytes": 37119,
+      "sha256": "a77d28f0ee7e976e40c1262badf627f5508166bf0ba6b4ea4e0327f3596cc86f"
+    },
+    {
+      "file": "browser-gpu-scene-heterogeneous-64-webgpu-formal-1-1.2.0.json",
+      "archive": "browser-gpu-scene-heterogeneous-64-webgpu-formal-1-1.2.0.json.gz",
+      "bytes": 717421,
+      "archiveBytes": 29788,
+      "sha256": "46175af513d4d8ca0ec49f70f6b76dc16891063c86ac803c3118a3446d2ad49f"
+    },
+    {
+      "file": "browser-gpu-scene-resident-webgpu-candidate-legacy-16b-1.2.0.json",
+      "archive": "browser-gpu-scene-resident-webgpu-candidate-legacy-16b-1.2.0.json.gz",
+      "bytes": 347405,
+      "archiveBytes": 16960,
+      "sha256": "6f77cb31bbc6a54df330f1f8475eda658d8b2ff61bafd8c1f614b8f03e06684e"
+    },
+    {
+      "file": "browser-gpu-scene-resident-webgpu-canonical-source-1.2.0.json",
+      "archive": "browser-gpu-scene-resident-webgpu-canonical-source-1.2.0.json.gz",
+      "bytes": 347476,
+      "archiveBytes": 16997,
+      "sha256": "e8149d863b2d75af2e2ac997114597f5ab8ae4a3ca2746cf54c92f7672d69f7c"
+    },
+    {
+      "file": "browser-gpu-scene-resident-webgpu-fastlane-fused-600-1.2.0.json",
+      "archive": "browser-gpu-scene-resident-webgpu-fastlane-fused-600-1.2.0.json.gz",
+      "bytes": 1603126,
+      "archiveBytes": 41973,
+      "sha256": "61dd5fb7932fcb10868bb9fa3be13b6e4e71201b010da2b783464c8faedaddf5"
+    },
+    {
+      "file": "browser-gpu-scene-resident-webgpu-formal-1-1.2.0.json",
+      "archive": "browser-gpu-scene-resident-webgpu-formal-1-1.2.0.json.gz",
+      "bytes": 385729,
+      "archiveBytes": 19210,
+      "sha256": "16fc29c900000817712864ace23e48ed3269961a8ed9cfb4813c6bd39f09a40d"
+    },
+    {
+      "file": "browser-gpu-scene-resident-webgpu-formal-2-1.2.0.json",
+      "archive": "browser-gpu-scene-resident-webgpu-formal-2-1.2.0.json.gz",
+      "bytes": 384429,
+      "archiveBytes": 18705,
+      "sha256": "5d5fd48d24874241e403c16db56cacffb8468807bfdc4cbd3b426558124df476"
+    },
+    {
+      "file": "browser-gpu-scene-resident-webgpu-formal-3-1.2.0.json",
+      "archive": "browser-gpu-scene-resident-webgpu-formal-3-1.2.0.json.gz",
+      "bytes": 386218,
+      "archiveBytes": 18679,
+      "sha256": "3344f553a5586bcc507958ce1119f7e015b5a44acb9681b984f453640053b9d6"
+    },
+    {
+      "file": "browser-gpu-scene-resident-webgpu-formal-4-1.2.0.json",
+      "archive": "browser-gpu-scene-resident-webgpu-formal-4-1.2.0.json.gz",
+      "bytes": 385043,
+      "archiveBytes": 18489,
+      "sha256": "ee72006455406b5eced5c8ae7db8d30b2b1bb1a2f2d7d0a7609519ba2fa4ce6f"
+    },
+    {
+      "file": "browser-label-collision-webgl-formal-1-1.2.0.json",
+      "archive": "browser-label-collision-webgl-formal-1-1.2.0.json.gz",
+      "bytes": 61823,
+      "archiveBytes": 8756,
+      "sha256": "214e0726e4d05175e9fb479145fa3fb2b9585c4b173bdbbca3e2e9b6cad465ee"
+    },
+    {
+      "file": "browser-label-collision-webgl-formal-2-1.2.0.json",
+      "archive": "browser-label-collision-webgl-formal-2-1.2.0.json.gz",
+      "bytes": 61909,
+      "archiveBytes": 8753,
+      "sha256": "2b676645c0adfcb0db15d64f7c570492fd5444837dc2280278a67beeaef046fc"
+    },
+    {
+      "file": "browser-label-collision-webgpu-formal-1-1.2.0.json",
+      "archive": "browser-label-collision-webgpu-formal-1-1.2.0.json.gz",
+      "bytes": 65170,
+      "archiveBytes": 8692,
+      "sha256": "80316eb45846a1ebf995421e4ba0a179ad24cd1f139b850036cc3e42c216e04f"
+    },
+    {
+      "file": "browser-label-collision-webgpu-formal-2-1.2.0.json",
+      "archive": "browser-label-collision-webgpu-formal-2-1.2.0.json.gz",
+      "bytes": 64809,
+      "archiveBytes": 8693,
+      "sha256": "f85fd33f967e94bdef0c17d56eb71f8035875d11db1fcf22995b0f7d199ecd86"
+    }
+  ]
+}

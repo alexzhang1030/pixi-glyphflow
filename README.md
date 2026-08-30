@@ -8,6 +8,8 @@ worker shaping, bounded glyph atlases, dense culling, and first-class pixi-viewp
 - One `TextLayer` retains 1,000,000 labels in 72 MiB of fixed-width CPU storage.
 - One instanced draw submits 8,000,000 visible glyphs through a 32-byte glyph record.
 - Two atlas texture arrays (R8 and RGBA8) bind every page as a layer, so mixed modes stay one draw.
+- Explicit WebGPU GPU-scene residency keeps one million label records, up to 64 prototypes, and up
+  to 8 canonical paints on the GPU while camera commits refresh one compute viewport uniform.
 - `updatePositions` applies 100,000 packed x/y changes in 3.40 ms p95 on the reference M1 Pro.
 - `updateTextPositions` applies 100,000 text and x/y changes in 14.20 ms p95.
 - `showAll()` and `hideAll()` update the complete resident visibility column with one commit.
@@ -80,6 +82,55 @@ await labels.commit();
 
 Mutations are synchronous. `commit()` publishes the accepted dirty set through one monotonic
 revision and completes associated shaping, atlas, upload, and visibility work.
+
+### Opt into GPU-scene residency
+
+Viewport residency remains the default. A uniform WebGPU scene can explicitly retain its full
+label record set on the GPU:
+
+```ts
+import { Application } from "pixi.js";
+import { requestComputeCullGpu, TextLayer } from "pixi-glyphflow";
+
+const gpu = await requestComputeCullGpu();
+const residentApp = new Application();
+await residentApp.init({ gpu, preference: ["webgpu", "webgl"] });
+
+const labels = new TextLayer({
+  renderer: residentApp.renderer,
+  initialCapacity: 1_000_000,
+  culling: {
+    bounds: { x: 0, y: 0, width: 1280, height: 720 },
+    residency: "gpu-scene",
+  },
+});
+residentApp.stage.addChild(labels);
+
+const residentStyle = { fontFamily: "Inter", fontSize: 18, fill: 0xffffff };
+labels.createMany([
+  { text: "GPU resident", x: 48, y: 64, style: residentStyle },
+  { text: "GPU resident", x: 192, y: 64, style: residentStyle },
+  { text: "GPU resident", x: 336, y: 64, style: residentStyle },
+]);
+
+await labels.commit();
+console.log(labels.stats.residencyActive, labels.stats.residencyFallbackReason);
+```
+
+A capable WebGPU renderer prints `"gpu-scene"` and `undefined`. Other capability outcomes print
+`"viewport"` plus the stable fallback reason.
+
+Activation requires WebGPU compute culling, the storage palette, sufficient device limits,
+collision disabled, and up to 64 visible fill-only prototypes across 8 canonical paints with unit
+transforms, zero anchors/z, and normal blending. Unsupported devices and scene mutations continue
+through viewport residency and expose a stable `residencyFallbackReason`. Camera-only commits skip
+CPU spatial queries and admission. Sorted, unique, strictly contiguous active slots use the dense
+exact-f32 lane: 8 bytes per mover plus a 16-byte
+`baseSlot`/`count` header, or 800,016 bytes for 100,000 movers. Sparse, reordered, and duplicate
+inputs use the indexed 12-byte ABI with last-write-wins identity. Both lanes keep
+`cullRecordUploadBytes` unchanged. WebGPU stages palette patch, cull,
+and Pixi render work into one product command buffer; the frame-transaction total, fused, and
+standalone counters expose that submission truth.
 
 ## Register multilingual fonts
 
@@ -221,14 +272,18 @@ remaining supported appearance controls.
 | `pixi-glyphflow/viewport`       | pixi-viewport binding                                               |
 | `pixi-glyphflow/accessibility`  | Sparse DOM accessibility mirror                                     |
 | `pixi-glyphflow/shaping`        | HarfBuzz main-thread and worker shapers                             |
-| `pixi-glyphflow/advanced`       | Atlas, mesh, layout, upload, and spatial primitives                 |
+| `pixi-glyphflow/advanced`       | Atlas, mesh, layout, spatial, and symbol-continuity primitives      |
 | `pixi-glyphflow/prebuilt`       | Optional ASCII / charset SDF pages for `rasterizerOptions.prebuilt` |
+| `pixi-glyphflow/outline`        | Huge-glyph compute plugin and opt-in sparse-strip cache laboratory  |
+| `pixi-glyphflow/hb-gpu`         | Packed HarfBuzz GPU Draw Worker/Wasm encoder                        |
 | `pixi-glyphflow/text-worker.js` | Worker module used by the default complex-script pipeline           |
 
 ## Reference performance
 
-The committed browser artifacts use Chrome, WebGL 2, an Apple M1 Pro, isolated processes, explicit
-GPU completion, warmup frames, and p95 reporting.
+The committed browser artifacts use Chrome on an Apple M1 Pro, isolated processes, explicit GPU
+completion, warmup frames, and p95 reporting. The 1.1.0 rows are the published WebGL baseline. The
+GPU-resident rows come from the current WebGPU 1.2.0 schema 7 raw runs and schema 4 promotion
+aggregate with 1,000,000 labels and 100,000 movers.
 
 | Workload                          |                           Scale | Frame p95 |
 | --------------------------------- | ------------------------------: | --------: |
@@ -238,9 +293,27 @@ GPU completion, warmup frames, and p95 reporting.
 | pixi-viewport wheel + pinch zoom  |              1,000,000 resident |   7.60 ms |
 | Position storm                    |          100,000 packed updates |   9.50 ms |
 | Multilingual stream               |  10,000 resident, 1,000 updates |   1.50 ms |
+| GPU-resident camera, five-run set |    1,000,000 / 50,000 submitted |  11.30 ms |
+| GPU-resident position, five runs  |          100,000 packed updates |  14.00 ms |
+| GPU-resident position, 600 frames |          100,000 packed updates |  13.80 ms |
 
-The [generated performance report](benchmarks/PERFORMANCE.md) links every raw artifact and records
-memory, atlas, draw, fixture, and invariant evidence.
+The [current promotion aggregate](benchmarks/results/browser-gpu-scene-resident-webgpu-promotion-repeatability-1.2.0.json)
+joins five independent 120-camera / 120-position runs and one independent 600-camera /
+600-position run from one production build, harness, and runtime fingerprint. Every run reads
+50,000 ordered GPU references with hash `0x45cfd045`, pixel hash `0xa8ad90b4`, and 302,457
+non-transparent pixels. Product/timestamp fusion records 1,300/1,300/0
+readback/fused/standalone submissions across the five formal runs and 1,220/1,220/0 in the
+sustained run.
+
+Truth repeatability and formal performance are GO. All five formal runs pass every budget: camera
+p95/p99/max is 7.9/9.4/10.6 ms and position is 9.8/11.0/12.5 ms, with 0/600 frames above
+16.67 ms in each phase. The sustained run records camera p95/p99/max 10.5/13.5/21.5 ms with
+4/600 overruns and position 8.1/9.9/11.6 ms with zero overruns. All 1,300 formal segmented samples
+resolve palette, cull, and scene-render timestamps with zero fallback; segment p95 is
+0.13/0.59/5.44 ms.
+The current dense mover lane uploads exactly 800,016 bytes for 100,000 movers. The
+[generated performance report](benchmarks/PERFORMANCE.md) links the current source artifacts,
+evidence hashes, provenance fingerprints, historical checkpoints, and all gate outcomes.
 
 ## Development
 

@@ -1,0 +1,121 @@
+{
+  "schemaVersion": 1,
+  "benchmark": "hb-gpu-draw-wasm-browser",
+  "packageVersion": "1.2.0",
+  "capturedAt": "2026-08-29T14:58:35.846Z",
+  "runtime": {
+    "bun": "1.4.0",
+    "cpu": "Apple M1 Pro",
+    "platform": "darwin",
+    "release": "27.0.0",
+    "architecture": "arm64"
+  },
+  "browser": {
+    "engine": "chrome",
+    "version": "151.0.7922.175",
+    "headless": true,
+    "viewport": {
+      "width": 320,
+      "height": 180
+    }
+  },
+  "sourceArtifact": "benchmarks/hb-gpu/results/hb-gpu-draw-native-14.4.0.json",
+  "sourceArtifactSha256": "ecd2b094416921c3a9b07bb1f1e4ede53891a098bb75c04f598748b1225d8e03",
+  "provenanceFile": "src/hb-gpu/wasm/provenance.json",
+  "provenanceSha256": "147e80681046bb41e180420e990f6f178b790adc88f04f608722407c1ce1cc13",
+  "sourceSha256": {
+    "html": "d6512da6faa97c003373fa94ee28a021ca9abe30ebe4bdaeae62fe384d776eb5",
+    "browser": "3eadc6d0eedaceb31eb7cdf96455d718b27ec56b3b10666c776d2725918a53ca",
+    "worker": "03d6b33fbc11ebdd04b1b6ea9506a141daa4f1da1ba0eeeb691fa2b4d895415b",
+    "runtime": "a92207c96c6786f7aca98096e771148a4a573ce6fdd94640dacd860dc61b34f8",
+    "shim": "32524a283cf98d0eb23b0e0d1af3546700396d75484d4093d7aa83358fd94cc5",
+    "build": "5172b7342a37ec6f2b9aab0e76cbcb107228504ea18de61ccdf9ac437a962a6a"
+  },
+  "command": "bun benchmarks/hb-gpu/wasm-browser-run.ts",
+  "result": {
+    "harfbuzzVersion": "14.4.0",
+    "abiVersion": 1,
+    "toolchain": {
+      "emscriptenVersion": "4.0.16",
+      "image": "emscripten/emsdk@sha256:69820cfa8dd489d1ddd13bb394b9b9a80b491fb6a3b44715622b5cba0e5f49fb",
+      "imageDigest": "sha256:69820cfa8dd489d1ddd13bb394b9b9a80b491fb6a3b44715622b5cba0e5f49fb",
+      "compilerVersion": "emcc (Emscripten gcc/clang-like replacement + linker emulating GNU ld) 4.0.16 (09534bba7f0ee767bf6f6f8cb5b7bf9519b8d63a)",
+      "sourceDateEpoch": 1787772600
+    },
+    "wasm": {
+      "file": "hb-gpu-encoder.wasm",
+      "sha256": "81aa7c58ce797ed760d4a40722c53aa261fde343e26cb9508482d5cd9abf493d",
+      "rawBytes": 221915,
+      "gzipBytes": 82626,
+      "fetchedSha256": "81aa7c58ce797ed760d4a40722c53aa261fde343e26cb9508482d5cd9abf493d"
+    },
+    "corpusCount": 5,
+    "glyphs": [
+      {
+        "corpusId": "cjkv",
+        "glyphId": 130,
+        "blobBytes": 12720
+      },
+      {
+        "corpusId": "arabic",
+        "glyphId": 22,
+        "blobBytes": 3976
+      },
+      {
+        "corpusId": "devanagari",
+        "glyphId": 12,
+        "blobBytes": 3856
+      },
+      {
+        "corpusId": "hebrew",
+        "glyphId": 10,
+        "blobBytes": 3336
+      },
+      {
+        "corpusId": "thai",
+        "glyphId": 10,
+        "blobBytes": 3792
+      }
+    ],
+    "parity": {
+      "mismatchCount": 0,
+      "actualHash": "c6e3f48779eda9032cce821af5b5a7ea0e1f2bf685ff0767d7ec2dcaf47c85fd",
+      "expectedHash": "c6e3f48779eda9032cce821af5b5a7ea0e1f2bf685ff0767d7ec2dcaf47c85fd"
+    },
+    "coldEncodeMs": [
+      23.700000002980232, 0.4000000059604645, 0.20000000298023224, 0.20000000298023224,
+      0.20000000298023224
+    ],
+    "warmEncodeMs": {
+      "count": 200,
+      "mean": 0.052000000029802325,
+      "p50": 0,
+      "p95": 0.10000000894069672,
+      "max": 0.20000000298023224
+    },
+    "warmGlyphsPerSecond": 19230.76921974766,
+    "iterations": {
+      "warmup": 16,
+      "measured": 200
+    },
+    "resources": {
+      "syncedFontsBeforeRelease": 5,
+      "syncedFontsAfterRelease": 0,
+      "releasedFonts": 5
+    },
+    "worker": {
+      "starts": 1,
+      "requests": 232,
+      "encodedGlyphs": 221
+    },
+    "acceptance": {
+      "minimumWarmGlyphsPerSecond": 10000,
+      "maximumColdStartMs": 100
+    },
+    "decision": {
+      "status": "go",
+      "reasons": []
+    }
+  },
+  "consoleMessages": ["debug: [vite] connecting...", "debug: [vite] connected."]
+}

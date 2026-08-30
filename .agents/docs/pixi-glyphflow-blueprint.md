@@ -185,6 +185,22 @@ Every numeric input must be finite. Sizes and capacities must be positive and bo
 
 The external seam sits at TextLayer and FontRegistry. Renderer adapters form an internal seam because WebGL and WebGPU are both concrete implementations.
 
+### Current GPU-scene contract
+
+`culling.residency: "gpu-scene"` is the explicit bounded-scene WebGPU lane. It requires compute
+culling, storage-palette support, collision disabled, dense monotonic slots, fill-only styling,
+unit transforms, zero anchors and z, alpha 1, and normal blending. `GpuSceneCompiler` retains up to
+64 exact rendered prototypes and 8 canonical paints, partitions the scene into at most 512
+prototype/paint columns, and extends that generation through compatible monotonic appends.
+
+Sorted, unique, strictly contiguous active movers use the dense 8-byte exact-f32 ABI plus a
+16-byte `baseSlot`/`count` header, producing 800,016 bytes for 100,000 movers. Sparse, reordered,
+duplicate, and holed inputs use the indexed 12-byte fallback with last-write-wins identity. One
+fused product command encoder orders palette/AABB moves, compute culling, segmented timestamp
+queries, and Pixi rendering. GPU resources and callbacks belong to explicit device, pass, and
+encoder epochs; replacement rebuilds current resources and retires stale work within its captured
+epoch.
+
 ## Shaping and layout
 
 The shaping cache key contains:
@@ -270,6 +286,8 @@ TextLayerStats includes:
 - CPU store bytes, GPU instance bytes, staging high-water mark, and upload bytes;
 - worker queue depth, stale results, fallbacks, and last commit timings;
 - last layout, instance-write, palette-write, spatial-update, and upload milliseconds.
+- requested/active residency, fallback reason, GPU-resident labels, prototype count, paint count,
+  per-label GPU-scene object count, deferred spatial labels, and frame-transaction submissions.
 
 Diagnostics snapshots are immutable and allocation occurs only when the stats getter is read.
 
@@ -288,6 +306,9 @@ Diagnostics snapshots are immutable and allocation occurs only when the stats ge
 | Scale scan | Camera scale from 0.25 to 16 with rotation | Distance-field quality and cache stability |
 | Atlas pressure | 20,000 unique CJK and emoji graphemes under a fixed byte ceiling | Packing, eviction, generation safety, upload bandwidth |
 | Static HUD | 1,000 stable labels with effects | Steady-state CPU, draw count, retained memory |
+| GPU-scene resident | 1,000,000 labels, 50,000 submitted, and 100,000 movers | Dense mover ABI, fused submission, segmented GPU timing, and exact output identity |
+| GPU-scene heterogeneous | 64 prototypes × 8 paints across 1,000,000 labels | 512-bin compilation, bounded residency, output parity, and delivery/promotion separation |
+| Collision repeatability | Three sealed WebGL plus three sealed WebGPU runs | Selection identity, sorted-candidate/run-cache path, CPU/collision budgets, and whole-frame tail |
 
 ## Performance budgets
 
@@ -303,6 +324,14 @@ Diagnostics snapshots are immutable and allocation occurs only when the stats ge
 10. Repeated benchmark samples must exceed measured run-to-run variance before an optimization remains in the codebase.
 11. Viewport drag and zoom with 1,000,000 resident labels and 50,000 visible labels must stay within 16.67 milliseconds frame p95 on the reference browser fixture.
 12. Viewport interaction must produce zero label mutations, zero shaping work, and bounded culling allocations during camera-only frames.
+13. GPU-scene resident promotion requires five sealed formal runs, zero camera and position frames
+    above 16.67 ms, exact 800,016-byte dense uploads, stable GPU/pixel identity, and complete
+    palette/cull/scene-render segmented timestamps.
+14. Heterogeneous GPU-scene delivery requires both phase p95 values at or below 33.34 ms and at
+    least 4× speedup versus the fixed GPU Scene v2 RED control. Its 16.67 ms promotion remains an
+    independent decision.
+15. Collision repeatability requires three sealed runs per renderer with stable selection identity;
+    the WebGPU whole-frame gate remains 16.67 ms.
 
 The 2026-08-15 startup split moved the default bitmap adapter, HarfBuzz worker shaper, and dynamic
 raster provider behind their first-use async seams. `bun run benchmark:check` measured the core ESM

@@ -9,7 +9,6 @@ import {
   type PalettePath,
   type TextId,
   type TextLabelSpec,
-  type TextShapingOptions,
 } from "pixi-glyphflow";
 import { charsetSdfPrebuilt, mergePrebuilt } from "pixi-glyphflow/prebuilt";
 import { bindViewport, type ViewportBinding } from "pixi-glyphflow/viewport";
@@ -51,6 +50,9 @@ interface LoadedFontAsset {
 }
 
 const numberFormat = new Intl.NumberFormat("en-US");
+const GPU_SCENE_HERO_FILLS = Object.freeze([
+  0xe8f6ff, 0xd9ecfa, 0xe4eef8, 0xdcefe6, 0xe8ead8, 0xf0e6d4,
+] as const);
 
 type RendererBackend = "webgl" | "webgpu";
 type WebGpuCapability = "checking" | "available" | "unavailable";
@@ -91,6 +93,8 @@ const fontStatus = ref("Loading custom fonts");
 const fontFootprint = ref("0 KiB");
 const cullPath = ref<CullPath>("cpu-grid");
 const palettePath = ref<PalettePath>("texture");
+const residencyActive = ref("viewport");
+const residencyFallback = ref("");
 const rendererName = computed(() => formatRenderer(activeBackend.value ?? requestedBackend.value));
 
 const webGpuCapabilityLabel = computed(() => {
@@ -243,6 +247,8 @@ function resetHud(): void {
   fontFootprint.value = "0 KiB";
   cullPath.value = "cpu-grid";
   palettePath.value = "texture";
+  residencyActive.value = "viewport";
+  residencyFallback.value = "";
   allVisible.value = true;
   visibilityPending.value = false;
   rotationDegrees.value = 0;
@@ -360,6 +366,7 @@ async function initialize(backend: RendererBackend, runId: number): Promise<void
       bounds: { x: 0, y: 0, width: nextApp.screen.width, height: nextApp.screen.height },
       padding: CULLING_PADDING,
       computeCull: "auto",
+      residency: backend === "webgpu" ? "gpu-scene" : "viewport",
     },
   });
   layer = nextLayer;
@@ -474,12 +481,12 @@ function createLabelStyles(): Readonly<{
 }> {
   return Object.freeze({
     hero: Object.freeze(
-      LANGUAGE_SAMPLES.map((entry) =>
+      LANGUAGE_SAMPLES.map((entry, index) =>
         Object.freeze({
           fontFamily: MULTILINGUAL_STACK,
           fontSize: HERO_FONT_SIZE,
           fontWeight: "500",
-          fill: entry.fill,
+          fill: GPU_SCENE_HERO_FILLS[index % GPU_SCENE_HERO_FILLS.length] ?? entry.fill,
         }),
       ),
     ),
@@ -519,14 +526,13 @@ function admitLabelIndices(
 }
 
 function labelSpec(index: number, styles: ReturnType<typeof createLabelStyles>): TextLabelSpec {
-  const { sample, showcase, hero } = resolveLanguageSample(index);
+  const { sample, hero } = resolveLanguageSample(index);
   const position = labelPosition(index);
   return {
     text: sample.text,
     x: position.x,
     y: position.y,
     style: resolveLabelStyle(sample, hero, styles),
-    ...(hero || showcase ? shapingFor(sample) : {}),
   };
 }
 
@@ -538,13 +544,6 @@ function resolveLabelStyle(
   if (!hero) return sample.custom ? styles.field : styles.fallback;
   const languageIndex = LANGUAGE_SAMPLES.indexOf(sample);
   return styles.hero[languageIndex] ?? styles.field;
-}
-
-function shapingFor(
-  sample: Readonly<LanguageSample>,
-): Readonly<{ shaping: Readonly<TextShapingOptions> }> | Record<string, never> {
-  if (sample.shaping === undefined) return {};
-  return { shaping: sample.shaping };
 }
 
 function captureMovingLabel(id: TextId, labelIndex: number, movingIndex: number): void {
@@ -657,6 +656,8 @@ function updateHud(overrideViewportDuration?: number): void {
   atlasTextures.value = stats.atlasTextureCount;
   cullPath.value = stats.cullPath;
   palettePath.value = stats.palettePath;
+  residencyActive.value = stats.residencyActive;
+  residencyFallback.value = stats.residencyFallbackReason ?? "";
   viewportDuration.value = `${(
     overrideViewportDuration ?? nextBinding.stats.lastDurationMs
   ).toFixed(2)} ms`;
@@ -823,6 +824,8 @@ async function loadCustomFonts(): Promise<readonly Readonly<LoadedFontAsset>[]> 
     :data-renderer-backend="activeBackend"
     :data-cull-path="cullPath"
     :data-palette-path="palettePath"
+    :data-residency-active="residencyActive"
+    :data-residency-fallback="residencyFallback"
     :data-first-frame="firstFrameReady"
     :data-pending-glyphs="pendingGlyphs"
     :data-draw-calls="drawCalls"
@@ -945,6 +948,13 @@ async function loadCustomFonts(): Promise<readonly Readonly<LoadedFontAsset>[]> 
           <div>
             <dt>Submitted glyphs</dt>
             <dd>{{ glyphs }}</dd>
+          </div>
+          <div>
+            <dt>Residency</dt>
+            <dd data-testid="residency-path">
+              {{ residencyActive
+              }}<template v-if="residencyFallback"> · {{ residencyFallback }}</template>
+            </dd>
           </div>
           <div>
             <dt>Draw calls / atlas</dt>

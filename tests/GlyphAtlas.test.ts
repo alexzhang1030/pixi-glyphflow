@@ -1,6 +1,16 @@
 import { describe, expect, test } from "bun:test";
 
-import { GlyphAtlas, type GlyphCacheKey, type GlyphRaster } from "../src/advanced";
+import {
+  GlyphAtlas,
+  type ExternalColorGlyphRaster,
+  type GlyphCacheKey,
+  type GlyphRaster,
+} from "../src/advanced";
+import {
+  commitGlyphAtlasRenderFrame,
+  requestGlyphAtlasRenderToken,
+  stageGlyphAtlasRenderToken,
+} from "../src/atlas/GlyphAtlas";
 
 describe("GlyphAtlas", () => {
   test("publishes staged glyphs at frame boundaries and rejects stale generations", () => {
@@ -37,13 +47,165 @@ describe("GlyphAtlas", () => {
     const first = atlas.request("glyph");
     atlas.stage(first, raster(4, 4, 1));
     atlas.commitFrame();
-    const visible = atlas.get("glyph")!;
+    const visible = atlas.get("glyph");
     const second = atlas.request("glyph");
 
     atlas.stage(second, raster(4, 4, 2));
     expect(atlas.get("glyph")).toBe(visible);
     atlas.commitFrame();
     expect(atlas.get("glyph")).toMatchObject({ generation: 2 });
+
+    atlas.destroy();
+  });
+
+  test("preserves per-key generation numbering while metadata remains retained", () => {
+    const atlas = new GlyphAtlas({ requestGenerationCacheEntries: 4 });
+
+    expect(atlas.request("A").generation).toBe(1);
+    expect(atlas.request("B").generation).toBe(1);
+    expect(atlas.request("A").generation).toBe(2);
+
+    atlas.destroy();
+  });
+
+  test("drops a staged generation when a newer request supersedes it before commit", () => {
+    const atlas = new GlyphAtlas({ pageWidth: 8, pageHeight: 8, maxBytes: 64 });
+    const staged = atlas.request("glyph");
+    atlas.stage(staged, raster(2, 2, 1));
+    const current = atlas.request("glyph");
+
+    expect(atlas.commitFrame().entries).toHaveLength(0);
+    expect(atlas.stats).toMatchObject({ pendingEntries: 0, staleResults: 1 });
+    expect(atlas.stage(current, raster(2, 2, 2))).toBe(true);
+    atlas.commitFrame();
+    expect(atlas.get("glyph")).toMatchObject({ generation: current.generation });
+
+    atlas.destroy();
+  });
+
+  test("keeps the visible entry in LRU order after a staged replacement becomes stale", () => {
+    const atlas = new GlyphAtlas({ pageWidth: 8, pageHeight: 8, maxBytes: 64 });
+    stageAndCommit(atlas, "A", raster(4, 8, 1));
+    stageAndCommit(atlas, "B", raster(4, 8, 2));
+    atlas.get("A");
+    const staged = atlas.request("A");
+    atlas.stage(staged, raster(4, 8, 3));
+    atlas.request("A");
+    atlas.commitFrame();
+    stageAndCommit(atlas, "C", raster(4, 8, 4));
+    stageAndCommit(atlas, "D", raster(4, 8, 5));
+
+    expect(atlas.get("A")).toBeUndefined();
+    expect(atlas.get("C")).toBeDefined();
+    expect(atlas.get("D")).toBeDefined();
+
+    atlas.destroy();
+  });
+
+  test("keeps active, pending, and pinned generations outside the bounded tombstone cache", () => {
+    const atlas = new GlyphAtlas({
+      pageWidth: 8,
+      pageHeight: 8,
+      maxBytes: 64,
+      requestGenerationCacheEntries: 2,
+    });
+    const active = atlas.request("active");
+    atlas.stage(active, raster(2, 2, 1));
+    atlas.commitFrame();
+    const pending = atlas.request("pending");
+    atlas.stage(pending, raster(2, 2, 2));
+    const pinned = atlas.request("pinned");
+    atlas.pin("pinned");
+
+    for (let index = 0; index < 100; index += 1) atlas.request(`cold-${String(index)}`);
+
+    expect(atlas.stage(pinned, raster(2, 2, 3))).toBe(true);
+    atlas.commitFrame();
+    expect(atlas.get("active")).toMatchObject({ generation: active.generation });
+    expect(atlas.get("pending")).toMatchObject({ generation: pending.generation });
+    expect(atlas.get("pinned")).toMatchObject({ generation: pinned.generation });
+    expect(atlas.stats).toMatchObject({
+      requestGenerationEntries: 5,
+      requestGenerationProtectedEntries: 3,
+      requestGenerationTombstones: 2,
+      requestGenerationEvictions: 98,
+    });
+
+    atlas.destroy();
+  });
+
+  test("rejects a late request after its tombstone is evicted and the key is requested again", () => {
+    const atlas = new GlyphAtlas({
+      pageWidth: 8,
+      pageHeight: 8,
+      maxBytes: 64,
+      requestGenerationCacheEntries: 1,
+    });
+    const stale = atlas.request("glyph");
+    atlas.request("pressure");
+    const current = atlas.request("glyph");
+
+    expect(current.generation).toBeGreaterThan(stale.generation);
+    expect(atlas.stage(stale, raster(2, 2, 1))).toBe(false);
+    expect(atlas.stage(current, raster(2, 2, 2))).toBe(true);
+    atlas.commitFrame();
+    expect(atlas.get("glyph")).toMatchObject({ generation: current.generation });
+
+    atlas.destroy();
+  });
+
+  test("retains bounded generation metadata after one million distinct request keys", () => {
+    const cacheEntries = 1_024;
+    const atlas = new GlyphAtlas({ requestGenerationCacheEntries: cacheEntries });
+
+    for (let key = 0; key < 1_000_000; key += 1) atlas.request(key);
+
+    expect(atlas.stats).toMatchObject({
+      requests: 1_000_000,
+      requestGenerationEntries: cacheEntries,
+      requestGenerationProtectedEntries: 0,
+      requestGenerationTombstones: cacheEntries,
+      requestGenerationEvictions: 1_000_000 - cacheEntries,
+    });
+
+    atlas.destroy();
+  });
+
+  test("isolates destinations and discards a staged token after its render ticket advances", () => {
+    const atlas = new GlyphAtlas({ pageWidth: 8, pageHeight: 8, maxBytes: 64 });
+    const destination = {};
+    const otherDestination = {};
+    const token = requestGlyphAtlasRenderToken(
+      atlas,
+      "glyph",
+      {
+        lifecycleEpoch: 1,
+        commitTicket: 1,
+        fontRegistryRevision: 1,
+        destinationIdentity: destination,
+      },
+      1,
+    );
+    stageGlyphAtlasRenderToken(atlas, token, raster(4, 4, 1));
+
+    expect(
+      commitGlyphAtlasRenderFrame(atlas, {
+        lifecycleEpoch: 1,
+        commitTicket: 1,
+        fontRegistryRevision: 1,
+        destinationIdentity: otherDestination,
+      }).uploads,
+    ).toHaveLength(0);
+    expect(atlas.stats.pendingEntries).toBe(1);
+    expect(
+      commitGlyphAtlasRenderFrame(atlas, {
+        lifecycleEpoch: 1,
+        commitTicket: 2,
+        fontRegistryRevision: 1,
+        destinationIdentity: destination,
+      }).uploads,
+    ).toHaveLength(0);
+    expect(atlas.stats).toMatchObject({ pendingEntries: 0, staleResults: 1 });
 
     atlas.destroy();
   });
@@ -147,6 +309,93 @@ describe("GlyphAtlas", () => {
 
     atlas.destroy();
   });
+
+  test("consumes external raster ownership across validation exits and preserves primary errors", () => {
+    const invalidKeyAtlas = new GlyphAtlas({ pageWidth: 8, pageHeight: 8, maxBytes: 256 });
+    const invalidKey = externalRaster();
+    expect(() => invalidKeyAtlas.stage({ key: "", generation: 1 }, invalidKey.raster)).toThrow(
+      "Glyph key must be a non-empty string or a non-negative safe integer",
+    );
+    expect(invalidKey.releases()).toBe(1);
+    invalidKeyAtlas.destroy();
+
+    const invalidGenerationAtlas = new GlyphAtlas({ pageWidth: 8, pageHeight: 8, maxBytes: 256 });
+    const invalidGeneration = externalRaster();
+    expect(() =>
+      invalidGenerationAtlas.stage({ key: "glyph", generation: 0 }, invalidGeneration.raster),
+    ).toThrow("request.generation must be a positive safe integer");
+    expect(invalidGeneration.releases()).toBe(1);
+    invalidGenerationAtlas.destroy();
+
+    const validationAtlas = new GlyphAtlas({ pageWidth: 8, pageHeight: 8, maxBytes: 256 });
+    const releaseError = new Error("secondary release failure");
+    const invalidRaster = externalRaster(releaseError, { width: 0 });
+    expect(() =>
+      validationAtlas.stage(validationAtlas.request("glyph"), invalidRaster.raster),
+    ).toThrow("raster.width must be a positive safe integer");
+    expect(invalidRaster.releases()).toBe(1);
+    validationAtlas.destroy();
+
+    const destroyedAtlas = new GlyphAtlas({ pageWidth: 8, pageHeight: 8, maxBytes: 256 });
+    destroyedAtlas.destroy();
+    const destroyedRaster = externalRaster();
+    expect(() =>
+      destroyedAtlas.stage({ key: "glyph", generation: 1 }, destroyedRaster.raster),
+    ).toThrow("GlyphAtlas has been destroyed");
+    expect(destroyedRaster.releases()).toBe(1);
+  });
+
+  test("detaches a faulting pending replacement and releases both raster owners once", () => {
+    const atlas = new GlyphAtlas({ pageWidth: 8, pageHeight: 8, maxBytes: 256 });
+    const firstError = new Error("first pending release failed");
+    const first = externalRaster(firstError);
+    const replacement = externalRaster();
+    expect(atlas.stage(atlas.request("glyph"), first.raster)).toBe(true);
+
+    expect(() => atlas.stage(atlas.request("glyph"), replacement.raster)).toThrow(firstError);
+    expect(first.releases()).toBe(1);
+    expect(replacement.releases()).toBe(1);
+    expect(atlas.stats.pendingEntries).toBe(0);
+
+    const recovered = externalRaster();
+    expect(atlas.stage(atlas.request("glyph"), recovered.raster)).toBe(true);
+    atlas.destroy();
+    expect(first.releases()).toBe(1);
+    expect(replacement.releases()).toBe(1);
+    expect(recovered.releases()).toBe(1);
+  });
+
+  test("detaches a rejected pending raster before its release callback faults", () => {
+    const atlas = new GlyphAtlas({ pageWidth: 8, pageHeight: 8, maxBytes: 256 });
+    const releaseError = new Error("rejected pending release failed");
+    const pending = externalRaster(releaseError);
+    expect(atlas.stage(atlas.request("glyph"), pending.raster)).toBe(true);
+    atlas.request("glyph");
+
+    expect(() => atlas.commitFrame()).toThrow(releaseError);
+    expect(pending.releases()).toBe(1);
+    expect(atlas.stats.pendingEntries).toBe(0);
+    expect(atlas.commitFrame().entries).toEqual([]);
+    atlas.destroy();
+    expect(pending.releases()).toBe(1);
+  });
+
+  test("destroys every pending raster once and reports the first cleanup failure", () => {
+    const atlas = new GlyphAtlas({ pageWidth: 8, pageHeight: 8, maxBytes: 256 });
+    const firstError = new Error("first destroy release failed");
+    const first = externalRaster(firstError);
+    const second = externalRaster(new Error("second destroy release failed"));
+    expect(atlas.stage(atlas.request("first"), first.raster)).toBe(true);
+    expect(atlas.stage(atlas.request("second"), second.raster)).toBe(true);
+
+    expect(() => atlas.destroy()).toThrow(firstError);
+    expect(first.releases()).toBe(1);
+    expect(second.releases()).toBe(1);
+    expect(atlas.stats.pendingEntries).toBe(0);
+    expect(() => atlas.destroy()).not.toThrow();
+    expect(first.releases()).toBe(1);
+    expect(second.releases()).toBe(1);
+  });
 });
 
 function raster(width: number, height: number, value: number): GlyphRaster {
@@ -161,4 +410,32 @@ function raster(width: number, height: number, value: number): GlyphRaster {
 function stageAndCommit(atlas: GlyphAtlas, key: GlyphCacheKey, value: GlyphRaster): void {
   expect(atlas.stage(atlas.request(key), value)).toBe(true);
   atlas.commitFrame();
+}
+
+function externalRaster(
+  releaseError?: Error,
+  overrides: Partial<Pick<ExternalColorGlyphRaster, "width" | "height">> = {},
+): {
+  readonly raster: ExternalColorGlyphRaster;
+  readonly releases: () => number;
+} {
+  let releases = 0;
+  const raster: ExternalColorGlyphRaster = {
+    mode: "color",
+    width: overrides.width ?? 4,
+    height: overrides.height ?? 4,
+    source: {
+      texture: {} as GPUTexture,
+      format: "rgba8unorm",
+      width: 4,
+      height: 4,
+    },
+    sourceX: 0,
+    sourceY: 0,
+    release() {
+      releases += 1;
+      if (releaseError !== undefined) throw releaseError;
+    },
+  };
+  return { raster, releases: () => releases };
 }

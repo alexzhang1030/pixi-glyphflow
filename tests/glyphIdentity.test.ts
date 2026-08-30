@@ -81,4 +81,32 @@ describe("glyphIdentity", () => {
       resolveGlyphIdentity({ ...latin, fontWeight: "700" }).key,
     );
   });
+
+  test("keeps the same font-local glyph distinct across variable-font axes", () => {
+    const regular = resolveGlyphIdentity({ ...latin, variationKey: "wdth=100,wght=400" });
+    const condensed = resolveGlyphIdentity({ ...latin, variationKey: "wdth=75,wght=400" });
+
+    expect(typeof regular.key).toBe("string");
+    expect(regular.key).not.toBe(condensed.key);
+    expect(regular.key).toBe(
+      resolveGlyphIdentity({ ...latin, variationKey: "wdth=100,wght=400" }).key,
+    );
+  });
+
+  test("keeps embedded separators inside glyph text and variation identity unambiguous", () => {
+    const first = resolveGlyphIdentity({
+      ...latin,
+      glyphText: "x\u0000y",
+      variationKey: "z",
+    });
+    const second = resolveGlyphIdentity({
+      ...latin,
+      glyphText: "x",
+      variationKey: "y\u0000z",
+    });
+
+    expect(typeof first.key).toBe("string");
+    expect(typeof second.key).toBe("string");
+    expect(first.key).not.toBe(second.key);
+  });
 });

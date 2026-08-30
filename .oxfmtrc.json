@@ -6,5 +6,12 @@
   "trailingComma": "all",
   "sortImports": true,
   "jsdoc": true,
-  "ignorePatterns": [".agents/**", "AGENTS.md", "benchmarks/results/**", "dist/**", "bun.lock"]
+  "ignorePatterns": [
+    ".agents/**",
+    "AGENTS.md",
+    "benchmarks/results/**",
+    "benchmarks/shaping-simd/wasm/**/*.js",
+    "dist/**",
+    "bun.lock"
+  ]
 }
