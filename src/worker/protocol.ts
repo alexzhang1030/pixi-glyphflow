@@ -10,6 +10,8 @@ export interface SerializedPositionedRun {
   readonly direction: TextDirection;
   readonly glyphIds: Uint32Array;
   readonly clusters: Uint32Array;
+  readonly clusterEnds?: Uint32Array;
+  readonly variationKey?: string;
   readonly x: Float32Array;
   readonly y: Float32Array;
   readonly xAdvance: Float32Array;
@@ -20,6 +22,11 @@ export interface SerializedPositionedRun {
 }
 
 export type ShapeWorkerRequest =
+  | {
+      readonly type: "attach-shape-transport";
+      readonly requestId: number;
+      readonly buffer: SharedArrayBuffer;
+    }
   | {
       readonly type: "register-font";
       readonly requestId: number;
@@ -57,6 +64,10 @@ export type ShapeWorkerResponse =
       readonly sourceRevision: number;
       readonly fontRevision: number;
       readonly run: SerializedPositionedRun;
+    }
+  | {
+      readonly type: "shape-result-sab";
+      readonly requestId: number;
     }
   | {
       readonly type: "error";

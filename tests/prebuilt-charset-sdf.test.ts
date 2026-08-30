@@ -2,10 +2,10 @@ import { describe, expect, test } from "bun:test";
 import { readFile } from "node:fs/promises";
 import { resolve } from "node:path";
 
-import type { Renderer } from "pixi.js";
+import type { Renderer, TextStyleFontWeight } from "pixi.js";
 
 import { FontRegistry, TextLayer, type PositionedRun } from "../src";
-import { RasterGlyphProvider } from "../src/advanced";
+import { PrebuiltGlyphProvider, RasterGlyphProvider } from "../src/advanced";
 import { TINY_SDF_RADIUS } from "../src/atlas/tinySdf";
 import {
   charsetSdfPrebuilt,
@@ -50,6 +50,73 @@ describe("charsetSdfPrebuilt", () => {
       fieldRange: TINY_SDF_RADIUS / (48 / 14),
       rasterScale: 48 / 14,
     });
+  });
+
+  test("bakes NUL-bearing family and font-weight tuples independently", async () => {
+    let firstPaints = 0;
+    let secondPaints = 0;
+    const first = await charsetSdfPrebuilt({
+      family: "a\u0000b",
+      charset: "x",
+      fontSize: 49,
+      fontWeight: "48" as TextStyleFontWeight,
+      rasterize: () => {
+        firstPaints += 1;
+        return paint("x");
+      },
+    });
+    const second = await charsetSdfPrebuilt({
+      family: "a",
+      charset: "x",
+      fontSize: 49,
+      fontWeight: "b\u000048" as TextStyleFontWeight,
+      rasterize: () => {
+        secondPaints += 1;
+        return paint("x");
+      },
+    });
+
+    expect(firstPaints).toBe(1);
+    expect(secondPaints).toBe(1);
+    expect(second.pages[0]?.pixels).not.toBe(first.pages[0]?.pixels);
+  });
+
+  test("encodes public page tuples independently and merges delimiter-collision families", async () => {
+    let firstPaints = 0;
+    let secondPaints = 0;
+    const first = await charsetSdfPrebuilt({
+      family: "a",
+      charset: "x",
+      fontSize: 1e-7,
+      distanceFieldMinFontSize: 1e-7,
+      rasterize: () => {
+        firstPaints += 1;
+        return paint("x");
+      },
+    });
+    const second = await charsetSdfPrebuilt({
+      family: "a-1e",
+      charset: "x",
+      fontSize: 7,
+      distanceFieldMinFontSize: 7,
+      rasterize: () => {
+        secondPaints += 1;
+        return paint("x");
+      },
+    });
+
+    expect(firstPaints).toBe(1);
+    expect(secondPaints).toBe(1);
+    expect(first.pages[0]?.pixels).not.toBe(second.pages[0]?.pixels);
+    expect(first.pages[0]?.id).not.toBe(second.pages[0]?.id);
+    expect(first.pages[0]?.id).toStartWith("pixi-glyphflow/charset-sdf/v2:");
+
+    const merged = mergePrebuilt(first, second);
+    const provider = new PrebuiltGlyphProvider(merged);
+    expect(provider.lookup(first.glyphs[0]?.key ?? "")?.pixels).toBeDefined();
+    expect(provider.lookup(second.glyphs[0]?.key ?? "")?.pixels).toBeDefined();
+    expect(provider.stats.pages).toBe(2);
+    provider.destroy();
   });
 
   test("serves a HarfBuzz-style CJK miss as a crop", async () => {

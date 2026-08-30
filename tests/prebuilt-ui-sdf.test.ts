@@ -3,7 +3,7 @@ import { readFile } from "node:fs/promises";
 import { resolve } from "node:path";
 
 import { FontRegistry } from "../src";
-import { RasterGlyphProvider } from "../src/advanced";
+import { prebuiltGlyphKey, RasterGlyphProvider } from "../src/advanced";
 import { TINY_SDF_RADIUS } from "../src/atlas/tinySdf";
 import { UI_SDF_FAMILY, UI_SDF_FONT_SIZE, uiSdfPrebuilt } from "../src/prebuilt";
 import { LATIN_8X8, LATIN_8X8_COUNT } from "../src/prebuilt/latin8x8";
@@ -26,7 +26,18 @@ describe("pixi-glyphflow/prebuilt", () => {
     expect(first.pages[0]).toMatchObject({ mode: "sdf", width: 512, height: 192 });
 
     const cell = 16 + TINY_SDF_RADIUS * 2;
-    const letterA = first.glyphs.find((glyph) => glyph.key.split("\0")[2] === "A");
+    const letterA = first.glyphs.find(
+      (glyph) =>
+        glyph.key ===
+        prebuiltGlyphKey({
+          family: "HUD",
+          glyphId: 0,
+          glyphText: "A",
+          fontSize: 16,
+          fontWeight: "normal",
+          mode: "sdf",
+        }),
+    );
     expect(letterA).toMatchObject({
       width: cell,
       height: cell,

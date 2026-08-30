@@ -45,6 +45,14 @@ export class DirtyJournal {
     });
   }
 
+  /** Read one pending slot mask without publishing the journal. @internal */
+  maskAt(slot: number): TextDirtyMask {
+    if (!Number.isSafeInteger(slot) || slot < 0) {
+      throw new TypeError("Dirty slot must be a non-negative safe integer");
+    }
+    return this.#masks[slot] ?? TextDirty.None;
+  }
+
   reserve(requiredCapacity: number): void {
     if (!Number.isSafeInteger(requiredCapacity) || requiredCapacity < 0) {
       throw new TypeError("requiredCapacity must be a non-negative safe integer");

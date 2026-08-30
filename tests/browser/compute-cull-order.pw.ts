@@ -9,8 +9,8 @@ test("keeps WebGPU compute cull after instance ranges leave draw order", async (
   const messages: string[] = [];
   page.on("console", (message) => messages.push(`${message.type()}: ${message.text()}`));
   page.on("pageerror", (error) => messages.push(`pageerror: ${error.message}`));
-  const webgpuAvailable = await hasWebGpuAdapter(page);
   const webgl = await loadFixture(page, "webgl");
+  const webgpuAvailable = await hasWebGpuAdapter(page);
   const webgpu = await loadFixture(page, "webgpu");
   await testInfo.attach("browser-console", {
     body: messages.join("\n"),

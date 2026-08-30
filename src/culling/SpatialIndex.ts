@@ -15,7 +15,13 @@ const COORD_BIAS = 2 ** 24;
 const COORD_MIN = -COORD_BIAS;
 const COORD_MAX = COORD_BIAS - 1;
 const LINEAR_CELL_FRACTION = 8;
-const LINEAR_RESULT_FRACTION = 4;
+const BITSET_RESULT_FRACTION = 4;
+const LINEAR_RESULT_NUMERATOR = 7;
+const LINEAR_RESULT_DENOMINATOR = 8;
+const BITS_PER_WORD = 32;
+const DEFERRED_JOURNAL_INITIAL_CAPACITY = 16;
+
+type QueryRoute = "grid-sort" | "grid-bitset" | "linear";
 
 export class SpatialIndex {
   readonly #maxCapacity: number;
@@ -35,6 +41,11 @@ export class SpatialIndex {
   #visible: Uint8Array;
   #cellKey: Float64Array;
   #cellIndex: Int32Array;
+  #queryBits: Uint32Array;
+  #deferredRehashBits: Uint32Array;
+  #deferredRehashSlots: Uint32Array;
+  #deferredRehashLength = 0;
+  #deferredRehashCount = 0;
   readonly #cells = new Map<number, number[]>();
   readonly #spill: number[] = [];
   #clock = 0;
@@ -65,10 +76,23 @@ export class SpatialIndex {
     this.#visible = new Uint8Array(this.#capacity);
     this.#cellKey = new Float64Array(this.#capacity);
     this.#cellIndex = new Int32Array(this.#capacity).fill(-1);
+    this.#queryBits = new Uint32Array(wordsForBits(this.#capacity));
+    this.#deferredRehashBits = new Uint32Array(wordsForBits(this.#capacity));
+    this.#deferredRehashSlots = new Uint32Array(
+      Math.min(this.#capacity, DEFERRED_JOURNAL_INITIAL_CAPACITY),
+    );
   }
 
   get capacity(): number {
     return this.#capacity;
+  }
+
+  get deferredRehashCount(): number {
+    return this.#deferredRehashCount;
+  }
+
+  get deferredRehashAllocatedBytes(): number {
+    return this.#deferredRehashBits.byteLength + this.#deferredRehashSlots.byteLength;
   }
 
   reserve(requiredCapacity: number): void {
@@ -77,6 +101,22 @@ export class SpatialIndex {
       throw new TypeError("requiredCapacity must be a non-negative safe integer");
     }
     this.#ensureCapacity(requiredCapacity);
+  }
+
+  /** Preallocate the typed journal for one deferred rehash wave. @internal */
+  reserveDeferredRehash(additional: number): void {
+    this.#assertActive();
+    if (!Number.isSafeInteger(additional) || additional < 0) {
+      throw new TypeError("additional must be a non-negative safe integer");
+    }
+    if (additional === 0) return;
+    if (this.#deferredRehashCount < this.#deferredRehashLength) {
+      this.#compactDeferredJournal();
+    }
+    const available = this.#capacity - this.#deferredRehashCount;
+    this.#ensureDeferredJournalCapacity(
+      this.#deferredRehashLength + Math.min(additional, available),
+    );
   }
 
   set(slot: number, bounds: BoundsData, zIndex = 0, visible = true): void {
@@ -101,6 +141,7 @@ export class SpatialIndex {
       this.#order[slot] = this.#clock;
       this.#highWater = Math.max(this.#highWater, slot + 1);
     }
+    this.#cancelDeferredRehash(slot);
     this.#rehash(slot);
   }
 
@@ -112,6 +153,7 @@ export class SpatialIndex {
     this.#writeWorld(slot, bounds.x, bounds.y, bounds.width, bounds.height);
     this.#zIndex[slot] = zIndex;
     this.#visible[slot] = Number(visible);
+    this.#cancelDeferredRehash(slot);
     this.#rehash(slot);
   }
 
@@ -183,6 +225,7 @@ export class SpatialIndex {
       this.#localY[slot] = localY;
       this.#width[slot] = width;
       this.#height[slot] = height;
+      this.#cancelDeferredRehash(slot);
       this.#rehash(slot);
       placed += 1;
     }
@@ -214,8 +257,76 @@ export class SpatialIndex {
   rehashCurrent(slot: number): boolean {
     this.#assertActive();
     if (slot >= this.#highWater || this.#occupied[slot] !== 1) return false;
+    this.#cancelDeferredRehash(slot);
     this.#rehashPreservingLevel(slot);
     return true;
+  }
+
+  /** Queue one occupied slot for a later rebucket. Returns true only for a new entry. @internal */
+  deferRehashCurrent(slot: number): boolean {
+    this.#assertActive();
+    if (slot >= this.#highWater || this.#occupied[slot] !== 1) return false;
+    if (this.#hasDeferredRehash(slot)) return false;
+    this.#ensureDeferredJournalCapacity(this.#deferredRehashLength + 1);
+    this.#setDeferredRehash(slot);
+    this.#deferredRehashSlots[this.#deferredRehashLength] = slot;
+    this.#deferredRehashLength += 1;
+    this.#deferredRehashCount += 1;
+    return true;
+  }
+
+  /** Queue one packed slot wave for a later rebucket through a single validated pass. @internal */
+  deferRehashMany(slots: Uint32Array, count: number): number {
+    this.#assertActive();
+    if (!(slots instanceof Uint32Array)) {
+      throw new TypeError("Spatial deferred slot column must be Uint32Array");
+    }
+    if (!Number.isSafeInteger(count) || count < 0) {
+      throw new TypeError("Spatial deferred slot count must be a non-negative safe integer");
+    }
+    if (slots.length < count) {
+      throw new TypeError("Spatial deferred slot list is shorter than count");
+    }
+    this.reserveDeferredRehash(count);
+    const bits = this.#deferredRehashBits;
+    const journal = this.#deferredRehashSlots;
+    let length = this.#deferredRehashLength;
+    let deferred = 0;
+    for (let index = 0; index < count; index += 1) {
+      const slot = slots[index] ?? 0;
+      if (slot >= this.#highWater || this.#occupied[slot] !== 1) continue;
+      const word = slot >>> 5;
+      const mask = (1 << (slot & 31)) >>> 0;
+      const flags = bits[word] ?? 0;
+      if ((flags & mask) >>> 0 !== 0) continue;
+      bits[word] = (flags | mask) >>> 0;
+      journal[length] = slot;
+      length += 1;
+      deferred += 1;
+    }
+    this.#deferredRehashLength = length;
+    this.#deferredRehashCount += deferred;
+    return deferred;
+  }
+
+  /** Rebucket each distinct queued slot once and clear the journal. @internal */
+  flushDeferredRehash(): number {
+    this.#assertActive();
+    if (this.#deferredRehashCount === 0) {
+      this.#deferredRehashLength = 0;
+      return 0;
+    }
+    let flushed = 0;
+    for (let index = 0; index < this.#deferredRehashLength; index += 1) {
+      const slot = this.#deferredRehashSlots[index] ?? 0;
+      if (!this.#cancelDeferredRehash(slot)) continue;
+      if (slot >= this.#highWater || this.#occupied[slot] !== 1) continue;
+      this.#rehashPreservingLevel(slot);
+      flushed += 1;
+    }
+    this.#deferredRehashLength = 0;
+    this.#deferredRehashCount = 0;
+    return flushed;
   }
 
   /**
@@ -271,6 +382,7 @@ export class SpatialIndex {
     this.#assertActive();
     assertSlot(slot);
     if (slot >= this.#highWater || this.#occupied[slot] !== 1) return false;
+    this.#cancelDeferredRehash(slot);
     this.#unhash(slot);
     this.#occupied[slot] = 0;
     this.#visible[slot] = 0;
@@ -284,8 +396,8 @@ export class SpatialIndex {
     assertSlot(slot);
     if (slot >= this.#highWater || this.#occupied[slot] !== 1) return undefined;
     const target = output ?? { x: 0, y: 0, width: 0, height: 0 };
-    const minX = (this.#originX[slot] ?? 0) + (this.#localX[slot] ?? 0);
-    const minY = (this.#originY[slot] ?? 0) + (this.#localY[slot] ?? 0);
+    const minX = addF32(this.#originX[slot] ?? 0, this.#localX[slot] ?? 0);
+    const minY = addF32(this.#originY[slot] ?? 0, this.#localY[slot] ?? 0);
     target.x = minX;
     target.y = minY;
     target.width = this.#width[slot] ?? 0;
@@ -314,6 +426,14 @@ export class SpatialIndex {
     assertSlot(slot);
     if (slot >= this.#highWater || this.#occupied[slot] !== 1) return undefined;
     return this.#order[slot];
+  }
+
+  /** Return the draw z-index used to restore collision-selected output order. @internal */
+  zIndexOf(slot: number): number | undefined {
+    this.#assertActive();
+    assertSlot(slot);
+    if (slot >= this.#highWater || this.#occupied[slot] !== 1) return undefined;
+    return this.#zIndex[slot];
   }
 
   query(bounds: BoundsData, output: Uint32Array, padding = 0): number {
@@ -357,22 +477,28 @@ export class SpatialIndex {
     return count;
   }
 
-  hitTest(point: PointLike): number | undefined {
+  hitTest(point: PointLike, allowed?: Uint8Array): number | undefined {
     this.#assertActive();
     assertPoint(point);
+    if (allowed !== undefined && !(allowed instanceof Uint8Array)) {
+      throw new TypeError("Spatial hit-test membership must be a Uint8Array");
+    }
     let hit: number | undefined;
     let topZ = Number.NEGATIVE_INFINITY;
     let topOrder = 0;
     const visit = (slot: number): void => {
-      if (this.#occupied[slot] !== 1 || this.#visible[slot] !== 1) return;
-      const minX = (this.#originX[slot] ?? 0) + (this.#localX[slot] ?? 0);
-      const minY = (this.#originY[slot] ?? 0) + (this.#localY[slot] ?? 0);
       if (
-        point.x < minX ||
-        point.x > minX + (this.#width[slot] ?? 0) ||
-        point.y < minY ||
-        point.y > minY + (this.#height[slot] ?? 0)
+        this.#occupied[slot] !== 1 ||
+        this.#visible[slot] !== 1 ||
+        (allowed !== undefined && allowed[slot] !== 1)
       ) {
+        return;
+      }
+      const minX = addF32(this.#originX[slot] ?? 0, this.#localX[slot] ?? 0);
+      const minY = addF32(this.#originY[slot] ?? 0, this.#localY[slot] ?? 0);
+      const maxX = addF32(minX, this.#width[slot] ?? 0);
+      const maxY = addF32(minY, this.#height[slot] ?? 0);
+      if (point.x < minX || point.x > maxX || point.y < minY || point.y > maxY) {
         return;
       }
       const zIndex = this.#zIndex[slot] ?? 0;
@@ -383,7 +509,7 @@ export class SpatialIndex {
         topOrder = order;
       }
     };
-    if (this.#shouldScanLinear(point.x, point.y, point.x, point.y)) {
+    if (this.#selectQueryRoute(point.x, point.y, point.x, point.y) === "linear") {
       for (let slot = 0; slot < this.#highWater; slot += 1) visit(slot);
     } else {
       this.#visitOverlapping(point.x, point.y, point.x, point.y, visit);
@@ -399,6 +525,8 @@ export class SpatialIndex {
     this.#visible.fill(0, 0, this.#highWater);
     this.#cellKey.fill(0, 0, this.#highWater);
     this.#cellIndex.fill(-1, 0, this.#highWater);
+    this.#queryBits.fill(0);
+    this.#clearDeferredRehashes();
     this.#cells.clear();
     this.#spill.length = 0;
     this.#entries = 0;
@@ -420,7 +548,10 @@ export class SpatialIndex {
         this.#occupied.byteLength +
         this.#visible.byteLength +
         this.#cellKey.byteLength +
-        this.#cellIndex.byteLength,
+        this.#cellIndex.byteLength +
+        this.#queryBits.byteLength +
+        this.#deferredRehashBits.byteLength +
+        this.#deferredRehashSlots.byteLength,
       queries: this.#queries,
       testedEntries: this.#testedEntries,
       returnedEntries: this.#returnedEntries,
@@ -443,6 +574,11 @@ export class SpatialIndex {
     this.#visible = new Uint8Array();
     this.#cellKey = new Float64Array();
     this.#cellIndex = new Int32Array();
+    this.#queryBits = new Uint32Array();
+    this.#deferredRehashBits = new Uint32Array();
+    this.#deferredRehashSlots = new Uint32Array();
+    this.#deferredRehashLength = 0;
+    this.#deferredRehashCount = 0;
     this.#cells.clear();
     this.#spill.length = 0;
     this.#capacity = 0;
@@ -477,6 +613,13 @@ export class SpatialIndex {
     this.#visible = grow(this.#visible, capacity);
     this.#cellKey = grow(this.#cellKey, capacity);
     this.#cellIndex = grow(this.#cellIndex, capacity);
+    const bitWords = wordsForBits(capacity);
+    if (bitWords > this.#queryBits.length) {
+      this.#queryBits = grow(this.#queryBits, bitWords);
+    }
+    if (bitWords > this.#deferredRehashBits.length) {
+      this.#deferredRehashBits = grow(this.#deferredRehashBits, bitWords);
+    }
     this.#capacity = capacity;
   }
 
@@ -487,19 +630,51 @@ export class SpatialIndex {
     maximumY: number,
     output: Uint32Array,
   ): number {
+    const route = this.#selectQueryRoute(minimumX, minimumY, maximumX, maximumY);
+    if (route === "linear") {
+      let count = 0;
+      let tested = 0;
+      const occupied = this.#occupied;
+      const visible = this.#visible;
+      const originX = this.#originX;
+      const originY = this.#originY;
+      const localX = this.#localX;
+      const localY = this.#localY;
+      const width = this.#width;
+      const height = this.#height;
+      for (let slot = 0; slot < this.#highWater; slot += 1) {
+        if (occupied[slot] !== 1 || visible[slot] !== 1) continue;
+        tested += 1;
+        const minX = addF32(originX[slot] ?? 0, localX[slot] ?? 0);
+        const minY = addF32(originY[slot] ?? 0, localY[slot] ?? 0);
+        const maxX = addF32(minX, width[slot] ?? 0);
+        const maxY = addF32(minY, height[slot] ?? 0);
+        if (maxX < minimumX || maxY < minimumY || minX > maximumX || minY > maximumY) {
+          continue;
+        }
+        if (count >= output.length) {
+          throw new RangeError("Spatial query output capacity is smaller than the result set");
+        }
+        output[count] = slot;
+        count += 1;
+      }
+      this.#testedEntries += tested;
+      return count;
+    }
+    if (route === "grid-bitset") {
+      return this.#queryGridBitset(minimumX, minimumY, maximumX, maximumY, output);
+    }
+
     let count = 0;
     let tested = 0;
     const visit = (slot: number): void => {
       if (this.#occupied[slot] !== 1 || this.#visible[slot] !== 1) return;
       tested += 1;
-      const minX = (this.#originX[slot] ?? 0) + (this.#localX[slot] ?? 0);
-      const minY = (this.#originY[slot] ?? 0) + (this.#localY[slot] ?? 0);
-      if (
-        minX + (this.#width[slot] ?? 0) < minimumX ||
-        minY + (this.#height[slot] ?? 0) < minimumY ||
-        minX > maximumX ||
-        minY > maximumY
-      ) {
+      const minX = addF32(this.#originX[slot] ?? 0, this.#localX[slot] ?? 0);
+      const minY = addF32(this.#originY[slot] ?? 0, this.#localY[slot] ?? 0);
+      const maxX = addF32(minX, this.#width[slot] ?? 0);
+      const maxY = addF32(minY, this.#height[slot] ?? 0);
+      if (maxX < minimumX || maxY < minimumY || minX > maximumX || minY > maximumY) {
         return;
       }
       if (count >= output.length) {
@@ -508,25 +683,123 @@ export class SpatialIndex {
       output[count] = slot;
       count += 1;
     };
-    if (this.#shouldScanLinear(minimumX, minimumY, maximumX, maximumY)) {
-      for (let slot = 0; slot < this.#highWater; slot += 1) visit(slot);
-    } else {
-      this.#visitOverlapping(minimumX, minimumY, maximumX, maximumY, visit);
-      if (count > 1) {
-        output.subarray(0, count).sort();
-      }
+    this.#visitOverlapping(minimumX, minimumY, maximumX, maximumY, visit);
+    if (count > 1) {
+      output.subarray(0, count).sort();
     }
     this.#testedEntries += tested;
     return count;
   }
 
-  #shouldScanLinear(
+  #queryGridBitset(
     minimumX: number,
     minimumY: number,
     maximumX: number,
     maximumY: number,
-  ): boolean {
-    if (this.#entries <= 64) return true;
+    output: Uint32Array,
+  ): number {
+    let count = 0;
+    let tested = 0;
+    const queryWordCount = wordsForBits(this.#highWater);
+    const occupied = this.#occupied;
+    const visible = this.#visible;
+    const originX = this.#originX;
+    const originY = this.#originY;
+    const localX = this.#localX;
+    const localY = this.#localY;
+    const width = this.#width;
+    const height = this.#height;
+    const queryBits = this.#queryBits;
+
+    for (let level = 0; level < CELL_SIZES.length; level += 1) {
+      const size = CELL_SIZES[level] ?? 64;
+      const expand = size * 0.5;
+      const minCX = Math.floor((minimumX - expand) / size);
+      const maxCX = Math.floor((maximumX + expand) / size);
+      const minCY = Math.floor((minimumY - expand) / size);
+      const maxCY = Math.floor((maximumY + expand) / size);
+      for (let cy = minCY; cy <= maxCY; cy += 1) {
+        for (let cx = minCX; cx <= maxCX; cx += 1) {
+          const packed = packCell(level, cx, cy);
+          if (packed === undefined) continue;
+          const bucket = this.#cells.get(packed);
+          if (bucket === undefined) continue;
+          const contained =
+            minimumX <= cx * size &&
+            maximumX >= (cx + 1) * size &&
+            minimumY <= cy * size &&
+            maximumY >= (cy + 1) * size;
+          for (let index = 0; index < bucket.length; index += 1) {
+            const slot = bucket[index] ?? 0;
+            if (occupied[slot] !== 1 || visible[slot] !== 1) continue;
+            tested += 1;
+            if (!contained) {
+              const minX = addF32(originX[slot] ?? 0, localX[slot] ?? 0);
+              const minY = addF32(originY[slot] ?? 0, localY[slot] ?? 0);
+              const maxX = addF32(minX, width[slot] ?? 0);
+              const maxY = addF32(minY, height[slot] ?? 0);
+              if (maxX < minimumX || maxY < minimumY || minX > maximumX || minY > maximumY) {
+                continue;
+              }
+            }
+            const word = slot >>> 5;
+            queryBits[word] = ((queryBits[word] ?? 0) | (1 << (slot & 31))) >>> 0;
+            count += 1;
+          }
+        }
+      }
+    }
+    for (let index = 0; index < this.#spill.length; index += 1) {
+      const slot = this.#spill[index] ?? 0;
+      if (occupied[slot] !== 1 || visible[slot] !== 1) continue;
+      tested += 1;
+      const minX = addF32(originX[slot] ?? 0, localX[slot] ?? 0);
+      const minY = addF32(originY[slot] ?? 0, localY[slot] ?? 0);
+      const maxX = addF32(minX, width[slot] ?? 0);
+      const maxY = addF32(minY, height[slot] ?? 0);
+      if (maxX < minimumX || maxY < minimumY || minX > maximumX || minY > maximumY) continue;
+      const word = slot >>> 5;
+      queryBits[word] = ((queryBits[word] ?? 0) | (1 << (slot & 31))) >>> 0;
+      count += 1;
+    }
+
+    if (count > output.length) {
+      queryBits.fill(0, 0, queryWordCount);
+      throw new RangeError("Spatial query output capacity is smaller than the result set");
+    }
+    let position = 0;
+    try {
+      for (let word = 0; word < queryWordCount; word += 1) {
+        let flags = queryBits[word] ?? 0;
+        const baseSlot = word * BITS_PER_WORD;
+        if (flags === 0xffff_ffff) {
+          for (let bit = 0; bit < BITS_PER_WORD; bit += 1) {
+            output[position] = baseSlot + bit;
+            position += 1;
+          }
+          continue;
+        }
+        while (flags !== 0) {
+          const leastBit = flags & -flags;
+          output[position] = baseSlot + (BITS_PER_WORD - 1 - Math.clz32(leastBit));
+          position += 1;
+          flags = (flags & (flags - 1)) >>> 0;
+        }
+      }
+    } finally {
+      queryBits.fill(0, 0, queryWordCount);
+    }
+    this.#testedEntries += tested;
+    return count;
+  }
+
+  #selectQueryRoute(
+    minimumX: number,
+    minimumY: number,
+    maximumX: number,
+    maximumY: number,
+  ): QueryRoute {
+    if (this.#entries <= 64) return "linear";
     let cells = this.#spill.length > 0 ? 1 : 0;
     for (let level = 0; level < CELL_SIZES.length; level += 1) {
       const size = CELL_SIZES[level] ?? 64;
@@ -537,13 +810,11 @@ export class SpatialIndex {
       const maxCY = Math.floor((maximumY + expand) / size);
       cells += (maxCX - minCX + 1) * (maxCY - minCY + 1);
     }
-    if (cells * LINEAR_CELL_FRACTION > this.#entries) return true;
-    // Grid output restores insertion order with an O(K log K) sort, so dense results
-    // (mid-zoom viewports) cost more than the ascending dense scan. Sum candidate
-    // bucket sizes without visiting entries; the dense case exits after a few buckets.
-    const limit = this.#entries / LINEAR_RESULT_FRACTION;
+    if (cells * LINEAR_CELL_FRACTION > this.#entries) return "linear";
+    const bitsetLimit = this.#entries / BITSET_RESULT_FRACTION;
+    const linearLimit = (this.#entries * LINEAR_RESULT_NUMERATOR) / LINEAR_RESULT_DENOMINATOR;
     let candidates = this.#spill.length;
-    if (candidates > limit) return true;
+    if (candidates >= linearLimit) return "linear";
     for (let level = 0; level < CELL_SIZES.length; level += 1) {
       const size = CELL_SIZES[level] ?? 64;
       const expand = size * 0.5;
@@ -558,11 +829,11 @@ export class SpatialIndex {
           const bucket = this.#cells.get(packed);
           if (bucket === undefined) continue;
           candidates += bucket.length;
-          if (candidates > limit) return true;
+          if (candidates >= linearLimit) return "linear";
         }
       }
     }
-    return false;
+    return candidates > bitsetLimit ? "grid-bitset" : "grid-sort";
   }
 
   #visitOverlapping(
@@ -600,8 +871,65 @@ export class SpatialIndex {
       this.#originX[slot] = (this.#originX[slot] ?? 0) + deltaX;
       this.#originY[slot] = (this.#originY[slot] ?? 0) + deltaY;
     }
+    this.#cancelDeferredRehash(slot);
     this.#rehashPreservingLevel(slot);
     return true;
+  }
+
+  #hasDeferredRehash(slot: number): boolean {
+    const word = slot >>> 5;
+    const mask = (1 << (slot & 31)) >>> 0;
+    return ((this.#deferredRehashBits[word] ?? 0) & mask) >>> 0 !== 0;
+  }
+
+  #setDeferredRehash(slot: number): void {
+    const word = slot >>> 5;
+    const mask = (1 << (slot & 31)) >>> 0;
+    this.#deferredRehashBits[word] = ((this.#deferredRehashBits[word] ?? 0) | mask) >>> 0;
+  }
+
+  #cancelDeferredRehash(slot: number): boolean {
+    if (!this.#hasDeferredRehash(slot)) return false;
+    const word = slot >>> 5;
+    const mask = (1 << (slot & 31)) >>> 0;
+    this.#deferredRehashBits[word] = ((this.#deferredRehashBits[word] ?? 0) & (~mask >>> 0)) >>> 0;
+    this.#deferredRehashCount -= 1;
+    return true;
+  }
+
+  #clearDeferredRehashes(): void {
+    this.#deferredRehashBits.fill(0);
+    this.#deferredRehashLength = 0;
+    this.#deferredRehashCount = 0;
+  }
+
+  #ensureDeferredJournalCapacity(required: number): void {
+    if (required <= this.#deferredRehashSlots.length) return;
+    if (this.#deferredRehashCount < this.#deferredRehashLength) {
+      this.#compactDeferredJournal();
+      required = this.#deferredRehashLength + 1;
+      if (required <= this.#deferredRehashSlots.length) return;
+    }
+    let capacity = Math.max(DEFERRED_JOURNAL_INITIAL_CAPACITY, this.#deferredRehashSlots.length);
+    while (capacity < required) capacity = Math.min(this.#capacity, capacity * 2);
+    this.#deferredRehashSlots = grow(this.#deferredRehashSlots, capacity);
+  }
+
+  #compactDeferredJournal(): void {
+    let next = 0;
+    // Cancel-and-requeue can leave an older journal position for the same slot. Clearing each live
+    // bit while compacting retains its first position once; the second pass restores membership.
+    for (let index = 0; index < this.#deferredRehashLength; index += 1) {
+      const slot = this.#deferredRehashSlots[index] ?? 0;
+      if (!this.#cancelDeferredRehash(slot)) continue;
+      this.#deferredRehashSlots[next] = slot;
+      next += 1;
+    }
+    this.#deferredRehashLength = next;
+    this.#deferredRehashCount = next;
+    for (let index = 0; index < next; index += 1) {
+      this.#setDeferredRehash(this.#deferredRehashSlots[index] ?? 0);
+    }
   }
 
   #rehash(slot: number): void {
@@ -628,8 +956,8 @@ export class SpatialIndex {
       return;
     }
     const cell = CELL_SIZES[level] ?? 64;
-    const minX = (this.#originX[slot] ?? 0) + (this.#localX[slot] ?? 0);
-    const minY = (this.#originY[slot] ?? 0) + (this.#localY[slot] ?? 0);
+    const minX = addF32(this.#originX[slot] ?? 0, this.#localX[slot] ?? 0);
+    const minY = addF32(this.#originY[slot] ?? 0, this.#localY[slot] ?? 0);
     const centerX = minX + (this.#width[slot] ?? 0) * 0.5;
     const centerY = minY + (this.#height[slot] ?? 0) * 0.5;
     const next = packCell(level, Math.floor(centerX / cell), Math.floor(centerY / cell)) ?? 0;
@@ -692,8 +1020,8 @@ export class SpatialIndex {
     }
     if (level < 0) return 0;
     const cell = CELL_SIZES[level] ?? 64;
-    const minX = (this.#originX[slot] ?? 0) + (this.#localX[slot] ?? 0);
-    const minY = (this.#originY[slot] ?? 0) + (this.#localY[slot] ?? 0);
+    const minX = addF32(this.#originX[slot] ?? 0, this.#localX[slot] ?? 0);
+    const minY = addF32(this.#originY[slot] ?? 0, this.#localY[slot] ?? 0);
     const centerX = minX + (this.#width[slot] ?? 0) * 0.5;
     const centerY = minY + (this.#height[slot] ?? 0) * 0.5;
     const cx = Math.floor(centerX / cell);
@@ -773,6 +1101,10 @@ function assertCapacity(name: string, value: number): void {
   }
 }
 
+function addF32(left: number, right: number): number {
+  return Math.fround(Math.fround(left) + Math.fround(right));
+}
+
 function packCell(level: number, cx: number, cy: number): number | undefined {
   if (cx < COORD_MIN || cx > COORD_MAX || cy < COORD_MIN || cy > COORD_MAX) {
     return undefined;
@@ -784,4 +1116,8 @@ function nextPowerOfTwo(value: number): number {
   let capacity = 1;
   while (capacity < value) capacity *= 2;
   return capacity;
+}
+
+function wordsForBits(bits: number): number {
+  return Math.ceil(bits / BITS_PER_WORD);
 }

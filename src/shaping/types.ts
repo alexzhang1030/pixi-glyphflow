@@ -18,16 +18,22 @@ export interface HarfBuzzShapeInput {
 export interface HarfBuzzShaperOptions {
   readonly loadRuntime?: HarfBuzzRuntimeLoader;
   readonly cacheSize?: number;
+  readonly fontResourceCacheEntries?: number;
+  readonly fontResourceCacheBytes?: number;
 }
 
 export interface HarfBuzzShaperStats {
   readonly runtimeLoads: number;
   readonly fontObjects: number;
+  readonly fontResourceEntries: number;
+  readonly fontResourceBytes: number;
+  readonly fontResourceEvictions: number;
   readonly cacheEntries: number;
   readonly hits: number;
   readonly misses: number;
   readonly shapes: number;
   readonly pooledBuffers: number;
+  readonly cacheEvictions: number;
 }
 
 export type HarfBuzzPositionedRun = PositionedRun & {

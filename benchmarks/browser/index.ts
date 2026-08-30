@@ -9,6 +9,8 @@ import {
 } from "../schema";
 import { isBenchmarkWorkload } from "../workloads";
 import { runStaticHudFixture } from "./fixtures";
+import { captureBrowserGpuAdapterIdentity } from "./gpu-identity";
+import { requestBenchmarkWebGpu } from "./timing";
 import { runGlyphflowWorkload } from "./workloads";
 
 declare global {
@@ -28,6 +30,10 @@ void run().catch((error: unknown) => {
 
 async function run(): Promise<void> {
   const configuration = readConfiguration(new URL(window.location.href).searchParams);
+  const gpu =
+    configuration.renderer === "webgpu"
+      ? await requestBenchmarkWebGpu({ powerPreference: "high-performance" })
+      : undefined;
   const app = new Application();
   await app.init({
     width: configuration.width,
@@ -37,6 +43,7 @@ async function run(): Promise<void> {
     preference: configuration.renderer,
     preferWebGLVersion: 2,
     preserveDrawingBuffer: true,
+    ...(gpu === undefined ? {} : { gpu }),
   });
   app.stop();
   document.body.append(app.canvas);
@@ -48,6 +55,7 @@ async function run(): Promise<void> {
         ? await runGlyphflowWorkload(app, configuration)
         : unsupportedFixture(configuration.fixture, configuration.workload);
   const heapBytes = readHeapBytes();
+  const gpuAdapter = gpu === undefined ? undefined : captureBrowserGpuAdapterIdentity(gpu);
   window.__glyphflowBenchmark = {
     done: true,
     result: Object.freeze({
@@ -55,6 +63,7 @@ async function run(): Promise<void> {
       kind: "pixi-glyphflow-browser-sample",
       capturedAt: new Date().toISOString(),
       userAgent: navigator.userAgent,
+      ...(gpuAdapter === undefined ? {} : { gpuAdapter }),
       configuration,
       timings: fixtureResult.timings,
       counters: Object.freeze({
@@ -73,11 +82,18 @@ function readConfiguration(parameters: URLSearchParams): Readonly<BrowserBenchma
   if (!isBenchmarkWorkload(workload)) {
     throw new TypeError(`Unknown benchmark workload: ${workload}`);
   }
+  const renderer = parameters.get("renderer") === "webgpu" ? "webgpu" : "webgl";
+  if (
+    (workload === "gpu-scene-heterogeneous-64" || workload === "gpu-scene-resident") &&
+    renderer !== "webgpu"
+  ) {
+    throw new TypeError(`${workload} requires the WebGPU renderer`);
+  }
 
   return Object.freeze({
     fixture,
     workload,
-    renderer: parameters.get("renderer") === "webgpu" ? "webgpu" : "webgl",
+    renderer,
     labelCount: readPositiveInteger(parameters, "labels", 1_000),
     mutationCount: readPositiveInteger(parameters, "mutations", 100_000),
     warmupFrames: readNonNegativeInteger(parameters, "warmup", 10),

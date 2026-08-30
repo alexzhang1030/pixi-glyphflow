@@ -1,9 +1,13 @@
+import { BoundedCache } from "../cache";
 import { Packer, type PackedRectangle } from "./Packer";
 import {
   atlasArrayKind,
   GLYPH_ATLAS_ARRAY_LAYERS,
+  sameRenderScope,
   type AtlasCommit,
   type AtlasEntry,
+  type AtlasExternalUpload,
+  type AtlasGlyphRaster,
   type AtlasPageInfo,
   type AtlasUpload,
   type GlyphAtlasOptions,
@@ -12,6 +16,8 @@ import {
   type GlyphMode,
   type GlyphRaster,
   type GlyphRequest,
+  type RenderToken,
+  type RenderTokenScope,
 } from "./types";
 
 interface AtlasPage {
@@ -24,10 +30,20 @@ interface AtlasPage {
   readonly packer: Packer;
 }
 
-interface PendingGlyph {
+interface PendingGlyphBase {
   readonly entry: Readonly<AtlasEntry>;
-  readonly pixels: Uint8Array;
+  readonly token?: Readonly<RenderToken>;
 }
+
+type PendingGlyph =
+  | (PendingGlyphBase & { readonly kind: "cpu"; readonly pixels: Uint8Array })
+  | (PendingGlyphBase & {
+      readonly kind: "external";
+      readonly source: Readonly<Extract<AtlasGlyphRaster, { source: unknown }>["source"]>;
+      readonly sourceX: number;
+      readonly sourceY: number;
+      readonly release: () => void;
+    });
 
 interface LruNode {
   readonly key: GlyphCacheKey;
@@ -40,8 +56,67 @@ interface LruList {
   tail: LruNode | undefined;
 }
 
+interface CleanupFailure {
+  readonly error: unknown;
+}
+
 const DEFAULT_PAGE_SIZE = 1_024;
 const DEFAULT_MAX_BYTES = 64 * 1024 * 1024;
+const DEFAULT_REQUEST_GENERATION_CACHE_ENTRIES = 65_536;
+
+interface GlyphAtlasRenderBridge {
+  readonly request: (
+    key: GlyphCacheKey,
+    scope: Readonly<RenderTokenScope>,
+    sourceRevision: number,
+  ) => Readonly<RenderToken>;
+  readonly stage: (token: Readonly<RenderToken>, raster: AtlasGlyphRaster) => boolean;
+  readonly commit: (scope: Readonly<RenderTokenScope>) => Readonly<AtlasCommit>;
+  readonly discard: (scope: Readonly<RenderTokenScope>) => number;
+}
+
+const RENDER_BRIDGES = new WeakMap<GlyphAtlas, Readonly<GlyphAtlasRenderBridge>>();
+
+function renderBridge(atlas: GlyphAtlas): Readonly<GlyphAtlasRenderBridge> {
+  const bridge = RENDER_BRIDGES.get(atlas);
+  if (bridge === undefined) throw new TypeError("GlyphAtlas render bridge is unavailable");
+  return bridge;
+}
+
+/** @internal Create a tokenized request for one coordinator render lifetime. */
+export function requestGlyphAtlasRenderToken(
+  atlas: GlyphAtlas,
+  key: GlyphCacheKey,
+  scope: Readonly<RenderTokenScope>,
+  sourceRevision: number,
+): Readonly<RenderToken> {
+  return renderBridge(atlas).request(key, scope, sourceRevision);
+}
+
+/** @internal Stage a tokenized coordinator result. */
+export function stageGlyphAtlasRenderToken(
+  atlas: GlyphAtlas,
+  token: Readonly<RenderToken>,
+  raster: AtlasGlyphRaster,
+): boolean {
+  return renderBridge(atlas).stage(token, raster);
+}
+
+/** @internal Publish staged glyphs for one exact coordinator render lifetime. */
+export function commitGlyphAtlasRenderFrame(
+  atlas: GlyphAtlas,
+  scope: Readonly<RenderTokenScope>,
+): Readonly<AtlasCommit> {
+  return renderBridge(atlas).commit(scope);
+}
+
+/** @internal Release staged glyphs owned by one coordinator render lifetime. */
+export function discardGlyphAtlasRenderFrame(
+  atlas: GlyphAtlas,
+  scope: Readonly<RenderTokenScope>,
+): number {
+  return renderBridge(atlas).discard(scope);
+}
 
 export class GlyphAtlas {
   readonly #pageWidth: number;
@@ -50,7 +125,9 @@ export class GlyphAtlas {
   readonly #pages: AtlasPage[] = [];
   readonly #entries = new Map<GlyphCacheKey, Readonly<AtlasEntry>>();
   readonly #pending = new Map<GlyphCacheKey, PendingGlyph>();
-  readonly #requestGenerations = new Map<GlyphCacheKey, number>();
+  // Active, staged, and caller-pinned keys stay exact; evictable request tombstones use the cache.
+  readonly #protectedRequestGenerations = new Map<GlyphCacheKey, number>();
+  readonly #requestGenerationTombstones: BoundedCache<GlyphCacheKey, number>;
   readonly #lruNodes = new Map<GlyphCacheKey, LruNode>();
   readonly #lruByMode: Record<GlyphMode, LruList> = {
     msdf: { head: undefined, tail: undefined },
@@ -60,6 +137,8 @@ export class GlyphAtlas {
   };
   readonly #pins = new Set<GlyphCacheKey>();
   readonly #evictedSinceCommit: GlyphCacheKey[] = [];
+  #generationFloor = 0;
+  #generationHighWater = 0;
   #allocatedBytes = 0;
   #requests = 0;
   #stagedResults = 0;
@@ -76,70 +155,186 @@ export class GlyphAtlas {
     assertPositiveInteger("pageWidth", this.#pageWidth);
     assertPositiveInteger("pageHeight", this.#pageHeight);
     assertPositiveInteger("maxBytes", this.#maxBytes);
+    this.#requestGenerationTombstones = new BoundedCache({
+      maxEntries: options.requestGenerationCacheEntries ?? DEFAULT_REQUEST_GENERATION_CACHE_ENTRIES,
+      policy: "lru",
+      onEviction: () => {
+        // A missing key resumes above every generation that could still complete asynchronously.
+        this.#generationFloor = this.#generationHighWater;
+      },
+    });
+    RENDER_BRIDGES.set(this, {
+      request: (key, scope, sourceRevision) => this.#requestRenderToken(key, scope, sourceRevision),
+      stage: (token, raster) => this.#stage(token, raster),
+      commit: (scope) => this.#commitFrame(scope),
+      discard: (scope) => this.#discardFrame(scope),
+    });
   }
 
   request(key: GlyphCacheKey): Readonly<GlyphRequest> {
+    return Object.freeze({ key, generation: this.#nextRequestGeneration(key) });
+  }
+
+  #requestRenderToken(
+    key: GlyphCacheKey,
+    scope: Readonly<RenderTokenScope>,
+    sourceRevision: number,
+  ): Readonly<RenderToken> {
+    const generation = this.#nextRequestGeneration(key);
+    return Object.freeze({
+      key,
+      generation,
+      lifecycleEpoch: scope.lifecycleEpoch,
+      commitTicket: scope.commitTicket,
+      fontRegistryRevision: scope.fontRegistryRevision,
+      destinationIdentity: scope.destinationIdentity,
+      sourceRevision,
+    });
+  }
+
+  #nextRequestGeneration(key: GlyphCacheKey): number {
     this.#assertActive();
     assertKey(key);
-    const previous = this.#requestGenerations.get(key) ?? 0;
+    const previous = this.#currentRequestGeneration(key) ?? this.#generationFloor;
     if (previous === Number.MAX_SAFE_INTEGER) {
       throw new RangeError(`Glyph request generation exhausted: ${String(key)}`);
     }
     const generation = previous + 1;
-    this.#requestGenerations.set(key, generation);
+    this.#generationHighWater = Math.max(this.#generationHighWater, generation);
+    if (this.#isGenerationProtected(key)) {
+      this.#requestGenerationTombstones.delete(key);
+      this.#protectedRequestGenerations.set(key, generation);
+    } else {
+      this.#protectedRequestGenerations.delete(key);
+      this.#requestGenerationTombstones.set(key, generation);
+    }
     this.#requests += 1;
-
-    return Object.freeze({ key, generation });
+    return generation;
   }
 
-  stage(request: GlyphRequest, raster: GlyphRaster): boolean {
-    this.#assertActive();
-    assertKey(request.key);
-    assertPositiveInteger("request.generation", request.generation);
-    assertRaster(raster, this.#pageWidth, this.#pageHeight);
-    if (this.#requestGenerations.get(request.key) !== request.generation) {
-      this.#staleResults += 1;
-      return false;
-    }
+  stage(request: GlyphRequest, raster: AtlasGlyphRaster): boolean {
+    return this.#stage(request, raster);
+  }
 
-    const previousPending = this.#pending.get(request.key);
-    if (previousPending !== undefined) {
-      this.#releaseEntry(previousPending.entry);
-      this.#pending.delete(request.key);
-    }
-    const placement = this.#allocate(raster.mode, raster.width, raster.height, request.key);
-    if (placement === undefined) {
-      this.#capacityFailures += 1;
-      return false;
-    }
-    const { page, rectangle } = placement;
-    const entry = Object.freeze({
-      key: request.key,
-      generation: request.generation,
-      page: page.id,
-      layer: page.layer,
-      mode: raster.mode,
-      x: rectangle.x,
-      y: rectangle.y,
-      width: rectangle.width,
-      height: rectangle.height,
-      u0: rectangle.x / page.width,
-      v0: rectangle.y / page.height,
-      u1: (rectangle.x + rectangle.width) / page.width,
-      v1: (rectangle.y + rectangle.height) / page.height,
-      ...(raster.metrics === undefined ? {} : { metrics: Object.freeze({ ...raster.metrics }) }),
-    });
-    this.#pending.set(request.key, { entry, pixels: raster.pixels });
-    this.#stagedResults += 1;
+  #stage(request: GlyphRequest | RenderToken, raster: AtlasGlyphRaster): boolean {
+    let incomingOwned = isExternalRaster(raster);
+    try {
+      this.#assertActive();
+      assertKey(request.key);
+      assertPositiveInteger("request.generation", request.generation);
+      assertRaster(raster, this.#pageWidth, this.#pageHeight);
+      const token = isRenderToken(request) ? request : undefined;
+      if (this.#currentRequestGeneration(request.key) !== request.generation) {
+        this.#staleResults += 1;
+        incomingOwned = false;
+        releaseExternalRaster(raster);
+        return false;
+      }
 
-    return true;
+      const previousPending = this.#pending.get(request.key);
+      if (previousPending !== undefined) {
+        this.#detachPending(request.key, previousPending, false);
+      }
+      const placement = this.#allocate(raster.mode, raster.width, raster.height, request.key);
+      if (placement === undefined) {
+        this.#capacityFailures += 1;
+        const capacityError =
+          token === undefined
+            ? undefined
+            : new Error(`Glyph atlas capacity rejected: ${String(request.key)}`);
+        incomingOwned = false;
+        const releaseFailure = cleanupBestEffort([() => releaseExternalRaster(raster)]);
+        if (capacityError !== undefined) throw capacityError;
+        if (releaseFailure !== undefined) throw releaseFailure.error;
+        return false;
+      }
+      const { page, rectangle } = placement;
+      const entry = Object.freeze({
+        key: request.key,
+        generation: request.generation,
+        page: page.id,
+        layer: page.layer,
+        mode: raster.mode,
+        x: rectangle.x,
+        y: rectangle.y,
+        width: rectangle.width,
+        height: rectangle.height,
+        u0: rectangle.x / page.width,
+        v0: rectangle.y / page.height,
+        u1: (rectangle.x + rectangle.width) / page.width,
+        v1: (rectangle.y + rectangle.height) / page.height,
+        ...(raster.metrics === undefined ? {} : { metrics: Object.freeze({ ...raster.metrics }) }),
+      });
+      const pending: PendingGlyph = isExternalRaster(raster)
+        ? {
+            kind: "external",
+            entry,
+            source: raster.source,
+            sourceX: raster.sourceX,
+            sourceY: raster.sourceY,
+            release: raster.release,
+            ...(token === undefined ? {} : { token }),
+          }
+        : {
+            kind: "cpu",
+            entry,
+            pixels: raster.pixels,
+            ...(token === undefined ? {} : { token }),
+          };
+      this.#pending.set(request.key, pending);
+      this.#protectRequestGeneration(request.key, request.generation);
+      this.#stagedResults += 1;
+      incomingOwned = false;
+
+      return true;
+    } catch (error: unknown) {
+      if (incomingOwned) {
+        cleanupBestEffort([() => releaseExternalRaster(raster)]);
+      }
+      throw error;
+    }
   }
 
   commitFrame(): Readonly<AtlasCommit> {
+    return this.#commitFrame();
+  }
+
+  #commitFrame(scope?: Readonly<RenderTokenScope>): Readonly<AtlasCommit> {
     this.#assertActive();
     const entries: Readonly<AtlasEntry>[] = [];
     const uploads: Readonly<AtlasUpload>[] = [];
-    for (const pending of this.#pending.values()) {
+    const externalUploads: Readonly<AtlasExternalUpload>[] = [];
+    let rejectionFailure: CleanupFailure | undefined;
+    for (const [key, pending] of this.#pending) {
+      if (this.#currentRequestGeneration(key) !== pending.entry.generation) {
+        const failure = cleanupBestEffort([() => this.#detachPending(key, pending, true)]);
+        rejectionFailure ??= failure;
+        continue;
+      }
+      const token = pending.token;
+      if (scope === undefined) {
+        if (token !== undefined) continue;
+      } else {
+        if (token === undefined) continue;
+        if (token.destinationIdentity !== scope.destinationIdentity) continue;
+        if (!sameRenderScope(token, scope)) {
+          const failure = cleanupBestEffort([() => this.#detachPending(key, pending, true)]);
+          rejectionFailure ??= failure;
+          continue;
+        }
+      }
+    }
+    if (rejectionFailure !== undefined) throw rejectionFailure.error;
+
+    for (const [key, pending] of this.#pending) {
+      const token = pending.token;
+      if (
+        scope === undefined
+          ? token !== undefined
+          : token === undefined || !sameRenderScope(token, scope)
+      ) {
+        continue;
+      }
       const current = this.#entries.get(pending.entry.key);
       if (current !== undefined) {
         this.#releaseEntry(current);
@@ -147,9 +342,21 @@ export class GlyphAtlas {
       this.#entries.set(pending.entry.key, pending.entry);
       this.#touch(pending.entry.key, pending.entry.mode);
       entries.push(pending.entry);
-      uploads.push(Object.freeze({ entry: pending.entry, pixels: pending.pixels }));
+      if (pending.kind === "cpu") {
+        uploads.push(Object.freeze({ entry: pending.entry, pixels: pending.pixels }));
+      } else {
+        externalUploads.push(
+          Object.freeze({
+            entry: pending.entry,
+            source: pending.source,
+            sourceX: pending.sourceX,
+            sourceY: pending.sourceY,
+            release: pending.release,
+          }),
+        );
+      }
+      this.#pending.delete(key);
     }
-    this.#pending.clear();
     const evictedKeys = Object.freeze([...this.#evictedSinceCommit]);
     this.#evictedSinceCommit.length = 0;
     if (entries.length > 0 || evictedKeys.length > 0) {
@@ -159,8 +366,24 @@ export class GlyphAtlas {
     return Object.freeze({
       entries: Object.freeze(entries),
       uploads: Object.freeze(uploads),
+      externalUploads: Object.freeze(externalUploads),
       evictedKeys,
     });
+  }
+
+  #discardFrame(scope: Readonly<RenderTokenScope>): number {
+    if (this.#destroyed) return 0;
+    let discarded = 0;
+    let firstFailure: CleanupFailure | undefined;
+    for (const [key, pending] of this.#pending) {
+      if (pending.token !== undefined && sameRenderScope(pending.token, scope)) {
+        const failure = cleanupBestEffort([() => this.#detachPending(key, pending, true)]);
+        firstFailure ??= failure;
+        discarded += 1;
+      }
+    }
+    if (firstFailure !== undefined) throw firstFailure.error;
+    return discarded;
   }
 
   get(key: GlyphCacheKey): Readonly<AtlasEntry> | undefined {
@@ -198,6 +421,8 @@ export class GlyphAtlas {
     this.#pins.add(key);
     if (this.#pins.size !== size) {
       this.#detachLru(key);
+      const generation = this.#requestGenerationTombstones.peek(key);
+      if (generation !== undefined) this.#protectRequestGeneration(key, generation);
     }
 
     return this.#pins.size !== size;
@@ -212,10 +437,12 @@ export class GlyphAtlas {
     if (entry !== undefined) {
       this.#touch(key, entry.mode);
     }
+    this.#demoteRequestGeneration(key);
     return true;
   }
 
   get stats(): Readonly<GlyphAtlasStats> {
+    const tombstones = this.#requestGenerationTombstones.stats;
     return Object.freeze({
       entries: this.#entries.size,
       pendingEntries: this.#pending.size,
@@ -228,6 +455,10 @@ export class GlyphAtlas {
       evictions: this.#evictions,
       capacityFailures: this.#capacityFailures,
       commits: this.#commits,
+      requestGenerationEntries: this.#protectedRequestGenerations.size + tombstones.entries,
+      requestGenerationProtectedEntries: this.#protectedRequestGenerations.size,
+      requestGenerationTombstones: tombstones.entries,
+      requestGenerationEvictions: tombstones.evictions,
     });
   }
 
@@ -235,10 +466,12 @@ export class GlyphAtlas {
     if (this.#destroyed) {
       return;
     }
+    const pending = [...this.#pending.values()];
     this.#pages.length = 0;
     this.#entries.clear();
     this.#pending.clear();
-    this.#requestGenerations.clear();
+    this.#protectedRequestGenerations.clear();
+    this.#requestGenerationTombstones.clear();
     this.#lruNodes.clear();
     this.#lruByMode.msdf = { head: undefined, tail: undefined };
     this.#lruByMode.sdf = { head: undefined, tail: undefined };
@@ -248,6 +481,8 @@ export class GlyphAtlas {
     this.#evictedSinceCommit.length = 0;
     this.#allocatedBytes = 0;
     this.#destroyed = true;
+    const failure = cleanupBestEffort(pending.map((entry) => () => releasePendingRaster(entry)));
+    if (failure !== undefined) throw failure.error;
   }
 
   #allocate(
@@ -333,7 +568,7 @@ export class GlyphAtlas {
         if (entry !== undefined && entry.mode === mode) {
           this.#releaseEntry(entry);
           this.#entries.delete(key);
-          this.#detachLru(key);
+          this.#demoteRequestGeneration(key);
           this.#evictedSinceCommit.push(key);
           this.#evictions += 1;
           return true;
@@ -345,12 +580,50 @@ export class GlyphAtlas {
   }
 
   #releaseEntry(entry: AtlasEntry): void {
+    this.#detachLru(entry.key);
+    this.#releasePendingEntry(entry);
+  }
+
+  #releasePendingEntry(entry: AtlasEntry): void {
     const page = this.#pages[entry.page];
     if (page === undefined) {
       throw new Error(`Atlas page ${String(entry.page)} is unavailable`);
     }
-    this.#detachLru(entry.key);
     page.packer.release(entry);
+  }
+
+  #detachPending(key: GlyphCacheKey, pending: PendingGlyph, stale: boolean): void {
+    if (this.#pending.get(key) === pending) this.#pending.delete(key);
+    this.#demoteRequestGeneration(key);
+    if (stale) this.#staleResults += 1;
+    const failure = cleanupBestEffort([
+      () => this.#releasePendingEntry(pending.entry),
+      () => releasePendingRaster(pending),
+    ]);
+    if (failure !== undefined) throw failure.error;
+  }
+
+  #currentRequestGeneration(key: GlyphCacheKey): number | undefined {
+    return (
+      this.#protectedRequestGenerations.get(key) ?? this.#requestGenerationTombstones.peek(key)
+    );
+  }
+
+  #protectRequestGeneration(key: GlyphCacheKey, generation: number): void {
+    this.#requestGenerationTombstones.delete(key);
+    this.#protectedRequestGenerations.set(key, generation);
+  }
+
+  #demoteRequestGeneration(key: GlyphCacheKey): void {
+    if (this.#isGenerationProtected(key)) return;
+    const generation = this.#protectedRequestGenerations.get(key);
+    if (generation === undefined) return;
+    this.#protectedRequestGenerations.delete(key);
+    this.#requestGenerationTombstones.set(key, generation);
+  }
+
+  #isGenerationProtected(key: GlyphCacheKey): boolean {
+    return this.#entries.has(key) || this.#pending.has(key) || this.#pins.has(key);
   }
 
   #touch(key: GlyphCacheKey, mode?: GlyphMode): void {
@@ -420,7 +693,7 @@ function bytesPerPixel(mode: GlyphMode): number {
   return mode === "sdf" || mode === "alpha" ? 1 : 4;
 }
 
-function assertRaster(raster: GlyphRaster, pageWidth: number, pageHeight: number): void {
+function assertRaster(raster: AtlasGlyphRaster, pageWidth: number, pageHeight: number): void {
   if (
     raster.mode !== "msdf" &&
     raster.mode !== "sdf" &&
@@ -434,18 +707,66 @@ function assertRaster(raster: GlyphRaster, pageWidth: number, pageHeight: number
   if (raster.width > pageWidth || raster.height > pageHeight) {
     throw new RangeError("Glyph raster exceeds the atlas page dimensions");
   }
-  if (!(raster.pixels instanceof Uint8Array)) {
-    throw new TypeError("Glyph raster pixels must be a Uint8Array");
-  }
-  const expectedBytes = raster.width * raster.height * bytesPerPixel(raster.mode);
-  if (raster.pixels.byteLength !== expectedBytes) {
-    throw new TypeError(
-      `Glyph raster contains ${String(raster.pixels.byteLength)} bytes; expected ${String(expectedBytes)}`,
-    );
+  if (isExternalRaster(raster)) {
+    if (
+      raster.mode !== "color" ||
+      raster.source.format !== "rgba8unorm" ||
+      !Number.isSafeInteger(raster.sourceX) ||
+      raster.sourceX < 0 ||
+      !Number.isSafeInteger(raster.sourceY) ||
+      raster.sourceY < 0 ||
+      !Number.isSafeInteger(raster.source.width) ||
+      raster.source.width <= 0 ||
+      !Number.isSafeInteger(raster.source.height) ||
+      raster.source.height <= 0 ||
+      raster.sourceX + raster.width > raster.source.width ||
+      raster.sourceY + raster.height > raster.source.height ||
+      typeof raster.release !== "function"
+    ) {
+      throw new TypeError("External color glyph raster is invalid");
+    }
+  } else {
+    if (!(raster.pixels instanceof Uint8Array)) {
+      throw new TypeError("Glyph raster pixels must be a Uint8Array");
+    }
+    const expectedBytes = raster.width * raster.height * bytesPerPixel(raster.mode);
+    if (raster.pixels.byteLength !== expectedBytes) {
+      throw new TypeError(
+        `Glyph raster contains ${String(raster.pixels.byteLength)} bytes; expected ${String(expectedBytes)}`,
+      );
+    }
   }
   if (raster.metrics !== undefined) {
     assertMetrics(raster.metrics);
   }
+}
+
+function isExternalRaster(
+  raster: Readonly<AtlasGlyphRaster>,
+): raster is Readonly<Extract<AtlasGlyphRaster, { source: unknown }>> {
+  return "source" in raster;
+}
+
+function releaseExternalRaster(raster: Readonly<AtlasGlyphRaster>): void {
+  if (isExternalRaster(raster)) raster.release();
+}
+
+function releasePendingRaster(pending: Readonly<PendingGlyph>): void {
+  if (pending.kind === "external") pending.release();
+}
+
+function cleanupBestEffort(
+  cleanupSteps: Iterable<() => void>,
+): Readonly<CleanupFailure> | undefined {
+  let firstFailure: CleanupFailure | undefined;
+  for (const cleanup of cleanupSteps) {
+    try {
+      cleanup();
+    } catch (error: unknown) {
+      firstFailure ??= { error };
+    }
+  }
+  return firstFailure;
 }
 
 function assertMetrics(metrics: NonNullable<GlyphRaster["metrics"]>): void {
@@ -478,4 +799,8 @@ function assertPositiveInteger(name: string, value: number): void {
   if (!Number.isSafeInteger(value) || value <= 0) {
     throw new TypeError(`${name} must be a positive safe integer`);
   }
+}
+
+function isRenderToken(request: GlyphRequest | RenderToken): request is RenderToken {
+  return "lifecycleEpoch" in request;
 }

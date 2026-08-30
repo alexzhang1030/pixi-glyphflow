@@ -52,23 +52,7 @@ describe("GlyphMesh", () => {
     const draw = new ArrayBuffer(GLYPH_DRAW_STRIDE * 2);
     const mesh = new GlyphMesh({
       ...meshOptions({ instanceData: draw, instanceCount: 2 }),
-      shader: new Shader({
-        gpuProgram: GpuProgram.from({
-          vertex: { source: GLYPH_SHADER_WGSL, entryPoint: "mainVertex" },
-          fragment: { source: GLYPH_SHADER_WGSL, entryPoint: "mainFragment" },
-        }),
-        resources: {
-          uAtlasR: Texture.WHITE.source,
-          uAtlasRGBA: Texture.WHITE.source,
-          uSampler: Texture.WHITE.source.style,
-          uTransformTexture: Texture.WHITE.source,
-          uPrototype: Texture.WHITE.source,
-          glyphUniforms: {
-            uPaletteWidth: { value: 1, type: "f32" },
-            uEffectBase: { value: 0, type: "f32" },
-          },
-        },
-      }),
+      shader: textureShader(),
     });
 
     expect(mesh.geometry.instanceCount).toBe(2);
@@ -98,23 +82,7 @@ describe("GlyphMesh", () => {
   test("owns the atlas sampler so destroying a page cannot null the bind", () => {
     const mesh = new GlyphMesh({
       ...meshOptions(),
-      shader: new Shader({
-        gpuProgram: GpuProgram.from({
-          vertex: { source: GLYPH_SHADER_WGSL, entryPoint: "mainVertex" },
-          fragment: { source: GLYPH_SHADER_WGSL, entryPoint: "mainFragment" },
-        }),
-        resources: {
-          uAtlasR: Texture.WHITE.source,
-          uAtlasRGBA: Texture.WHITE.source,
-          uSampler: Texture.WHITE.source.style,
-          uTransformTexture: Texture.WHITE.source,
-          uPrototype: Texture.WHITE.source,
-          glyphUniforms: {
-            uPaletteWidth: { value: 1, type: "f32" },
-            uEffectBase: { value: 0, type: "f32" },
-          },
-        },
-      }),
+      shader: textureShader(),
     });
     mesh.setTextures([Texture.WHITE, Texture.WHITE]);
     expect(mesh.shader?.resources.uSampler).not.toBe(mesh.texture.source.style);
@@ -125,23 +93,7 @@ describe("GlyphMesh", () => {
     const prototypeTexture = Texture.WHITE;
     const mesh = new GlyphMesh({
       ...meshOptions({ prototypeTexture }),
-      shader: new Shader({
-        gpuProgram: GpuProgram.from({
-          vertex: { source: GLYPH_SHADER_WGSL, entryPoint: "mainVertex" },
-          fragment: { source: GLYPH_SHADER_WGSL, entryPoint: "mainFragment" },
-        }),
-        resources: {
-          uAtlasR: Texture.WHITE.source,
-          uAtlasRGBA: Texture.WHITE.source,
-          uSampler: Texture.WHITE.source.style,
-          uTransformTexture: Texture.WHITE.source,
-          uPrototype: prototypeTexture.source,
-          glyphUniforms: {
-            uPaletteWidth: { value: 1, type: "f32" },
-            uEffectBase: { value: 0, type: "f32" },
-          },
-        },
-      }),
+      shader: textureShader(prototypeTexture),
     });
     mesh.setPaletteTexture(Texture.WHITE, 2, 4);
     expect(mesh.shader?.resources.uPrototype).toBe(prototypeTexture.source);
@@ -195,12 +147,154 @@ describe("GlyphMesh", () => {
     expect(GLYPH_DRAW_STRIDE).toBe(8);
   });
 
+  test("uses a fill-only storage shader for the GPU-resident lane", () => {
+    const resident = glyphShaderWgsl("storage", "resident-fill");
+
+    expect(resident).toContain("var<storage, read> uTransforms: array<vec4<f32>>");
+    expect(resident).toContain("let transform0 = uTransforms[paletteBase]");
+    expect(resident).toContain("let transform1 = uTransforms[paletteBase + 1u]");
+    expect(resident.match(/uTransforms\[/g)).toHaveLength(2);
+    expect(resident).toContain("input.mode == 0u || input.mode == 3u");
+    expect(resident).toContain("input.mode == 3u");
+    expect(resident).toContain("if (fillCoverage == 0.0)");
+    expect(resident).toContain("discard;");
+    expect(resident).toContain("fillAlphaPacked");
+    expect(resident).toContain("labelAlpha");
+    expect(resident).toContain("input.worldColor");
+    expect(resident).toContain("input.mode == 4u");
+    expect(resident).toContain("fill + referenceParity * (1.0 - fill.a)");
+    expect(resident).not.toContain("input.effects");
+    expect(resident).not.toContain("input.uvBounds");
+    expect(resident).not.toContain("input.rasterScale");
+    expect(resident).not.toContain("fn coverageAt");
+    expect(resident).not.toContain("textureSampleLevel");
+    expect(resident).not.toContain("shadowPacked");
+    expect(resident).not.toContain("strokePacked");
+    expect(glyphShaderWgsl("texture", "resident-fill")).toBe(glyphShaderWgsl("texture"));
+    expect(glyphShaderWgsl("texture", "resident-fill-run")).toBe(glyphShaderWgsl("texture"));
+  });
+
+  test("moves a single resident prototype into the mesh uniform", () => {
+    const resident = glyphShaderWgsl("storage", "resident-fill-single");
+    const storage = storageBuffer("pixi-glyphflow-single-prototype-palette");
+    const prototype = Float32Array.from([1, 2, 3, 4, 5, 6, 7, 8]);
+
+    expect(
+      () =>
+        new GlyphMesh(
+          meshOptions({
+            palettePath: "storage",
+            paletteStorage: storage,
+            shaderVariant: "resident-fill-single",
+          }),
+        ),
+    ).toThrow("single-glyph resident shader requires two prototype texels");
+
+    const restoreDocument = installNullCanvasDocument();
+    try {
+      const mesh = new GlyphMesh(
+        meshOptions({
+          palettePath: "storage",
+          paletteStorage: storage,
+          shaderVariant: "resident-fill-single",
+          residentPrototype: prototype,
+        }),
+      );
+
+      expect(resident).toContain("uResidentProto0: vec4<f32>");
+      expect(resident).toContain("uResidentProto1: vec4<f32>");
+      expect(resident).toContain("let proto0 = glyphUniforms.uResidentProto0");
+      expect(resident).toContain("let proto1 = glyphUniforms.uResidentProto1");
+      expect(resident).not.toContain("textureLoad(uPrototype");
+      expect(mesh.shader?.resources.glyphUniforms.uniforms.uResidentProto0).toEqual(
+        prototype.subarray(0, 4),
+      );
+      expect(mesh.shader?.resources.glyphUniforms.uniforms.uResidentProto1).toEqual(
+        prototype.subarray(4, 8),
+      );
+
+      mesh.destroy();
+    } finally {
+      restoreDocument();
+    }
+  });
+
+  test("moves a continuous resident prototype run into one fixed uniform array", () => {
+    const resident = glyphShaderWgsl("storage", "resident-fill-run");
+    const storage = storageBuffer("pixi-glyphflow-run-prototype-palette");
+    const prototypes = Float32Array.from({ length: 5 * 8 }, (_, index) => index + 1);
+
+    expect(
+      () =>
+        new GlyphMesh(
+          meshOptions({
+            palettePath: "storage",
+            paletteStorage: storage,
+            shaderVariant: "resident-fill-run",
+          }),
+        ),
+    ).toThrow("resident run shader requires 2 to 8 packed prototypes");
+    for (const residentPrototype of [new Float32Array(8), new Float32Array(9 * 8)]) {
+      expect(
+        () =>
+          new GlyphMesh(
+            meshOptions({
+              palettePath: "storage",
+              paletteStorage: storage,
+              shaderVariant: "resident-fill-run",
+              residentPrototype,
+            }),
+          ),
+      ).toThrow("resident run shader requires 2 to 8 packed prototypes");
+    }
+
+    const restoreDocument = installNullCanvasDocument();
+    try {
+      const mesh = new GlyphMesh(
+        meshOptions({
+          palettePath: "storage",
+          paletteStorage: storage,
+          shaderVariant: "resident-fill-run",
+          residentPrototype: prototypes,
+          residentPrototypeBase: 7,
+        }),
+      );
+      const uniformGroup = mesh.shader?.resources.glyphUniforms;
+      const uniforms = uniformGroup?.uniforms;
+      const packed = uniforms?.uResidentProtos as Float32Array;
+
+      expect(resident).toContain("uResidentProtoBase: i32");
+      expect(resident).toContain("uResidentProtoPadding: f32");
+      expect(resident).toContain("uResidentProtos: array<vec4<f32>, 16>");
+      expect(resident).toContain("proto - u32(glyphUniforms.uResidentProtoBase)");
+      expect(resident).toContain("glyphUniforms.uResidentProtos[glyph * 2u + texelOffset]");
+      expect(resident).not.toContain("textureLoad(uPrototype");
+      expect(uniforms?.uResidentProtoBase).toBe(7);
+      expect(uniformGroup?.uniformStructures.uResidentProtos).toMatchObject({
+        type: "f32",
+        size: 64,
+      });
+      expect(Array.from(packed.subarray(0, prototypes.length))).toEqual(Array.from(prototypes));
+      expect(Array.from(packed.subarray(prototypes.length))).toEqual(
+        Array.from(new Float32Array(8 * 8 - prototypes.length)),
+      );
+
+      const replacement = Float32Array.from(prototypes, (value) => value + 100);
+      mesh.setResidentPrototype(replacement);
+      expect(Array.from(packed.subarray(0, replacement.length))).toEqual(Array.from(replacement));
+      expect(() => mesh.setResidentPrototype(new Float32Array(4 * 8))).toThrow(
+        "resident run update must preserve the packed prototype count",
+      );
+
+      mesh.destroy();
+    } finally {
+      storage.destroy();
+      restoreDocument();
+    }
+  });
+
   test("keeps texture and storage palette binds on matching names", () => {
-    const storage = new Buffer({
-      size: 64,
-      usage: BufferUsage.STORAGE | BufferUsage.COPY_DST,
-      label: "pixi-glyphflow-test-palette-storage",
-    });
+    const storage = storageBuffer("pixi-glyphflow-test-palette-storage");
     const shared = {
       uAtlasR: Texture.WHITE.source,
       uAtlasRGBA: Texture.WHITE.source,
@@ -270,6 +364,46 @@ describe("GlyphMesh", () => {
     storageMesh.destroy();
   });
 });
+
+function textureShader(prototypeTexture = Texture.WHITE): Shader {
+  return new Shader({
+    gpuProgram: GpuProgram.from({
+      vertex: { source: GLYPH_SHADER_WGSL, entryPoint: "mainVertex" },
+      fragment: { source: GLYPH_SHADER_WGSL, entryPoint: "mainFragment" },
+    }),
+    resources: {
+      uAtlasR: Texture.WHITE.source,
+      uAtlasRGBA: Texture.WHITE.source,
+      uSampler: Texture.WHITE.source.style,
+      uTransformTexture: Texture.WHITE.source,
+      uPrototype: prototypeTexture.source,
+      glyphUniforms: {
+        uPaletteWidth: { value: 1, type: "f32" },
+        uEffectBase: { value: 0, type: "f32" },
+      },
+    },
+  });
+}
+
+function storageBuffer(label: string): Buffer {
+  return new Buffer({
+    size: 64,
+    usage: BufferUsage.STORAGE | BufferUsage.COPY_DST,
+    label,
+  });
+}
+
+function installNullCanvasDocument(): () => void {
+  const descriptor = Object.getOwnPropertyDescriptor(globalThis, "document");
+  Object.defineProperty(globalThis, "document", {
+    configurable: true,
+    value: { createElement: () => ({ getContext: () => null }) },
+  });
+  return () => {
+    if (descriptor === undefined) Reflect.deleteProperty(globalThis, "document");
+    else Object.defineProperty(globalThis, "document", descriptor);
+  };
+}
 
 function assertPaletteBind(
   shader: Shader,

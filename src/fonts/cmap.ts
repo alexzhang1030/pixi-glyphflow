@@ -25,7 +25,7 @@ export function prepareGlyphFont(
     const view = dataView(bytes);
     const subtables = cmapSubtables(view);
     if (subtables.some((offset) => lookupGlyph(view, offset, codePoint) === glyphId)) {
-      return Object.freeze({ bytes, glyphText });
+      return Object.freeze({ bytes, glyphText: String.fromCodePoint(codePoint) });
     }
 
     const format12 = subtables.filter((offset) => view.getUint16(offset) === 12);

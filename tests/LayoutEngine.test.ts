@@ -70,8 +70,55 @@ describe("LayoutEngine", () => {
     });
     expect(engine.stats).toEqual({ layouts: 2, bitmapLayouts: 1, harfbuzzLayouts: 1 });
 
-    engine.destroy();
-    registry.destroy();
+    destroyLayoutFixture(engine, registry);
+  });
+
+  test("separates OpenType feature tuples with embedded list delimiters", async () => {
+    const { registry, shapeInputs, engine } = await createComplexEngineFixture(
+      (call) => 100 + call,
+    );
+    const base = { text: "A", style: { fontFamily: "Complex", fontSize: 16 } } as const;
+
+    const first = await engine.layout(1, 1, { ...base, features: ["a,b", "c"] });
+    const second = await engine.layout(2, 2, { ...base, features: ["a", "b,c"] });
+
+    expect([...first.glyphIds]).toEqual([101]);
+    expect([...second.glyphIds]).toEqual([102]);
+    expect(shapeInputs).toHaveLength(2);
+
+    destroyLayoutFixture(engine, registry);
+  });
+
+  test("rejects malformed variation tags before a shape-cache lookup", async () => {
+    const { registry, shapeInputs, engine } = await createComplexEngineFixture();
+    const base = { text: "A", style: { fontFamily: "Complex", fontSize: 16 } } as const;
+
+    await engine.layout(1, 1, { ...base, variations: { abcd: 1, efgh: 2 } });
+    expect(() => engine.layout(2, 2, { ...base, variations: { "abcd=1,efgh": 2 } })).toThrow(
+      "Invalid font variation: abcd=1,efgh=2",
+    );
+    expect(shapeInputs).toHaveLength(1);
+
+    destroyLayoutFixture(engine, registry);
+  });
+
+  test("validates variation records and finite values at the layout boundary", async () => {
+    const { registry, shapeInputs, engine } = await createComplexEngineFixture();
+    const base = { text: "A", style: { fontFamily: "Complex", fontSize: 16 } } as const;
+
+    expect(() =>
+      engine.layout(1, 1, {
+        ...base,
+        variations: null as unknown as Readonly<Record<string, number>>,
+      }),
+    ).toThrow("variations must be an axis record");
+    expect(() =>
+      engine.layout(2, 2, { ...base, variations: { wght: Number.NEGATIVE_INFINITY } }),
+    ).toThrow("Invalid font variation: wght=-Infinity");
+    expect(shapeInputs).toHaveLength(0);
+    expect(engine.stats).toEqual({ layouts: 0, bitmapLayouts: 0, harfbuzzLayouts: 0 });
+
+    destroyLayoutFixture(engine, registry);
   });
 
   test("resolves named fallback chains before selecting a shaping backend", async () => {
@@ -95,8 +142,7 @@ describe("LayoutEngine", () => {
     await engine.layout(1, 1, { text: "A", style: { fontFamily: "UI", fontSize: 20 } });
     expect(selectedFamily).toBe("Primary");
 
-    engine.destroy();
-    registry.destroy();
+    destroyLayoutFixture(engine, registry);
   });
 
   test("selects the first custom font with complete glyph coverage", async () => {
@@ -129,7 +175,7 @@ describe("LayoutEngine", () => {
       language: "zh-Hant",
       script: "Hant",
       features: ["kern"],
-      variations: { wght: 560 },
+      variations: { wght: 560, wdth: 90 },
     });
 
     expect(run.fontFamily).toBe("CJKV custom");
@@ -138,7 +184,7 @@ describe("LayoutEngine", () => {
       language: "zh-Hant",
       script: "Hant",
       features: ["kern"],
-      variations: { wght: 560 },
+      variations: { wght: 560, wdth: 90 },
       fontRevision: cjkv.revision,
     });
     expect(engine.stats).toEqual({ layouts: 1, bitmapLayouts: 0, harfbuzzLayouts: 2 });
@@ -149,15 +195,14 @@ describe("LayoutEngine", () => {
       language: "zh-Hant",
       script: "Hant",
       features: ["kern"],
-      variations: { wght: 560 },
+      variations: { wdth: 90, wght: 560 },
     });
     expect(cached).toBe(run);
     expect(cached).not.toBeInstanceOf(Promise);
     expect(shapeInputs).toHaveLength(2);
     expect(engine.stats).toEqual({ layouts: 2, bitmapLayouts: 0, harfbuzzLayouts: 2 });
 
-    engine.destroy();
-    registry.destroy();
+    destroyLayoutFixture(engine, registry);
   });
 
   test("expands fallback aliases into the bitmap font stack after binary coverage misses", async () => {
@@ -201,8 +246,7 @@ describe("LayoutEngine", () => {
       trimEnd: true,
     });
 
-    engine.destroy();
-    registry.destroy();
+    destroyLayoutFixture(engine, registry);
   });
 
   test("lays out upright glyphs in top-to-bottom right-to-left columns", async () => {
@@ -248,10 +292,36 @@ describe("LayoutEngine", () => {
     expect([...run.lineIndices]).toEqual([0, 0, 1]);
     expect(run.bounds).toEqual({ x: 0, y: 0, width: 48, height: 40 });
 
-    engine.destroy();
-    registry.destroy();
+    destroyLayoutFixture(engine, registry);
   });
 });
+
+async function createComplexEngineFixture(glyphIdForCall: (call: number) => number = () => 1) {
+  const registry = new FontRegistry();
+  const binary = await registry.register({ family: "Complex", source: new Uint8Array([1]) });
+  const shapeInputs: HarfBuzzShapeInput[] = [];
+  const engine = new LayoutEngine(registry, {
+    bitmapAdapter: { layout: () => positionedRun("bitmap", "A", "System", 0) },
+    harfbuzzShaper: {
+      async shape(_labelId, _sourceRevision, input) {
+        shapeInputs.push(input);
+        return positionedRun(
+          "harfbuzz",
+          input.text,
+          input.family,
+          binary.revision,
+          glyphIdForCall(shapeInputs.length),
+        );
+      },
+    },
+  });
+  return { registry, shapeInputs, engine };
+}
+
+function destroyLayoutFixture(engine: LayoutEngine, registry: FontRegistry): void {
+  engine.destroy();
+  registry.destroy();
+}
 
 function positionedRun(
   source: "bitmap" | "harfbuzz",

@@ -52,6 +52,14 @@
       "types": "./dist/shaping/index.d.ts",
       "import": "./dist/shaping/index.js"
     },
+    "./outline": {
+      "types": "./dist/render/outline/index.d.ts",
+      "import": "./dist/render/outline/index.js"
+    },
+    "./hb-gpu": {
+      "types": "./dist/hb-gpu/index.d.ts",
+      "import": "./dist/hb-gpu/index.js"
+    },
     "./viewport": {
       "types": "./dist/viewport/index.d.ts",
       "import": "./dist/viewport/index.js"
@@ -68,12 +76,23 @@
   "scripts": {
     "baseline": "bun benchmarks/baseline.ts",
     "benchmark": "bun benchmarks/index.ts",
-    "benchmark:workload": "bun benchmarks/run.ts",
+    "benchmark:workload": "bun benchmarks/harness-launcher.ts",
     "benchmark:report": "bun benchmarks/report.ts",
     "benchmark:check": "bun benchmarks/budgets.ts",
     "benchmark:core": "bun benchmarks/layer.ts",
+    "benchmark:hb-gpu": "bun benchmarks/hb-gpu/run.ts",
+    "benchmark:hb-gpu-browser": "bun benchmarks/hb-gpu/browser-run.ts",
+    "benchmark:hb-gpu-wasm": "bun benchmarks/hb-gpu/wasm-browser-run.ts",
+    "benchmark:label-collision-repeatability": "bun benchmarks/label-collision-repeatability.ts",
+    "benchmark:shaping-simd": "bun benchmarks/shaping-simd/run.ts",
+    "benchmark:shaping-simd-worker": "bun benchmarks/shaping-simd/worker-browser-run.ts",
+    "benchmark:shaping-transport": "bun benchmarks/shaping-transport/run.ts",
+    "benchmark:sparse-strips": "bun benchmarks/sparse-glyph-strips.ts",
     "benchmark:store": "bun benchmarks/store.ts",
+    "benchmark:symbol-continuity": "bun benchmarks/symbol-continuity.ts",
     "build": "tsdown",
+    "build:hb-gpu-wasm": "bun scripts/build-hb-gpu-wasm.ts",
+    "build:harfbuzz-shaping-wasm": "bun scripts/build-harfbuzz-shaping-wasm.ts",
     "dev": "tsdown --watch",
     "docs:check": "bun scripts/docs-check.ts",
     "format": "oxfmt",

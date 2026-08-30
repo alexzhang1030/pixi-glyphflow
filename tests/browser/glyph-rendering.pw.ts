@@ -70,9 +70,20 @@ function assertFixture(
   ).toBe(true);
   if (renderer === "webgl") expect(result.initialStats.palettePath).toBe("texture");
   expect(result.movedStats.instanceUploadBytes).toBe(result.initialStats.instanceUploadBytes);
+  expect(result.movedStats.atlasUploadBytes).toBe(result.initialStats.atlasUploadBytes);
   expect(Number(result.movedStats.transformUploadBytes)).toBeGreaterThan(
     Number(result.initialStats.transformUploadBytes),
   );
+  expect(
+    Number(result.movedStats.transformUploadBytes) -
+      Number(result.initialStats.transformUploadBytes),
+  ).toBeLessThanOrEqual(renderer === "webgl" ? 1_024 : 32);
+  expect(Number(result.initialStats.instanceUploadBytes)).toBeLessThanOrEqual(16_520);
+  expect(result.reattachedStats.instanceUploadBytes).toBe(result.initialStats.instanceUploadBytes);
+  expect(result.reattachedStats.transformUploadBytes).toBe(
+    result.initialStats.transformUploadBytes,
+  );
+  expect(result.reattachedStats.atlasUploadBytes).toBe(result.initialStats.atlasUploadBytes);
   expect(result.reattachedStats).toMatchObject({
     revision: 2,
     rendererAdapter: renderer,

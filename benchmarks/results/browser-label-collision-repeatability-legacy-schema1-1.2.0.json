@@ -1,0 +1,249 @@
+{
+  "schemaVersion": 1,
+  "kind": "pixi-glyphflow-label-collision-repeatability",
+  "capturedAt": "2026-08-29T08:36:22Z",
+  "packageVersion": "1.2.0",
+  "workload": "label-collision",
+  "runtime": {
+    "bun": "1.4.0",
+    "cpu": "Apple M1 Pro",
+    "platform": "darwin",
+    "architecture": "arm64"
+  },
+  "configuration": {
+    "residentLabels": 1000000,
+    "warmupFrames": 5,
+    "sampleFrames": 120,
+    "runsPerRenderer": 3
+  },
+  "renderers": {
+    "webgl": {
+      "sourceCandidateArtifact": "browser-label-collision-webgl-candidate-1.2.0.json",
+      "runs": [
+        {
+          "index": 1,
+          "renderer": "webgl",
+          "timings": {
+            "frameMs": { "p50": 18.1, "p95": 24.9 },
+            "cpuMs": { "p50": 12.7, "p95": 15.4 },
+            "commitMs": { "p50": 12.7, "p95": 15.3 },
+            "collisionMs": { "p50": 5.2, "p95": 6.4 }
+          },
+          "submittedLabels": 512,
+          "submittedGlyphs": 4096,
+          "selectionHash": 1628931525,
+          "accountingPassed": true,
+          "budgetPassed": true
+        },
+        {
+          "index": 2,
+          "renderer": "webgl",
+          "timings": {
+            "frameMs": { "p50": 19.3, "p95": 26 },
+            "cpuMs": { "p50": 13.6, "p95": 15.6 },
+            "commitMs": { "p50": 13.4, "p95": 15.6 },
+            "collisionMs": { "p50": 5.2, "p95": 6.2 }
+          },
+          "submittedLabels": 512,
+          "submittedGlyphs": 4096,
+          "selectionHash": 1628931525,
+          "accountingPassed": true,
+          "budgetPassed": true
+        },
+        {
+          "index": 3,
+          "renderer": "webgl",
+          "timings": {
+            "frameMs": { "p50": 18.1, "p95": 24.8 },
+            "cpuMs": { "p50": 12.7, "p95": 15.5 },
+            "commitMs": { "p50": 12.6, "p95": 15.3 },
+            "collisionMs": { "p50": 5.2, "p95": 6.3 }
+          },
+          "submittedLabels": 512,
+          "submittedGlyphs": 4096,
+          "selectionHash": 1628931525,
+          "accountingPassed": true,
+          "budgetPassed": true
+        }
+      ],
+      "aggregate": {
+        "frameP50Ms": {
+          "mean": 18.5,
+          "min": 18.1,
+          "max": 19.3,
+          "range": 1.2,
+          "coefficientOfVariation": 0.030578
+        },
+        "frameP95Ms": {
+          "mean": 25.233333,
+          "min": 24.8,
+          "max": 26,
+          "range": 1.2,
+          "coefficientOfVariation": 0.021545
+        },
+        "cpuP50Ms": {
+          "mean": 13,
+          "min": 12.7,
+          "max": 13.6,
+          "range": 0.9,
+          "coefficientOfVariation": 0.032636
+        },
+        "cpuP95Ms": {
+          "mean": 15.5,
+          "min": 15.4,
+          "max": 15.6,
+          "range": 0.2,
+          "coefficientOfVariation": 0.005268
+        },
+        "commitP50Ms": {
+          "mean": 12.9,
+          "min": 12.6,
+          "max": 13.4,
+          "range": 0.8,
+          "coefficientOfVariation": 0.027589
+        },
+        "commitP95Ms": {
+          "mean": 15.4,
+          "min": 15.3,
+          "max": 15.6,
+          "range": 0.3,
+          "coefficientOfVariation": 0.009183
+        },
+        "collisionP50Ms": {
+          "mean": 5.2,
+          "min": 5.2,
+          "max": 5.2,
+          "range": 0,
+          "coefficientOfVariation": 0
+        },
+        "collisionP95Ms": {
+          "mean": 6.3,
+          "min": 6.2,
+          "max": 6.4,
+          "range": 0.2,
+          "coefficientOfVariation": 0.01296
+        }
+      },
+      "invariants": {
+        "submittedGlyphsMatchLabels": true,
+        "selectionHashStable": true,
+        "accountingPassed": true,
+        "budgetsPassed": true
+      }
+    },
+    "webgpu": {
+      "sourceCandidateArtifact": "browser-label-collision-webgpu-candidate-1.2.0.json",
+      "runs": [
+        {
+          "index": 1,
+          "renderer": "webgpu",
+          "timings": {
+            "frameMs": { "p50": 17.3, "p95": 22.6 },
+            "cpuMs": { "p50": 15.4, "p95": 19.9 },
+            "commitMs": { "p50": 15.2, "p95": 19.8 },
+            "collisionMs": { "p50": 5.8, "p95": 7.1 }
+          },
+          "submittedLabels": 512,
+          "submittedGlyphs": 4096,
+          "selectionHash": 1628931525,
+          "accountingPassed": true,
+          "budgetPassed": false
+        },
+        {
+          "index": 2,
+          "renderer": "webgpu",
+          "timings": {
+            "frameMs": { "p50": 16.6, "p95": 21 },
+            "cpuMs": { "p50": 14.8, "p95": 18.6 },
+            "commitMs": { "p50": 14.6, "p95": 18.5 },
+            "collisionMs": { "p50": 5.7, "p95": 6.8 }
+          },
+          "submittedLabels": 512,
+          "submittedGlyphs": 4096,
+          "selectionHash": 1628931525,
+          "accountingPassed": true,
+          "budgetPassed": false
+        },
+        {
+          "index": 3,
+          "renderer": "webgpu",
+          "timings": {
+            "frameMs": { "p50": 16.8, "p95": 21 },
+            "cpuMs": { "p50": 14.7, "p95": 18.5 },
+            "commitMs": { "p50": 14.5, "p95": 18.4 },
+            "collisionMs": { "p50": 5.6, "p95": 6.7 }
+          },
+          "submittedLabels": 512,
+          "submittedGlyphs": 4096,
+          "selectionHash": 1628931525,
+          "accountingPassed": true,
+          "budgetPassed": false
+        }
+      ],
+      "aggregate": {
+        "frameP50Ms": {
+          "mean": 16.9,
+          "min": 16.6,
+          "max": 17.3,
+          "range": 0.7,
+          "coefficientOfVariation": 0.01742
+        },
+        "frameP95Ms": {
+          "mean": 21.533333,
+          "min": 21,
+          "max": 22.6,
+          "range": 1.6,
+          "coefficientOfVariation": 0.035027
+        },
+        "cpuP50Ms": {
+          "mean": 14.966667,
+          "min": 14.7,
+          "max": 15.4,
+          "range": 0.7,
+          "coefficientOfVariation": 0.020654
+        },
+        "cpuP95Ms": {
+          "mean": 19,
+          "min": 18.5,
+          "max": 19.9,
+          "range": 1.4,
+          "coefficientOfVariation": 0.033563
+        },
+        "commitP50Ms": {
+          "mean": 14.766667,
+          "min": 14.5,
+          "max": 15.2,
+          "range": 0.7,
+          "coefficientOfVariation": 0.020934
+        },
+        "commitP95Ms": {
+          "mean": 18.9,
+          "min": 18.4,
+          "max": 19.8,
+          "range": 1.4,
+          "coefficientOfVariation": 0.033741
+        },
+        "collisionP50Ms": {
+          "mean": 5.7,
+          "min": 5.6,
+          "max": 5.8,
+          "range": 0.2,
+          "coefficientOfVariation": 0.014325
+        },
+        "collisionP95Ms": {
+          "mean": 6.866667,
+          "min": 6.7,
+          "max": 7.1,
+          "range": 0.4,
+          "coefficientOfVariation": 0.024753
+        }
+      },
+      "invariants": {
+        "submittedGlyphsMatchLabels": true,
+        "selectionHashStable": true,
+        "accountingPassed": true,
+        "budgetsPassed": false
+      }
+    }
+  }
+}

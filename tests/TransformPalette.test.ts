@@ -6,26 +6,12 @@ import {
   TransformPalette,
 } from "../src/advanced";
 import { bitsFromFloat, unpackHalf2x16 } from "../src/render/pack";
+import { canonicalFillPaint } from "../src/render/TransformPalette";
 
 describe("TransformPalette", () => {
   test("stores a 32-byte fill-only record with packed rotation and color", () => {
     const palette = new TransformPalette({ initialCapacity: 2, textureWidth: 4 });
-    const changed = palette.set(
-      1,
-      {
-        x: 10,
-        y: 20,
-        scaleX: 2,
-        scaleY: 3,
-        rotation: Math.PI / 2,
-        alpha: 0.5,
-        visible: true,
-        anchorX: 0.5,
-        anchorY: 1,
-        fill: 0x336699,
-      },
-      { width: 40, height: 10 },
-    );
+    const changed = palette.set(1, fillTransform(), { width: 40, height: 10 });
 
     expect(changed).toBe(true);
     expect(palette.stats).toMatchObject({
@@ -42,24 +28,7 @@ describe("TransformPalette", () => {
     expect(palette.consumeDirty()).toEqual([
       { offset: TRANSFORM_PALETTE_STRIDE, length: TRANSFORM_PALETTE_STRIDE },
     ]);
-    expect(
-      palette.set(
-        1,
-        {
-          x: 10,
-          y: 20,
-          scaleX: 2,
-          scaleY: 3,
-          rotation: Math.PI / 2,
-          alpha: 0.5,
-          visible: true,
-          anchorX: 0.5,
-          anchorY: 1,
-          fill: 0x336699,
-        },
-        { width: 40, height: 10 },
-      ),
-    ).toBe(false);
+    expect(palette.set(1, fillTransform(), { width: 40, height: 10 })).toBe(false);
     expect(palette.consumeDirty()).toEqual([]);
 
     palette.destroy();
@@ -187,6 +156,32 @@ describe("TransformPalette", () => {
     palette.destroy();
   });
 
+  test("writes the same canonical u32 fill identity used by the GPU scene compiler", () => {
+    const palette = new TransformPalette({ initialCapacity: 2, textureWidth: 4 });
+    const paint = canonicalFillPaint({ color: "#336699", alpha: 0.5 });
+    expect(
+      palette.writeCanonicalFills(
+        new Uint32Array([0, 1]),
+        2,
+        new Float32Array([1, 2, 3, 4]),
+        paint,
+      ),
+    ).toBe(2);
+
+    const bits = new Uint32Array(palette.data.buffer, palette.data.byteOffset, palette.data.length);
+    expect([bits[6], bits[7], bits[14], bits[15]]).toEqual([
+      paint.colorBits,
+      paint.alphaBits,
+      paint.colorBits,
+      paint.alphaBits,
+    ]);
+    expect(palette.writeFills(new Uint32Array([0]), 1, new Float32Array([1, 2]), "#33669980")).toBe(
+      0,
+    );
+
+    palette.destroy();
+  });
+
   test("grows geometrically and hides removed labels through palette alpha", () => {
     const palette = new TransformPalette({ initialCapacity: 1, textureWidth: 4 });
     const before = palette.data.buffer;
@@ -293,6 +288,21 @@ describe("TransformPalette", () => {
     palette.destroy();
   });
 });
+
+function fillTransform() {
+  return {
+    x: 10,
+    y: 20,
+    scaleX: 2,
+    scaleY: 3,
+    rotation: Math.PI / 2,
+    alpha: 0.5,
+    visible: true,
+    anchorX: 0.5,
+    anchorY: 1,
+    fill: 0x336699,
+  };
+}
 
 function halves(value: number): readonly [number, number] {
   return unpackHalf2x16(bitsFromFloat(value));

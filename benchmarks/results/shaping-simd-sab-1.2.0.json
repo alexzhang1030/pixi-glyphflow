@@ -1,0 +1,238 @@
+{
+  "schemaVersion": 1,
+  "packageVersion": "1.2.0",
+  "capturedAt": "2026-08-29T07:59:22.312Z",
+  "runtime": {
+    "bun": "1.4.0",
+    "cpu": "Apple M1 Pro",
+    "platform": "darwin",
+    "release": "27.0.0",
+    "architecture": "arm64"
+  },
+  "simd": {
+    "capturedAt": "2026-08-29T07:53:50.921Z",
+    "fixture": "multilingual-glyph-id-offset-v1",
+    "capability": {
+      "supported": true,
+      "webAssembly": true
+    },
+    "workload": {
+      "corpusCodePoints": 16384,
+      "operation": "add-31-to-each-u32-glyph-id",
+      "warmupIterations": 256,
+      "sampleCount": 30,
+      "iterationsPerSample": 4096,
+      "baselineKind": "scalar",
+      "variantKind": "simd"
+    },
+    "baseline": {
+      "meanMs": 21.88963746666667,
+      "varianceMs2": 0.023978722480668888,
+      "standardDeviationMs": 0.15485064572247959,
+      "samplesMs": [
+        21.837166,
+        21.712415999999997,
+        21.778458999999998,
+        21.878167000000005,
+        21.799667,
+        21.804958999999997,
+        21.997874999999993,
+        21.864833000000004,
+        21.813792000000007,
+        21.82095800000002,
+        21.801499999999976,
+        21.759458000000052,
+        22.02854199999996,
+        21.731790999999987,
+        21.748582999999996,
+        21.778332999999975,
+        21.814542000000017,
+        21.88329200000004,
+        21.979750000000024,
+        22.137291000000005,
+        21.879083000000037,
+        22.411833,
+        21.852375000000052,
+        21.98275000000001,
+        21.766166999999996,
+        21.89195899999993,
+        21.899208000000044,
+        21.838375000000042,
+        22.250749999999925,
+        21.945249999999987
+      ]
+    },
+    "variant": {
+      "meanMs": 5.50933743333334,
+      "varianceMs2": 0.004039983488943236,
+      "standardDeviationMs": 0.06356086444458757,
+      "samplesMs": [
+        5.499583000000001,
+        5.546500000000002,
+        5.566417000000001,
+        5.5340419999999995,
+        5.414208000000002,
+        5.47037499999999,
+        5.5711670000000035,
+        5.638207999999992,
+        5.413207999999997,
+        5.513415999999978,
+        5.535082999999986,
+        5.447166999999979,
+        5.429832999999974,
+        5.4979170000000295,
+        5.457124999999962,
+        5.533542000000011,
+        5.4963750000000005,
+        5.601417000000026,
+        5.528833000000077,
+        5.48316699999998,
+        5.5528750000000855,
+        5.535875000000033,
+        5.643499999999904,
+        5.491249999999923,
+        5.586915999999974,
+        5.50545800000009,
+        5.476875000000064,
+        5.388249999999971,
+        5.451750000000061,
+        5.4697910000001
+      ]
+    },
+    "invariants": {
+      "baselineHash": "ce621180",
+      "variantHash": "ce621180",
+      "hashesMatch": true
+    },
+    "measurementDecision": {
+      "status": "advance",
+      "improvementMs": 16.38030003333333,
+      "improvementRatio": 0.7483129886585419,
+      "varianceThresholdMs": 0.16738789074963614,
+      "next": "benchmark-a-real-harfbuzz-simd-build"
+    },
+    "productionDecision": {
+      "status": "pause",
+      "reasons": ["harfbuzz-simd-asset-unavailable"],
+      "installedAsset": {
+        "package": "harfbuzzjs",
+        "version": "1.6.0",
+        "variant": "no-dedicated-simd-artifact"
+      }
+    }
+  },
+  "sabTransport": {
+    "capturedAt": "2026-08-29T07:59:22.312Z",
+    "capability": {
+      "sharedArrayBuffer": true,
+      "atomics": true,
+      "crossOriginIsolatedBrowserRequired": true
+    },
+    "workload": {
+      "glyphCount": 4096,
+      "numericPayloadBytes": 131072,
+      "slotPayloadBytes": 163840,
+      "warmupIterations": 256,
+      "sampleCount": 30,
+      "iterationsPerSample": 2048,
+      "execution": "same-thread-codec-and-ring"
+    },
+    "structuredClone": {
+      "meanMs": 62.291308366666655,
+      "standardDeviationMs": 2.85517879816962,
+      "samplesMs": [
+        61.11879199999999,
+        63.01825000000001,
+        62.30991700000001,
+        63.91966599999998,
+        62.047709,
+        64.32187499999998,
+        67.49850000000004,
+        68.16816599999993,
+        67.713709,
+        62.04929100000004,
+        62.448667,
+        60.46454199999994,
+        63.35775000000001,
+        63.06166700000006,
+        60.333624999999984,
+        60.53324999999995,
+        59.06420800000001,
+        59.837166000000025,
+        59.274832999999944,
+        63.63391700000011,
+        64.9045000000001,
+        65.741084,
+        64.93012500000009,
+        58.732749999999896,
+        59.642875000000004,
+        58.42908299999999,
+        59.28575000000001,
+        57.77095899999995,
+        64.47399999999993,
+        60.652624999999716
+      ]
+    },
+    "sabRing": {
+      "meanMs": 8.954922233333342,
+      "standardDeviationMs": 0.4439829565572297,
+      "samplesMs": [
+        10.775542000000002,
+        9.135916000000009,
+        9.102542,
+        9.581166999999994,
+        9.240083000000027,
+        9.150125000000003,
+        9.234207999999967,
+        9.394959000000085,
+        8.95225000000005,
+        8.841291999999953,
+        8.873249999999985,
+        8.470750000000066,
+        8.768332999999984,
+        8.693333000000052,
+        8.59129199999984,
+        8.347708000000011,
+        8.570874999999887,
+        8.845334000000094,
+        8.544499999999971,
+        8.826665999999932,
+        9.177167000000054,
+        8.81987499999991,
+        9.053334000000177,
+        8.796542000000045,
+        8.719875000000002,
+        8.68600000000015,
+        8.669374999999945,
+        8.922708000000057,
+        8.776707999999871,
+        9.085958000000119
+      ]
+    },
+    "invariants": {
+      "structuredCloneHash": "6288fa25",
+      "sabHash": "6288fa25",
+      "hashesMatch": true,
+      "zeroCopyView": true,
+      "clusterEndsZeroCopyView": true,
+      "browserWorkerTest": "tests/browser/sab-shape-transport.pw.ts"
+    },
+    "measurementDecision": {
+      "status": "advance",
+      "reasons": [],
+      "improvementMs": 53.33638613333331,
+      "improvementRatio": 0.8562412242070468,
+      "varianceThresholdMs": 2.8894924874847168
+    },
+    "productionDecision": {
+      "status": "advance",
+      "scope": "advanced-opt-in-candidate",
+      "evidence": [
+        "leased-run-render-lifecycle",
+        "cache-owned-copy",
+        "browser-worker-protocol"
+      ],
+      "next": "measure-real-harfbuzz-worker-end-to-end-before-default-promotion"
+    }
+  }
+}

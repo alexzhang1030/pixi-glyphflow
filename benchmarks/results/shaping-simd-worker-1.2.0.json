@@ -1,0 +1,161 @@
+{
+  "schemaVersion": 1,
+  "benchmark": "packaged-harfbuzz-worker-simd",
+  "packageVersion": "1.2.0",
+  "capturedAt": "2026-08-29T16:26:01.138Z",
+  "runtime": {
+    "bun": "1.4.0",
+    "cpu": "Apple M1 Pro",
+    "platform": "darwin",
+    "release": "27.0.0",
+    "architecture": "arm64"
+  },
+  "browser": {
+    "engine": "chrome",
+    "version": "151.0.7922.175",
+    "headless": true,
+    "viewport": {
+      "width": 320,
+      "height": 180
+    }
+  },
+  "sourceVersions": {
+    "workerShapingHarfBuzz": "11.2.1",
+    "hbGpu": "14.4.0",
+    "relationship": "independent"
+  },
+  "provenanceFile": "benchmarks/shaping-simd/wasm/provenance.json",
+  "provenanceSha256": "7e7796b5e485fbfe64438f3dffea5ea78211a1588248bcc9dd2d294013bb74c5",
+  "sourceSha256": {
+    "html": "1da67504524fe19ff7a6adc7f3f0c6bf3a2ce693f55e51d78ab06339fef25780",
+    "browser": "decbc5772874799819ff6b61648a7db24d72033e5c4cbc8b507549dc5166a0d0",
+    "runner": "36cd82f16d7175f9fa8a37c022316d5d020255156622755c7a5cbfb9b10af923",
+    "worker": "9b0368eb7a3514415e6477b2376f62314e0d78adaa7dc6c741f8c0aab0bb8778",
+    "scalarWorker": "e93c5cd2becd36aa2d154aeabb170c985dd91f1977c4939265bf3cf6d5dd9dad",
+    "simdWorker": "62a51ee172d9056450fde6f641e7d993d94a99d1d0bfe855e3c196ad0033692d",
+    "runtime": "68d49a3607745df3bea93172db47402116c1996fd8a513afd09b610b8e1cb0c0",
+    "shaper": "72e816f4867effb35df77ec2910ea7401fa4e9e6fb131f556febc1268d083de2",
+    "selection": "2fb7adb238d2f45a437108186f874c931a4b777c544c353ee3e5598644cc7f24",
+    "build": "61604bf5718326de35558daa8eb27b913e95547b317c96c7f09df7e2dd58810a"
+  },
+  "command": "bun benchmarks/shaping-simd/worker-browser-run.ts",
+  "packageBoundary": {
+    "status": "pause",
+    "reason": "human-approval-required",
+    "defaultPackageIncludesAssets": false,
+    "experimentalRawDeltaBytes": 418675,
+    "experimentalGzipDeltaBytes": 138827,
+    "measurement": {
+      "method": "npm-pack-dry-run-json-with-staged-dist-shaping-wasm",
+      "current": {
+        "size": 715248,
+        "unpackedSize": 3084635,
+        "entryCount": 98
+      },
+      "hypotheticalOptIn": {
+        "size": 857065,
+        "unpackedSize": 3507544,
+        "entryCount": 102
+      },
+      "delta": {
+        "tarballBytes": 141817,
+        "unpackedBytes": 422909,
+        "entries": 4
+      },
+      "existingOptionalShapingAsset": {
+        "package": "harfbuzzjs@1.6.0",
+        "wasmRawBytes": 421964,
+        "wasmGzipBytes": 171016
+      },
+      "experimentalRuntimePayload": {
+        "wasmAndGlueRawBytes": 418675,
+        "wasmAndGlueGzipBytes": 138827,
+        "rawBytesVersusExistingWasm": -3289,
+        "gzipBytesVersusExistingWasm": -32189
+      }
+    }
+  },
+  "result": {
+    "capability": {
+      "supported": true,
+      "webAssembly": true
+    },
+    "corpora": ["cjkv", "arabic", "devanagari", "hebrew", "thai"],
+    "workload": {
+      "warmupShapes": 25,
+      "measuredShapes": 250,
+      "isolatedRuns": 5,
+      "execution": "fresh-module-worker-per-sample-transferable-positioned-run"
+    },
+    "parity": {
+      "exact": true,
+      "scalarHash": "8773aedead11b28325a31e6aed9293cbd4b87e572951a6eb448b0be971308bdf",
+      "simdHash": "8773aedead11b28325a31e6aed9293cbd4b87e572951a6eb448b0be971308bdf"
+    },
+    "baseline": {
+      "samplesMs": [
+        56, 53.099999994039536, 54.29999999701977, 52.8999999910593, 54.099999994039536
+      ],
+      "meanMs": 54.07999999523163,
+      "varianceMs2": 1.5220000078082085,
+      "standardDeviationMs": 1.2336936442278563
+    },
+    "variant": {
+      "samplesMs": [57.400000005960464, 53.79999999701977, 56, 56, 54],
+      "meanMs": 55.440000000596044,
+      "varianceMs2": 2.3080000082850454,
+      "standardDeviationMs": 1.5192103239133958
+    },
+    "workers": {
+      "scalar": 5,
+      "simd": 5
+    },
+    "report": {
+      "decision": "hold",
+      "reasons": ["variant-regression"],
+      "baseline": {
+        "samplesMs": [
+          56, 53.099999994039536, 54.29999999701977, 52.8999999910593, 54.099999994039536
+        ],
+        "meanMs": 54.07999999523163,
+        "varianceMs2": 1.5220000078082085,
+        "standardDeviationMs": 1.2336936442278563
+      },
+      "variant": {
+        "samplesMs": [57.400000005960464, 53.79999999701977, 56, 56, 54],
+        "meanMs": 55.440000000596044,
+        "varianceMs2": 2.3080000082850454,
+        "standardDeviationMs": 1.5192103239133958
+      },
+      "baselineHash": "8773aedead11b28325a31e6aed9293cbd4b87e572951a6eb448b0be971308bdf",
+      "variantHash": "8773aedead11b28325a31e6aed9293cbd4b87e572951a6eb448b0be971308bdf",
+      "improvementMs": -1.3600000053644123,
+      "improvementRatio": -0.025147929095494213,
+      "varianceThresholdMs": 1.957038583189727
+    }
+  },
+  "consoleMessages": [
+    "debug: [vite] connecting...",
+    "debug: [vite] connected.",
+    "debug: [vite] connecting...",
+    "debug: [vite] connected.",
+    "debug: [vite] connecting...",
+    "debug: [vite] connected.",
+    "debug: [vite] connecting...",
+    "debug: [vite] connected.",
+    "debug: [vite] connecting...",
+    "debug: [vite] connected.",
+    "debug: [vite] connecting...",
+    "debug: [vite] connected.",
+    "debug: [vite] connecting...",
+    "debug: [vite] connected.",
+    "debug: [vite] connecting...",
+    "debug: [vite] connected.",
+    "debug: [vite] connecting...",
+    "debug: [vite] connected.",
+    "debug: [vite] connecting...",
+    "debug: [vite] connected.",
+    "debug: [vite] connecting...",
+    "debug: [vite] connected."
+  ]
+}

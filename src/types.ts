@@ -9,6 +9,20 @@ import type { RenderCoordinatorOptions } from "./render/RenderCoordinator";
 export type { CullPath } from "./culling/computeCull";
 export type { PalettePath } from "./render/paletteStorage";
 
+/** CPU viewport residency or an explicitly requested GPU-owned full scene. */
+export type TextLayerResidency = "viewport" | "gpu-scene";
+
+/** Stable reason why a requested GPU scene retained viewport residency. */
+export type TextLayerResidencyFallbackReason =
+  | "renderer-unavailable"
+  | "webgpu-required"
+  | "compute-cull-unavailable"
+  | "storage-palette-unavailable"
+  | "device-limit"
+  | "collision-enabled"
+  | "unsupported-scene"
+  | "setup-failed";
+
 declare const textIdBrand: unique symbol;
 declare const textGroupIdBrand: unique symbol;
 declare const textRevisionBrand: unique symbol;
@@ -41,6 +55,8 @@ export interface TextLayerCullingOptions {
   readonly enabled?: boolean;
   readonly padding?: number;
   readonly bounds?: BoundsData;
+  /** Label residency policy. GPU scene is an explicit WebGPU-only opt-in. Default is viewport. */
+  readonly residency?: TextLayerResidency;
   /** WebGPU compute culling policy. The default is automatic capability detection. */
   readonly computeCull?: boolean | "auto";
   /** Drop labels whose projected font height is below one pixel. Changes pixels. Default is false. */
@@ -52,6 +68,19 @@ export interface TextLayerCullingOptions {
    * off-screen labels). `0` admits the tight view only.
    */
   readonly offscreenAdmitBudgetBytes?: number;
+  /** Map-style screen-space collision and density policy. The default is disabled. */
+  readonly collision?: false | TextLayerCollisionOptions;
+}
+
+export interface TextLayerCollisionOptions {
+  /** Enable label collision when the policy object is present. Default is true. */
+  readonly enabled?: boolean;
+  /** Screen-pixel expansion around each candidate label. Default is 0. */
+  readonly padding?: number;
+  /** Maximum labels admitted after collision resolution. Default has no practical ceiling. */
+  readonly maxVisible?: number;
+  /** Screen-pixel cell size used by the CPU reference selector. Default is 64. */
+  readonly cellSize?: number;
 }
 
 /** Optional shaping controls for multilingual and variable-font labels. */
@@ -92,6 +121,8 @@ export interface TextLabelSpec {
   readonly rotation?: number;
   /** Draw and hit-test order. Higher values appear above lower values. */
   readonly zIndex?: number;
+  /** Collision admission priority. Higher values win; equal values keep insertion stability. */
+  readonly priority?: number;
   /** PixiJS blend mode applied to this label's ordered draw segment. */
   readonly blendMode?: BLEND_MODES;
   /** Opacity multiplier. */
@@ -131,10 +162,11 @@ export interface TextLabelSnapshot {
   readonly scaleY: number;
   readonly rotation: number;
   readonly zIndex: number;
+  readonly priority: number;
   readonly blendMode: BLEND_MODES;
   readonly alpha: number;
   readonly visible: boolean;
-  /** Visibility after composing the label flag with its optional group mask. */
+  /** Authored/group visibility before viewport, LOD, and collision selection. */
   readonly effectiveVisible: boolean;
   readonly group?: TextGroupId;
   readonly anchor: Readonly<PointData>;
@@ -183,6 +215,14 @@ export interface TextLayerStats {
   readonly lastPaletteWriteMs: number;
   readonly lastSpatialUpdateMs: number;
   readonly lastUploadMs: number;
+  /** Latest viewport query plus collision/density selection CPU time. */
+  readonly lastVisibilitySelectionMs: number;
+  /** Latest synchronous render diff, lane, and admission preparation after visibility selection. */
+  readonly lastRenderPreparationMs: number;
+  /** Latest coordinator commit, lane, and storage-command preparation time. */
+  readonly lastRenderCoordinatorMs: number;
+  /** Latest RenderSurface apply or compute refresh time. */
+  readonly lastSurfaceApplyMs: number;
   readonly glyphCount: number;
   readonly pendingGlyphCount: number;
   readonly shapedLabels: number;
@@ -193,6 +233,34 @@ export interface TextLayerStats {
   readonly culledLabelCount: number;
   readonly spatialIndexBytes: number;
   readonly cullingQueries: number;
+  readonly residencyRequested: TextLayerResidency;
+  readonly residencyActive: TextLayerResidency;
+  readonly residencyFallbackReason: TextLayerResidencyFallbackReason | undefined;
+  readonly gpuResidentLabels: number;
+  readonly gpuScenePrototypeCount: number;
+  readonly gpuScenePaintCount: number;
+  /** Live per-label object count owned by the active GPU-resident scene. */
+  readonly gpuScenePerLabelObjectCount: number;
+  readonly deferredSpatialLabels: number;
+  readonly cullRecordUploadBytes: number;
+  readonly lastSceneSetupMs: number;
+  /** Ring candidates inspected during the latest bounded off-screen admission pass. */
+  readonly offscreenInspectedLabels: number;
+  /** Ring-only labels materialized during the latest bounded off-screen admission pass. */
+  readonly offscreenMaterializedLabels: number;
+  readonly offscreenAdmissionDeferred: boolean;
+  readonly offscreenAdmissionGeneration: number;
+  readonly offscreenAdmissionCursor: number;
+  readonly offscreenAdmissionCursorResets: number;
+  readonly offscreenAdmissionCycles: number;
+  readonly collisionEnabled: boolean;
+  readonly collisionCandidateCount: number;
+  readonly collisionVisibleLabelCount: number;
+  readonly collisionCulledLabelCount: number;
+  readonly densityCulledLabelCount: number;
+  readonly collisionSelectionHash: number;
+  readonly lastCollisionMs: number;
+  readonly collisionRecordBytes: number;
   readonly rendererAdapter: "detached" | "webgl" | "webgpu" | "unknown";
   readonly cullPath: CullPath;
   readonly palettePath: PalettePath;
@@ -202,6 +270,9 @@ export interface TextLayerStats {
   readonly instanceUploadBytes: number;
   readonly transformUploadBytes: number;
   readonly atlasUploadBytes: number;
+  readonly frameTransactionSubmissions: number;
+  readonly frameTransactionFusedSubmissions: number;
+  readonly frameTransactionStandaloneSubmissions: number;
 }
 
 /** Type-only forward declaration used by API documentation links. */

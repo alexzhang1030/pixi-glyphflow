@@ -1,5 +1,6 @@
 import { BitmapFontManager, TextStyle } from "pixi.js";
 
+import { encodeCacheKey } from "../../cache/cacheKey";
 import type {
   BitmapLayoutAdapterOptions,
   BitmapLayoutInput,
@@ -37,7 +38,16 @@ export class BitmapLayoutAdapter {
     const maxLines = input.maxLines;
     const ellipsis = input.ellipsis ?? "…";
     const styleKey = this.#styleKey(input.style);
-    const key = `${input.text}\u0000${styleKey}\u0000${String(fontRevision)}\u0000${String(cacheRevision)}\u0000${direction}\u0000${String(trimEnd)}\u0000${String(maxLines)}\u0000${ellipsis}`;
+    const key = encodeCacheKey([
+      input.text,
+      styleKey,
+      String(fontRevision),
+      String(cacheRevision),
+      direction,
+      String(trimEnd),
+      String(maxLines),
+      ellipsis,
+    ]);
     const cached = this.#cache.get(key);
     if (cached !== undefined) {
       this.#hits += 1;

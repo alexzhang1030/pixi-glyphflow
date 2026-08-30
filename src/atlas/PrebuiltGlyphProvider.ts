@@ -1,3 +1,4 @@
+import { BoundedCache } from "../cache";
 import type {
   GlyphMetrics,
   GlyphMode,
@@ -9,28 +10,38 @@ import type {
   RasterGlyphRequest,
 } from "./types";
 
+const DEFAULT_MATERIALIZATION_CACHE_ENTRIES = 2_048;
+const DEFAULT_MATERIALIZATION_CACHE_BYTES = 16 * 1024 * 1024;
+const PREBUILT_GLYPH_KEY_V2_PREFIX = "pixi-glyphflow/prebuilt/v2:";
+
 interface GlyphSource {
   readonly page: PrebuiltGlyphPage;
   readonly record: PrebuiltGlyphRecord;
-  readonly family?: string;
-  readonly glyphId?: number;
-  readonly glyphText?: string;
-  readonly fontSize?: number;
-  readonly fontWeight?: string;
-  readonly mode?: GlyphMode;
-  readonly physicalSize?: number;
+}
+
+interface IndexedGlyphSource extends GlyphSource {
+  readonly fontSize: number;
+  readonly physicalSize: number;
 }
 
 export class PrebuiltGlyphProvider {
   readonly #pages = new Map<string, PrebuiltGlyphPage>();
   readonly #glyphs = new Map<string, GlyphSource>();
-  readonly #byIdentity = new Map<string, GlyphSource[]>();
-  readonly #cache = new Map<string, Readonly<GlyphRaster>>();
+  readonly #canonicalGlyphs = new Map<string, IndexedGlyphSource>();
+  readonly #byIdentity = new Map<string, IndexedGlyphSource[]>();
+  readonly #cache: BoundedCache<string, Readonly<GlyphRaster>>;
   #hits = 0;
   #misses = 0;
   #destroyed = false;
 
   constructor(options: PrebuiltGlyphProviderOptions) {
+    this.#cache = new BoundedCache({
+      maxEntries: options.materializationCacheEntries ?? DEFAULT_MATERIALIZATION_CACHE_ENTRIES,
+      maxBytes: options.materializationCacheBytes ?? DEFAULT_MATERIALIZATION_CACHE_BYTES,
+      policy: options.materializationCachePolicy ?? "lru",
+      // Full-page aliases are charged conservatively; entry count also bounds object overhead.
+      sizeOf: (raster) => raster.pixels.byteLength,
+    });
     for (const page of options.pages) {
       validatePage(page);
       if (this.#pages.has(page.id)) {
@@ -51,22 +62,22 @@ export class PrebuiltGlyphProvider {
         throw new RangeError(`Prebuilt glyph falls outside page bounds: ${record.key}`);
       }
       const parsed = parsePrebuiltGlyphKey(record.key);
-      const source: GlyphSource =
-        parsed === undefined
-          ? { page, record }
-          : {
-              page,
-              record,
-              family: parsed.family,
-              glyphId: parsed.glyphId,
-              glyphText: parsed.glyphText,
-              fontSize: parsed.fontSize,
-              fontWeight: parsed.fontWeight,
-              mode: parsed.mode,
-              physicalSize: parsed.fontSize * (record.metrics?.rasterScale ?? 1),
-            };
+      if (parsed === undefined) {
+        this.#glyphs.set(record.key, { page, record });
+        continue;
+      }
+      const source: IndexedGlyphSource = {
+        page,
+        record,
+        fontSize: parsed.fontSize,
+        physicalSize: parsed.fontSize * (record.metrics?.rasterScale ?? 1),
+      };
       this.#glyphs.set(record.key, source);
-      if (parsed === undefined) continue;
+      const canonicalKey = canonicalPrebuiltGlyphKey(parsed);
+      if (this.#canonicalGlyphs.has(canonicalKey)) {
+        throw new RangeError(`Duplicate prebuilt glyph identity: ${canonicalKey}`);
+      }
+      this.#canonicalGlyphs.set(canonicalKey, source);
       const identity = prebuiltIdentityKey(parsed);
       const bucket = this.#byIdentity.get(identity);
       if (bucket === undefined) this.#byIdentity.set(identity, [source]);
@@ -76,14 +87,16 @@ export class PrebuiltGlyphProvider {
 
   lookup(key: string): Readonly<GlyphRaster> | undefined {
     this.#assertActive();
-    const cached = this.#cache.get(key);
+    const parsed = parsePrebuiltGlyphKey(key);
+    const canonicalKey = parsed === undefined ? key : canonicalPrebuiltGlyphKey(parsed);
+    const cached = this.#cache.get(canonicalKey);
     if (cached !== undefined) {
       this.#hits += 1;
       return cached;
     }
-    const source = this.#glyphs.get(key);
+    const source = this.#glyphs.get(key) ?? this.#canonicalGlyphs.get(canonicalKey);
     if (source === undefined) return undefined;
-    return this.#materialize(source, key, source.record.metrics);
+    return this.#materialize(source, canonicalKey, source.record.metrics);
   }
 
   /**
@@ -114,11 +127,7 @@ export class PrebuiltGlyphProvider {
       const bucket = this.#byIdentity.get(identity);
       if (bucket === undefined) continue;
       for (const source of bucket) {
-        if (source.mode !== request.mode) continue;
-        if (source.physicalSize === undefined || Math.round(source.physicalSize) !== want) {
-          continue;
-        }
-        if (source.fontSize === undefined) continue;
+        if (Math.round(source.physicalSize) !== want) continue;
         return this.#materialize(
           source,
           cacheKey,
@@ -134,10 +143,14 @@ export class PrebuiltGlyphProvider {
   }
 
   get stats(): Readonly<PrebuiltGlyphProviderStats> {
+    const cache = this.#cache.stats;
     return Object.freeze({
       glyphs: this.#glyphs.size,
       pages: this.#pages.size,
-      cacheEntries: this.#cache.size,
+      cacheEntries: cache.entries,
+      cacheBytes: cache.bytes,
+      cacheEvictions: cache.evictions,
+      cacheEvictedBytes: cache.evictedBytes,
       hits: this.#hits,
       misses: this.#misses,
     });
@@ -147,6 +160,7 @@ export class PrebuiltGlyphProvider {
     if (this.#destroyed) return;
     this.#pages.clear();
     this.#glyphs.clear();
+    this.#canonicalGlyphs.clear();
     this.#byIdentity.clear();
     this.#cache.clear();
     this.#destroyed = true;
@@ -204,14 +218,22 @@ export function prebuiltGlyphKey(
     "family" | "glyphId" | "glyphText" | "fontSize" | "fontWeight" | "mode"
   >,
 ): string {
-  return [
+  return canonicalPrebuiltGlyphKey(request);
+}
+
+function canonicalPrebuiltGlyphKey(
+  request: Pick<RasterGlyphRequest, "family" | "glyphId" | "glyphText" | "fontSize" | "mode"> & {
+    readonly fontWeight?: string;
+  },
+): string {
+  return encodePrebuiltTupleKey([
     request.family,
     String(request.glyphId),
     request.glyphText,
     String(Math.round(request.fontSize)),
     request.fontWeight ?? "normal",
     request.mode,
-  ].join("\0");
+  ]);
 }
 
 function prebuiltIdentityKey(
@@ -219,26 +241,35 @@ function prebuiltIdentityKey(
     readonly fontWeight?: string;
   },
 ): string {
-  return [
+  return encodePrebuiltTupleKey([
     request.family,
     String(request.glyphId),
     request.glyphText,
     request.fontWeight ?? "normal",
     request.mode,
-  ].join("\0");
+  ]);
 }
 
-function parsePrebuiltGlyphKey(key: string):
-  | {
-      readonly family: string;
-      readonly glyphId: number;
-      readonly glyphText: string;
-      readonly fontSize: number;
-      readonly fontWeight: string;
-      readonly mode: GlyphMode;
-    }
-  | undefined {
-  const parts = key.split("\0");
+interface ParsedPrebuiltGlyphKey {
+  readonly family: string;
+  readonly glyphId: number;
+  readonly glyphText: string;
+  readonly fontSize: number;
+  readonly fontWeight: string;
+  readonly mode: GlyphMode;
+}
+
+function parsePrebuiltGlyphKey(key: string): ParsedPrebuiltGlyphKey | undefined {
+  if (key.startsWith(PREBUILT_GLYPH_KEY_V2_PREFIX)) {
+    const encodedParts = decodePrebuiltGlyphKey(key);
+    const encoded =
+      encodedParts === undefined ? undefined : parsePrebuiltGlyphKeyParts(encodedParts);
+    if (encoded !== undefined) return encoded;
+  }
+  return parsePrebuiltGlyphKeyParts(key.split("\0"));
+}
+
+function parsePrebuiltGlyphKeyParts(parts: readonly string[]): ParsedPrebuiltGlyphKey | undefined {
   if (parts.length !== 6) return undefined;
   const family = parts[0];
   const glyphIdText = parts[1];
@@ -264,6 +295,31 @@ function parsePrebuiltGlyphKey(key: string):
   if (!Number.isSafeInteger(glyphId) || glyphId < 0) return undefined;
   if (!Number.isFinite(fontSize) || fontSize <= 0) return undefined;
   return { family, glyphId, glyphText, fontSize, fontWeight, mode };
+}
+
+function encodePrebuiltTupleKey(parts: readonly string[]): string {
+  let key = PREBUILT_GLYPH_KEY_V2_PREFIX;
+  for (const part of parts) key += `${String(part.length)}:${part}`;
+  return key;
+}
+
+function decodePrebuiltGlyphKey(key: string): string[] | undefined {
+  const parts: string[] = [];
+  let cursor = PREBUILT_GLYPH_KEY_V2_PREFIX.length;
+  while (cursor < key.length) {
+    const separator = key.indexOf(":", cursor);
+    if (separator < 0) return undefined;
+    const lengthText = key.slice(cursor, separator);
+    if (!/^\d+$/.test(lengthText)) return undefined;
+    const length = Number(lengthText);
+    if (!Number.isSafeInteger(length)) return undefined;
+    const start = separator + 1;
+    const end = start + length;
+    if (end > key.length) return undefined;
+    parts.push(key.slice(start, end));
+    cursor = end;
+  }
+  return parts;
 }
 
 function scaleRecordMetrics(

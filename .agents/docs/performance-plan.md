@@ -2,7 +2,18 @@
 
 Status: unstamped research and implementation program dated 2026-08-16.
 
-The current conclusion: Waves 0–3 are in the tree. Keep the 1.1.0 public contract and instanced MSDF/SDF/alpha/color path. Atlas packing is Skyline plus a waste map, a next-fit equal-height shelf, and per-mode O(1) LRU; instances write through typed arrays; numeric fills skip `Color`; spatial queries use a hierarchical hash grid; shared styles intern to one frozen object; position-only commits patch palette x/y texels; z-index is `Float32` in the store and spatial index; fill-only GPU transforms use two `rgba32float` texels (32 bytes) and stroke/shadow live in a sparse tail after the core region; the CPU store packs scale/rotation/alpha/anchors as `f16`, generations and source revisions as `u16`, and occupied/visible/kind into one flag byte, and the dirty journal keeps a sparse slot list; live glyph instances use 24 bytes (four `f16` local-rect components, bound as `uint32x2` and unpacked in the shader). Live atlas keys pack to 52-bit integers; the instance free list is power-of-two segregated; dirty uploads merge a 256-byte gap, band leftover ranges after 8, and promote when dirty bytes reach 75% of the live span. WebGPU camera frames keep an expanded CPU working set and use stable prefix-sum compaction for the tight draw viewport on the direct natural-order mesh. WebGL and unsupported WebGPU draws keep the tight CPU grid path. Compute-cull first-seen admission spends `offscreenAdmitBudgetBytes` on ring intern hits (default 64 KiB, 32 bytes each); the tight draw view always finishes. Wave 0 adds `million-live` (coordinator mesh, not `createStressMesh`), splits rendering frames into CPU / upload / GPU completion, and records layout, instance-write, palette-write, spatial, and upload timers on `TextLayer.stats`. The 40 KiB core gzip and `atlas-pressure` frame CI gates stay deferred. Do not fail the 1.1.0 638 ms artifact. Published browser artifacts are still 1.1.0; `million-live` has no reference artifact yet. Slug and Vello stay optional quality tracks.
+The current conclusion: Waves 0–3 and the bounded GPU-scene revolution are in the tree. The
+current scene contract supports 64 rendered prototypes × 8 canonical paints across 512 bins,
+dense 8-byte mover commands with exact 800,016-byte 100,000-mover uploads, indexed 12-byte fallback,
+device/pass/encoder epoch recovery, and segmented palette/cull/scene-render timestamps. Schema 7
+raw runs plus the schema 4 promotion aggregate place resident repeatability, formal performance,
+sustained 600, and overall promotion at GO. Heterogeneous delivery and its independent 16.67 ms
+promotion are GO. Collision repeatability is GO on the WebGPU whole-frame gate.
+Packaged HarfBuzz worker SIMD is HOLD because the variant regressed 2.51%. The sealed million-live
+artifact passes the 64 MiB and 8/24/32/48-byte Wave 2 contract. Historical schema 2 resident
+evidence preserves 16-byte mover captures; historical R1a evidence preserves the indexed 12-byte /
+1,200,016-byte capture. The 1.1.0 public contract and instanced MSDF/SDF/alpha/color path remain the
+published baseline, with core gzip and atlas-pressure frame CI gates deferred.
 
 This record is the research ledger and delivery sequence. Published numbers stay in [`docs/performance.md`](../../docs/performance.md) and [`benchmarks/PERFORMANCE.md`](../../benchmarks/PERFORMANCE.md). The 1.0 specification still owns budgets until a human tightens them.
 
@@ -12,8 +23,8 @@ Version 1.1.0 already meets the formal million-label frame and mutation budgets 
 
 1. Atlas churn is unbounded. `atlas-pressure` records 638.50 ms frame p95 while packing 20,000 unique 16×16 glyphs under a 4 MiB ceiling with 3,616 evictions. The budget gate only checks bytes and eviction activation, so this cliff is currently legal.
 2. Dynamic text is at the wall. `dynamic-counters` records 16.40 ms frame p95 and 15.70 ms mutation p95 against a 16.67 ms limit.
-3. Camera-only frames still walk every resident label. `SpatialIndex.query` is a dense linear scan. Viewport workloads stay inside budget (5.40–7.60 ms p95) but leave little room for denser worlds, rotated cameras, or slower devices.
-4. The 8,000,000-glyph “full visibility” frame number in 1.1.0 artifacts is a synthetic `GlyphMesh`. `million-live` now exists as the product-path workload; treat 0.10 ms p95 as GPU submission evidence until a reference `million-live` artifact exists.
+3. Camera-only CPU queries use a tri-state spatial route: ordered grid sort through one-quarter density, an ordered reusable bitset through seven-eighths density, and a linear scan for near-full queries. Fragmented high-slot scenes still make the bitset scatter proportional to the highest occupied word.
+4. The 8,000,000-glyph “full visibility” frame number in 1.1.0 artifacts is a synthetic `GlyphMesh`. The sealed `million-live` product-path artifact records 0.10 ms p95 and owns the current Wave 2 runtime-store and submission proof.
 5. CPU and GPU still store the same fill/scale/effect record. `TextStore` columns and a GPU palette texel or storage slot. `SpatialIndex` keeps a local box and aliases the store origin, so a position storm does not write world min/max. On the WebGPU storage path the GPU table owns live x/y after the first upload; the CPU submits who moved. Fill-only labels use 32 bytes on the GPU. The CPU store now packs the non-position columns; one million reserved slots stay ≤ 48 MiB in unit measurement. The 1.1.0 artifacts still report 72 MiB and 64-byte records.
 
 Extreme here means: keep 1,000,000 resident labels and 8,000,000 visible glyphs, then make atlas pressure, dynamic counters, and camera motion cheap enough that the 16.67 ms budget is headroom rather than a cliff. Do not replace the product with a document renderer, a compute-only 2D engine, or an outline-only GPU path.
@@ -230,6 +241,221 @@ overwriting the formal artifact. A `camera-live` workload now exists (rendering 
 `--renderer webgpu` on WebGPU hardware exercises compute-cull — Wave 3's acceptance finally has a
 probe; this VM's Chrome has no WebGPU, so only the CPU-grid side ran here at 5.1 ms p95).
 
+## GPU Scene v2 and collision formal checkpoint (2026-08-29)
+
+Schema 6 formal artifacts use 1,000,000 resident labels, 10 warmup frames, 120 camera frames,
+120 position-mutation frames, and 100,000 packed position mutations per mutation frame. Renderer,
+artifact role, and exploratory status resolve to separate artifact identities. WebGL measures the
+actual scene with `EXT_disjoint_timer_query_webgl2`; WebGPU injects timestamp writes into Pixi's
+actual scene render pass and resolves the query buffer. Both artifacts captured 260 valid GPU
+timestamps with zero fallbacks. The cross-renderer browser gate also passed submitted-glyph
+readback, pixel/alpha tolerance, and one-pixel bounds tolerance.
+
+| Renderer | Phase | Frame p95 | CPU p95 | Commit p95 | GPU p95 | Upload p95 | Cull p95 |
+| --- | --- | ---: | ---: | ---: | ---: | ---: | ---: |
+| WebGL | camera | 131.30 ms | 102.30 ms | 102.30 ms | 23.27 ms | 50.20 ms | 30.80 ms |
+| WebGL | position mutation | 207.10 ms | 171.70 ms | 171.70 ms | 23.74 ms | 44.20 ms | 37.10 ms |
+| WebGPU | camera | 150.40 ms | 125.10 ms | 125.00 ms | 21.56 ms | 48.20 ms | 22.30 ms |
+| WebGPU | position mutation | 145.80 ms | 116.70 ms | 116.50 ms | 16.52 ms | 42.20 ms | 18.40 ms |
+
+The 16.67 ms GPU Scene frame budget remains red for all four renderer/phase pairs. Every schema,
+sample-count, renderer-path, timestamp-quality, accounting, readback, and admission-budget check
+passed. WebGPU inspected at most 2,048 off-screen labels per commit and materialized at most 340.
+The 16 MiB active-scatter command cap reduced position-phase upload p95 to 1,600,816 bytes; periodic
+surface-apply frames still reached 42.20 ms p95. Preserve this formal workload and budget. The
+explicit resident scene keeps a separate workload identity and separate artifacts.
+
+The one-million-label high-overlap collision workload passed its direct CPU/collision budgets on
+both renderers with 512 submitted labels, 4,096 submitted glyphs, and a stable selection hash. The
+three-run WebGPU active-scatter comparison moved CPU p95 mean from 19.00 to 16.20 ms and upload p95
+from 16,810,240 to 65,552 bytes. All three after runs passed the CPU/collision budget; whole-frame
+p95 mean remained 18.03 ms. The raw repeatability artifact preserves run range, coefficient of
+variation, hash, accounting, WebGL control, and before/after phase data.
+
+The current 2026-08-30 schema 2 aggregate closes the whole-frame gate. Its three WebGPU frame p95
+values are 12.2/11.5/11.9 ms, CPU p95 is 8.3/8.5/8.3 ms, and collision p95 is 2.9 ms in every run.
+The spatial index routes candidate density through ordered grid sort at or below one quarter, a
+reusable ordered bitset above one quarter and below seven eighths, and a linear scan at seven
+eighths or above. Exact boundary tests, mid-density hit-test coverage, exceptional-output cleanup,
+and randomized brute-force parity protect the route. All six WebGL/WebGPU candidates retain 512
+labels, 4,096 glyphs, selection hash `0x611785c5`, and exact accounting. Collision repeatability is
+GO.
+
+## Explicit GPU-scene resident checkpoint (2026-08-29)
+
+`culling.residency: "gpu-scene"` is an explicit opt-in with `"viewport"` as the default. The
+supported lane requires WebGPU compute, a storage palette, sufficient device limits, collision
+disabled, and at most 64 effective-visible rendered prototypes crossed with 8 canonical paints
+across 512 typed columns. Labels use fill-only unit transforms, zero anchors/z, alpha 1, normal
+blend, and dense monotonic setup slots. Capability and eligibility failures retain viewport
+residency with one stable public fallback reason.
+
+The resident scene keeps 32-byte absolute-AABB records and one indexed local-bounds table on the
+GPU. A camera commit refreshes only the compute viewport uniform. A sorted, unique, strictly
+contiguous active position wave submits one dense 8-byte exact-f32 `x`/`y` command per label plus a
+16-byte `baseSlot`/`count` header. Sparse, reordered, duplicate, and holed waves submit indexed
+12-byte `slot`/`x`/`y` commands with the same header. The fused palette pass writes transform origins
+and record AABBs before compute culling. CPU spatial rebucketing stays in a typed deferred journal
+until a CPU query or fallback consumes it.
+
+The current promotion proof uses five independent schema 7 formal runs and one schema 4 aggregate:
+
+Thirteen byte-exact raw evidence sources use deterministic `.json.gz` archives plus a manifest of
+logical filenames, uncompressed bytes, archive bytes, and SHA-256. The materializer restores the
+original `.json` names before formal reruns while keeping storage mechanics outside the frozen
+harness fingerprint.
+
+- [`promotion-repeatability`](../../benchmarks/results/browser-gpu-scene-resident-webgpu-promotion-repeatability-1.2.0.json),
+  SHA-256 `7f47a509e2f94e1f3a1c95707526849c7967432395e685c0db48830939d266ea`;
+- [`canonical source`](../../benchmarks/results/browser-gpu-scene-resident-webgpu-canonical-source-1.2.0.json),
+  SHA-256 `e8149d863b2d75af2e2ac997114597f5ab8ae4a3ca2746cf54c92f7672d69f7c`;
+- [`sustained 600`](../../benchmarks/results/browser-gpu-scene-resident-webgpu-fastlane-fused-600-1.2.0.json),
+  SHA-256 `61dd5fb7932fcb10868bb9fa3be13b6e4e71201b010da2b783464c8faedaddf5`.
+
+The five formal runs and the sustained run share production-build fingerprint
+`1cb31044438ee914eb5525b97c751488641312f4271127e32d08fdb0f0b27ef4`, harness fingerprint
+`2c27dffff28bd1029c6c227471cff106f2bcf120ad6f7395c8c5382d8027244e`, and runtime fingerprint
+`5179504654b69449d6d2219ef12d1f6f8a12d053c89881702db871c38dd6fec7`. Each invocation has a
+distinct UUIDv4 run id, capture time, and evidence digest.
+
+Formal camera p95 across the five runs is 8.2/8.0/7.9/7.9/6.9 ms. Position p95 is
+10.8/9.7/9.5/10.0/8.3 ms. The aggregate camera p95/p99/max is 7.9/9.4/10.6 ms and position is
+9.8/11.0/12.5 ms, with zero frames above 16.67 ms in both 600-frame sets. Five of five runs pass
+every strict formal budget. The independent sustained run records camera 10.5/13.5/21.5 ms with
+4/600 overruns and position 8.1/9.9/11.6 ms with zero overruns. Its sustained gate is GO.
+
+All six invocations preserve 50,000 ordered references with hash `0x45cfd045`, pixel hash
+`0xa8ad90b4`, and 302,457 non-transparent pixels. Formal timestamp telemetry is
+1,300 readbacks / 1,300 fused resolves / 0 standalone submissions; sustained telemetry is
+1,220/1,220/0. All 1,300 formal segmented samples resolve palette/cull/scene-render boundaries with
+zero fallback and p95 0.13/0.59/5.44 ms. Truth repeatability, output identity, formal
+performance, sustained evidence, and overall promotion are GO.
+
+The current mover ABI has a dense 8-byte exact-f32 lane and an indexed 12-byte fallback. Dense
+10,000- and 100,000-mover product frames upload exactly 80,016 and 800,016 bytes including the
+16-byte command header. The current Task 12.39 artifacts use this dense lane. Historical schema 2
+resident evidence preserves 16-byte mover totals; historical R1a evidence preserves its indexed
+12-byte / 1,200,016-byte capture.
+
+## R1a heterogeneous GPU-scene delivery checkpoint (2026-08-30)
+
+R1a retains the GPU Scene v2 2-unit grid, pixi-viewport camera sequence, 1280×800 surface, and
+roughly 259,605-label final selection. This gives the delivery gate the same full-screen pressure as
+the fixed WebGPU v2 camera/position baseline of 199.5/199.9 ms. The resident scene contains
+1,000,000 labels, 100,000 movers, 64 actual single-glyph geometry/raster prototypes, and 8 canonical
+fill paints. Prototype and paint sequences interleave independently and cover all 512 pairs. The
+supported lane fixes z 0, unit transforms, zero anchors, alpha 1, normal blend, and collision
+disabled.
+
+The formal `gpu-scene-heterogeneous-64` artifact carries two repetitions. Each repetition launches
+a fresh Chrome process, performs 10 warmups plus 120 camera and 120 position samples, and records
+live `residencyActive`, prototype, paint, and per-label-object stats. Camera upload is zero. The
+current formal and candidate artifacts use the dense 8-byte lane and record exactly 800,016 bytes.
+Frozen legacy R1a artifacts preserve the indexed 12-byte / 1,200,016-byte capture. Cull-record
+upload remains zero. Every sampled frame records product/fused/standalone
+submissions of 1/1/0 and complete palette/cull/scene-render timestamp segments.
+
+Count/hash truth comes from an independent CPU selection over all one million slots, the actual 64
+prototype bounds, and each phase's final binding viewport after timed sampling. The compact GPU
+count/hash must match that result. Each repetition reads pixels twice, and both repetitions must
+share exact count, hash, pixel hash, and non-transparent-pixel count. The 10K browser correctness
+gate adds same-content resident-product and general-reference shader pixel parity.
+
+The delivery gate requires camera and position frame p95 at or below 33.34 ms plus at least 4×
+speedup over the fixed v2 baseline. Camera CPU/commit limits are 4/2 ms; position CPU/commit limits
+are 8/4 ms; surface apply is 2 ms; GPU timestamp is 30 ms; setup is 2,000 ms; heap is 512 MiB.
+Per-label GPU-scene objects and post-setup shaped/admitted/query deltas stay zero. The 16.67 ms
+target retains its own promotion status. The existing strict one-prototype resident gate continues
+with its current limits.
+
+The two sealed 2026-08-30 artifacts establish **delivery GO** and **promotion GO**. Their four
+fresh-process repetitions record camera p95 values of 10.3, 10.1, 9.6, and 9.8 ms and position
+p95 values of 11.0, 11.0, 11.3, and 11.4 ms. The corresponding fixed-baseline speedups stay above
+19.3× for camera and 17.5× for position.
+All component, setup, heap, residency, upload, transaction, timestamp, and post-setup gates pass.
+
+Every repetition produces camera identity `343,635 / 0x33d2c553`, position identity
+`259,609 / 0x9dbf0bd5`, pixel hash `0x8c5162ca`, and 1,011,427 non-transparent pixels. The promotion
+miss counts are 0/0 camera/position frames across all four repetitions.
+
+Run the two evidence captures serially after GPU activity is quiet:
+
+```sh
+bun run benchmark:workload -- --workload gpu-scene-heterogeneous-64 --renderer webgpu --output benchmarks/results/browser-gpu-scene-heterogeneous-64-webgpu-formal-1-1.2.0.json
+bun run benchmark -- --workload gpu-scene-heterogeneous-64 --renderer webgpu
+```
+
+The canonical report consumes
+`benchmarks/results/browser-gpu-scene-heterogeneous-64-webgpu-candidate-1.2.0.json`; the first path
+retains the independent fresh-run artifact.
+
+The canonical file/evidence SHA-256 values are
+`372c87ad4530c0d941eaa01bce18d7da62d4845ec56f58e88f3bc311bc6ec0b8` and
+`9e2ef3d378b72b0436d0c1a78fd836de1a7c983690749d3683807f49e1b345da`. The independent file/evidence
+values are `46175af513d4d8ca0ec49f70f6b76dc16891063c86ac803c3118a3446d2ad49f` and
+`99bf160f1c9c422423290ed3b9279df8561a900ee228e5b774e5e74e21ffb883`. Both captures share build
+fingerprint `1cb31044438ee914eb5525b97c751488641312f4271127e32d08fdb0f0b27ef4` and harness fingerprint
+`2c27dffff28bd1029c6c227471cff106f2bcf120ad6f7395c8c5382d8027244e`.
+
+Resident compact-output capacity follows the maximum submitted glyph count. The first allocation
+used the single shared-prototype count and reserved one eight-byte reference for a 50,000-reference
+scatter. Schema 2 retains the first five attempts as pre-fix invalidated history. Three of those
+attempts passed the timing budgets:
+
+| Run | Setup | Camera frame/GPU p95 | Position frame/GPU p95 |
+| --- | ---: | ---: | ---: |
+| Former candidate | 769.6 ms | 2.2 / 0.262144 ms | 9.8 / 0.393216 ms |
+| Former repeat 2 | 762.0 ms | 3.5 / 0.393216 ms | 10.3 / 0.393216 ms |
+| Former repeat 3 | 762.4 ms | 1.6 / 0.196608 ms | 10.9 / 0.393216 ms |
+
+Five isolated post-capacity, pre-fusion 1M-label / 100K-mover attempts exercised the complete
+output:
+
+| Attempt | Setup | Camera frame/GPU p95 | Position frame/GPU p95 |
+| ---: | ---: | ---: | ---: |
+| 6 | 789.1 ms | 9.8 / 8.323072 ms | 18.5 / 9.371648 ms |
+| 7 | 777.2 ms | 11.1 / 8.323072 ms | 18.8 / 9.699328 ms |
+| 8 | 800.7 ms | 10.1 / 8.323072 ms | 19.5 / 10.092544 ms |
+| 9 | 791.4 ms | 11.6 / 8.323072 ms | 20.0 / 10.289152 ms |
+| 10 | 802.1 ms | 11.9 / 8.323072 ms | 19.9 / 10.223616 ms |
+
+Every post-fix run read exactly 50,000 ordered references with hash `0x45cfd045` directly from
+`gpu-instances-out`, then produced matching paired pixel hash `0xa8ad90b4` and 302,457
+non-transparent pixels. Each run retained one prototype, 260 valid timestamps, zero camera
+uploads, 1,600,016 position-transform bytes, zero cull-record upload bytes, and zero
+shaped/admitted/query deltas. The
+[`schema 2 snapshot`](../../benchmarks/results/browser-gpu-scene-resident-webgpu-repeatability-1.2.0.json)
+has frozen SHA-256 `b74ff555d22fa8b7f39fe0203c81293e3e55a633283a7f5322b3c16c8d9c8aa0`. It records the embedded
+attempt 10 source digest
+`d4914d86952b310de210cb517d3a2f12073494c86dc38eb609af1095a61de2eb`. Schema 3 promotion evidence
+owns the formal canonical candidate, repeatability, and sustained status.
+
+Single-submit fusion stages palette, cull, and Pixi render work in one product command buffer. The
+historical `submit-fusion-600` artifact is a digest-only standalone-timestamp baseline with
+SHA-256 `24239c2fdf6431dbb91f6f8b8f2fdc1ca99e585d9bfdd93c78bbe72a212da245`.
+It records 1,220 total / 1,220 fused / 0 standalone transactions, one fused submission per sampled
+camera and position frame, and two phase-end identity readbacks. Its timer also issues 1,220
+separate timestamp diagnostic submissions, so the zero-standalone value describes product
+transaction telemetry. Camera frame p95/p99/max is 11.8/13.0/14.3 ms with 0 / 600 frames above
+16.67 ms. Position frame
+p95/p99/max is 17.7/19.2/21.7 ms with 598 / 600 (99.67%) above budget. Actual output remains 50,000
+ordered references with hash `0x45cfd045`, paired pixel hash `0xa8ad90b4`, and 302,457
+non-transparent pixels. GPU output identity is GO. Throughput and release-tail promotion are PAUSE
+for this historical checkpoint. The current schema 7/schema 4 proof above provides fused timestamp
+truth and the active promotion decision.
+
+The resident fill hot path preserves the general shader's byte-exact `over(fill, zero)` rounding.
+`tests/browser/gpu-scene-reference.pw.ts` runs the formal 1M-label / 100K-mover / 1280×800 /
+120-frame fixture through the product single-prototype shader, forced resident multi-prototype
+shader, and forced general shader. All three must match the canonical 50,000-entry GPU identity,
+pixel hash `0xa8ad90b4`, and 302,457 non-transparent pixels. The fragment keeps the general
+composition's instruction shape with a dynamic-zero parity term, and `tests/GlyphMesh.test.ts`
+pins that WGSL expression.
+
+The current `gpu-scene-v2` control remains RED across all four WebGL/WebGPU camera/position frame
+gates. It preserves the general viewport-residency workload and establishes the CPU preparation and
+surface costs that the uniform resident contract removes.
+
 ## Structural diagnosis
 
 These are code facts, not profiler folklore. Each item names the structure that has to change.
@@ -248,9 +474,11 @@ This is the likely core of `dynamic-counters` sitting at 16.40 ms. Live instance
 
 ### Transforms are parsed and stored three times
 
-`TransformPalette.set` writes a 32-byte fill-only core (xy, scale, packed half2 rotation, packed half2 anchors, packed RGB, packed alphas plus an effect flag). Stroke and drop shadow occupy one extra texel after `capacity * 2`, allocated only when any label first uses those effects. Numeric fills skip PixiJS `Color`. The texture path still calls `writePositions` so a position storm dirties 16 bytes per label, or one span when the slot column is dense. The WebGPU storage path leaves those CPU texels stale and patches GPU `transforms[slot].xy` from packed move commands. `TextStore` keeps `x`/`y`/`zIndex` as `Float32` and packs scale, rotation, alpha, and anchors as binary16 so they match the GPU palette quanta. Occupied, visible, and the position-only kind share one flag byte. Generation and source revision are `u16`. The dirty journal still has a per-slot mask but grows the dirty-slot list with the pending wave and releases it on publish. `SpatialIndex` stores a local box and aliases the store origin columns on `TextLayer`; world min/max are derived.
+`TransformPalette.set` writes a 32-byte fill-only core (xy, scale, packed half2 rotation, packed half2 anchors, packed RGB, packed alphas plus an effect flag). Stroke and drop shadow occupy one extra texel after `capacity * 2`, allocated only when any label first uses those effects. Numeric fills skip PixiJS `Color`. The texture path still calls `writePositions` so a position storm dirties 16 bytes per label, or one span when the slot column is dense. The WebGPU storage path leaves those CPU texels stale and patches GPU `transforms[slot].xy` from packed move commands. `TextStore` keeps `x`/`y`/`zIndex` as `Float32` and packs scale, rotation, alpha, and anchors as binary16 so they match the GPU palette quanta. Occupied, visible, and the position-only kind share one flag byte. Generation is `u16`; source revision is `u32`. The dirty journal still has a per-slot mask but grows the dirty-slot list with the pending wave and releases it on publish. `SpatialIndex` stores a local box and aliases the store origin columns on `TextLayer`; world min/max are derived.
 
-The published 128 MiB store and 64-byte transform ceilings stay until new M1 Pro Chrome artifacts exist. Do not fail CI on 48 MiB or 32-byte transforms yet.
+Historical 1.1.0 browser artifacts retain the 128 MiB store and 64-byte transform ceilings. The
+current `million-live` gate enforces a 64 MiB complete live runtime store, a 32-byte fill core, and
+a 48-byte effectful maximum through its sealed M1 Pro artifact.
 
 ### Culling was a full-resident scan
 
@@ -283,13 +511,14 @@ Each row is a technique this package can steal, adapt, or reject. URLs are durab
 | Source | What it is | Steal | Reject as default |
 | --- | --- | --- | --- |
 | Green, *Improved Alpha-Tested Magnification for Vector Textures and Special Effects*, SIGGRAPH 2007 courses | Single-channel SDF atlas, shader threshold + halo | Already the SDF/MSDF product model | Regenerating bitmaps on rotate/zoom |
-| Chlumsky, *Shape Decomposition for Multi-channel Distance Fields* (2015); [msdfgen](https://github.com/Chlumsky/msdfgen) | RGB distance channels preserve corners | Keep MSDF for scalable UI and zoom | Offline-only generation; current dynamic path must stay |
+| Chlumsky, *Shape Decomposition for Multi-channel Distance Fields* (2015); [msdfgen](https://github.com/Chlumsky/msdfgen) | RGB distance channels preserve corners; the generator also exposes SDF, PSDF, and MTSDF | Keep MSDF for scalable UI and zoom and use its quality model in the tier router | Runtime generation and prebuilt pages retain separate measured lanes |
 | Esfahbod, [glyphy](https://github.com/behdad/glyphy) | Arc-approximated SDF, no large bitmap atlas | Optional huge-glyph / extreme-zoom quality | Per-fragment cost too high for 8M tiny labels |
 | Lengyel, *GPU-Centered Font Rendering Directly from Glyph Outlines*, [JCGT 6(2)](https://jcgt.org/published/0006/02/02/) (2017); shaders now [public-domain / MIT](https://github.com/EricLengyel/Slug) | Analytic coverage from quadratic Béziers in the fragment shader | Optional `glyphMode: "outline"` for huge zoom and 3D-ish projection | Default path: divergent fragments, no cheap minification, CJK/color fonts still need atlases |
 | Loop and Blinn, *Resolution Independent Curve Rendering*, SIGGRAPH 2005 | Implicit curve tests on GPU | Historical baseline for Slug | Precision artifacts Lengyel later fixed |
 | Mapbox TinySDF + PBF glyph ranges; [native text wiki](https://github.com/mapbox/mapbox-gl-native/wiki/Text-Rendering) | 24 px SDF, local CJK via canvas, protobuf range cache, IndexedDB | Fast local SDF, prebaked Latin/CJK ranges, halo from distance | Server glyph protocol as a required dependency |
 | Unity TextMeshPro | Static SDF atlas + dynamic fallback atlas | Hybrid prebake + runtime populate | Object-per-label CPU model |
-| deck.gl `TextLayer`; troika-three-text `BatchedText` | Shared atlas, one draw, worker SDF | Confirms the current batching thesis | Per-text object graphs; troika’s `onBeforeRender` CPU tax |
+| [PixiJS `BitmapText`](https://pixijs.com/8.x/guides/components/scene-objects/text/bitmap) | Pre-generated shared bitmap/SDF/MSDF atlas for high-volume dynamic text | Keep the upstream compatibility baseline and shared-atlas economics | Dynamic Unicode and heterogeneous paint continue through measured glyphflow lanes |
+| [troika-three-text `BatchedText`](https://github.com/protectwise/troika/blob/main/packages/troika-three-text/README.md) | Worker-built on-demand SDF atlas, material patching, and batched Three.js text | Reuse worker generation, shared atlas, and batched metadata ideas | The local renderer keeps its Pixi host and numeric scene contract |
 
 ### Atlas packing
 
@@ -308,6 +537,8 @@ Each row is a technique this package can steal, adapt, or reject. URLs are durab
 | Karras / NVIDIA LBVH; Morton / Z-order papers | Sort by interleaved coordinates, linear BVH | Optional rebuild for mostly-static worlds | Rebuilding a BVH on 100,000 moves per commit |
 | Frostbite / Ubisoft GPU-driven pipelines; [vkguide compute culling](https://www.vkguide.dev/docs/gpudriven/compute_culling/) | Compute frustum test, compact survivors, `drawIndirect` | WebGPU adapter: cull + compact instances on GPU | WebGL2 default; no compute, keep CPU grid |
 | Three.js Blocks `BatchedText` / `ComputeInstanceCulling` | GPU frustum + LOD + bitonic sort for SDF batches | LOD glyph drop at tiny screen size; indirect args | Transparency sort that breaks our insertion-order contract |
+| [Mapbox cross-tile collision](https://github.com/mapbox/mapbox-gl-native/wiki/Collision-Detection) and [MapLibre retained placement](https://github.com/maplibre/maplibre-gl-js/blob/main/src/symbol/placement.ts) | Stable cross-tile symbol identity, previous-placement opacity, collision fades, and variable-anchor continuity | Retain symbol identity and anchor history across camera, zoom, tile, and scene revisions | Application sources keep ownership of geographic identity and priority policy |
+| [CesiumJS `LabelCollection`](https://cesium.com/learn/cesiumjs/ref-doc/LabelCollection.html) and [deck.gl `TextLayer`](https://deck.gl/docs/api-reference/layers/text-layer) | A few large collections, static/dynamic partitioning, and data-driven label layers | Bin shared prototypes and paint into a bounded set of large resident batches | Rich per-label properties enter through explicit capability bins |
 
 ### Shaping, layout, and engines we will not become
 
@@ -315,6 +546,7 @@ Each row is a technique this package can steal, adapt, or reject. URLs are durab
 | --- | --- | --- | --- |
 | HarfBuzz; [harfbuzzjs](https://github.com/harfbuzz/harfbuzzjs); Behdad SIMD notes | Production shaper, digest filters, optional SIMD | Keep worker HarfBuzz; intern shape plans; transferable caches | Replacing it with rustybuzz (1.5–2× slower) |
 | cosmic-text / Parley | Shape-plan and run caches | Cache key shape already specified; make it numeric and shared | In-process editor semantics |
+| [glyphon 0.12](https://docs.rs/crate/glyphon/latest) / cosmic-text 0.19 and [wgpu_glyph](https://github.com/hecrj/wgpu_glyph) | Current wgpu atlas middleware plus its glyph-brush predecessor; glyphon renders into an existing pass | Keep the existing-pass integration pattern, atlas ownership boundary, and shaped-run cache model | Rust/wgpu integration remains a portable lineage reference |
 | Vello (formerly piet-gpu), [linebender/vello](https://github.com/linebender/vello); Pathfinder; Forma | Compute-centric 2D, prefix sums, sparse strips | Ideas for huge outline glyphs and clip | Replacing PixiJS Mesh with a compute renderer |
 | Flutter Impeller typography | Row-packed glyph atlas, integer boxes | Integer UV packing, row shelves | Skia/Impeller as a peer |
 | Skia / Chrome text | Huge complexity, subpixel, hinting | Measurement honesty, cache hierarchy | Document-editor scope |
@@ -376,13 +608,18 @@ Do this only after Wave 1 timers show where the remaining bytes and bandwidth go
 
 - Make `TransformPalette` the GPU view of `TextStore` columns plus a sparse effect table. Fill-only labels use a 16- or 32-byte record (xy, scale, packed rotation, packed rgba, packed flags). Stroke/shadow stay in a side table.
 - Stop mirroring x/y into spatial storage as a second write; derive query bounds from position plus cached local width/height. LANDED: `TextLayer` aliases store x/y; the index stores the local box.
-- Quantize instance local rectangles to f16 or 16-bit fixed point relative to the label origin. UVs are already `uint16`. Target 20–24 bytes per glyph before proposing a budget change. Keep the 32-byte public ceiling until artifacts prove the smaller stride.
+- Quantize instance local rectangles to f16 or 16-bit fixed point relative to the label origin. UVs are already `uint16`. Current unique prototype records use 24 bytes; visible draw references use 8 bytes. Historical synthetic artifacts retain the 32-byte instance ceiling.
 - Intern `style` and `text` references in `TextStore` so 100,000 counters that share a format do not hold 100,000 style objects.
 - Upload only dirty palette texels and dirty instance ranges. Position storms should not rewrite fill/effect texels.
 
-Primary targets: CPU store ≤ 48 MiB per 1,000,000 allocated labels; transform ≤ 32 bytes per fill-only label; instance ≤ 24 bytes per glyph on the live path; `position-storm` frame p95 ≤ 4 ms.
+Primary targets: the constructor base store stays within 48 MiB plus 256 B for 1,000,000 reserved
+slots; the complete `million-live` runtime store stays within 64 MiB; fill-only transforms use a
+32-byte core and effects add one 16-byte sparse record; unique prototype glyphs use 24-byte
+records; visible draw references use 8 bytes; `position-storm` frame p95 stays ≤ 4 ms.
 
-Verify: existing storage assertions in `benchmarks/budgets.ts` plus new optional tighter checks behind the same command once artifacts exist.
+Verify: the constructor base-store assertion stays in `tests/TextStore.test.ts`. The current
+`million-live` schema 7 artifact carries 10 warmup plus 120 sampled product frames and feeds the
+hard checks in `benchmarks/budgets.ts`.
 
 ### Wave 3 — WebGPU compute cull and storage buffers
 
@@ -431,22 +668,148 @@ These are optional modes. They must not disturb the default 8M-instance budget.
 - WASM SIMD HarfBuzz if harfbuzzjs exposes it and a shaping microbench beats the current worker by more than variance.
 - SharedArrayBuffer ring between the shaping worker and the instance store, so shaped runs never copy.
 
+#### Current decision matrix — 2026-08-29
+
+| Track | Decision | Scope and remaining gate |
+| --- | --- | --- |
+| HarfBuzz GPU | GO packed / PAUSE direct | Packaged Worker/Wasm runtime and packed browser storage pass; direct `vec4<i32>` waits for its independent quality/performance gate at 114.8 MiB |
+| Outline | GO | Explicit `glyphMode: "outline"` WebGPU compute/fragment integration and lifecycle gates pass; automatic atlas rendering remains the default |
+| SharedArrayBuffer | GO | Advanced opt-in transport requires `SharedArrayBuffer`, `Atomics`, and cross-origin isolation; leased run views, browser worker protocol, and matching hashes pass |
+| SIMD shaping | HOLD | Packaged HarfBuzz 11.2.1 scalar/SIMD Workers match exactly across CJKV, Arabic, Devanagari, Hebrew, and Thai; five isolated production-path samples show a 2.51% `variant-regression`, and package inclusion requires human approval |
+| Collision | GO | Six sealed runs preserve selection identity; the WebGPU whole-frame p95 mean is 11.87 ms |
+
+Task 12.8 remains open for a production SIMD asset and each remaining default-promotion workload.
+The completed GO scopes retain explicit opt-in boundaries.
+
+#### 2026-08-29 market refresh and next evolution
+
+This is a representative mainstream/frontier project lineage for the next renderer revisions.
+Each route keeps its own formal workload, capability boundary, output identity, and promotion gate.
+
+Version snapshot: Mapbox GL JS main manifest 3.29.0; MapLibre GL JS main manifest 6.6.0; deck.gl
+9.4 alpha; Troika 0.53.0; HarfBuzz GPU Draw 14.4.0; Vello 0.10.0 / Sparse Strips 0.2.0 / Glifo
+0.3.0; glyphon 0.12 / cosmic-text 0.19; PixiJS upstream 8.20.1; this repository's PixiJS pin
+8.19.0; `@pmndrs/glyph` manifest 0.0.0 during incubation.
+
+| Route | Evolution | Representative lineage | Local next gate |
+| --- | --- | --- | --- |
+| R1 | Heterogeneous GPU Scene | [CesiumJS `LabelCollection`](https://cesium.com/learn/cesiumjs/ref-doc/LabelCollection.html), [deck.gl `TextLayer`](https://deck.gl/docs/api-reference/layers/text-layer), and [PixiJS `BitmapText`](https://pixijs.com/8.x/guides/components/scene-objects/text/bitmap) converge on a few large collections and shared glyph resources | Admit 64–256 prototype/paint bins into one revision while keeping a small number of large indirect batches under the current [WebGPU capability contract](https://github.com/gpuweb/gpuweb/issues/5175) |
+| R2 | Revisioned Scene WAL | [`@pmndrs/glyph`](https://github.com/pmndrs/glyph) publishes retained revisioned render plans with resource lifetimes and minimal patches | Extend the frame transaction into an acknowledged write-ahead log with scene revision, checkpoint recovery, and deterministic retirement |
+| R3 | Skia-tier Router | [Skia `SubRunContainer`](https://skia.googlesource.com/skia/+/main/src/text/gpu/SubRunContainer.h), [HarfBuzz GPU Draw](https://harfbuzz.github.io/harfbuzz-hb-gpu.html), [Slug](https://github.com/EricLengyel/Slug), [msdfgen](https://github.com/Chlumsky/msdfgen), [Troika](https://protectwise.github.io/troika/troika-three-text/), and [glyphon](https://docs.rs/crate/glyphon/latest) cover mask, SDF/MSDF, analytic outline, worker generation, and existing-pass wgpu text | Select mask, SDF/MSDF, analytic outline, compute outline, or color per projected size, transform, paint, font, and device capability |
+| R4 | Map Symbol Continuity | [Mapbox cross-tile identity](https://github.com/mapbox/mapbox-gl-native/wiki/Collision-Detection) and [MapLibre retained placement](https://github.com/maplibre/maplibre-gl-js/blob/main/src/symbol/placement.ts) preserve label identity, opacity, anchors, and collision state across camera and zoom revisions | Add stable symbol ids, retained anchor choice, priority, and fade state to the scene WAL with deterministic camera/zoom fixtures |
+| R5 | Sparse Glyph Strip Cache | [Vello issue #670](https://github.com/linebender/vello/issues/670) and the Vello 0.10 / Sparse Strips 0.2 / Glifo 0.3 family explore retained rendered paths and cached glyph work | Cache sparse strips for repeated huge paths and compare memory, zoom continuity, pixels, and sustained frame tails |
+
+Execution priority is R1 Heterogeneous GPU Scene, then R2 Revisioned Scene WAL, then R3
+Skia-tier Router. R4 and R5 retain independent continuity and sparse-path laboratories with their
+own output and sustained-frame gates.
+
+#### R4 map-symbol continuity checkpoint — 2026-08-30
+
+R4 now has an advanced opt-in `SymbolContinuityIndex` with explicit logical and candidate identity,
+multi-candidate tile overlap, retained-anchor preference, f32 priority, insertion order, separated
+source/placement epochs, fade/readmit/TTL state, staged frame rollback, pure committed reads, u32 id
+exhaustion, a 1,048,576-record hard ceiling, and a bit-level complete state hash. The targeted suite
+covers collision losers, priority and retained winners, provisional-id isolation, reclaimed
+tombstones, capacity recovery, signed and typed identity, and abort retry identity.
+
+`bun run benchmark:symbol-continuity` reserves 100,000 records, warms five frames, and samples 20
+full overlap/collision frames in both hash modes. Repeated local verification measured manual-mode
+frame p95 at 9.85–11.57 ms, every-frame mode p95 at 14.46–16.17 ms, and the manual checkpoint hash
+at 13.72–15.27 ms outside the sampled frame. Both modes retain an estimated 15,500,000 bytes. The
+final committed hash is `1269277151`, the every-frame sampled hash is `485162081`, and all expected
+counters match.
+
+R4 correctness and the 100k dual-mode index microbenchmark are GO. TextLayer product integration is
+HOLD through the R2 Scene WAL/delta source, browser workload, and sustained-frame gate.
+
+#### R5 sparse-strip implementation checkpoint — 2026-08-30
+
+R5 now has a versioned 4x4-tile CPU IR, a two-pass typed encoder, a byte-bounded defensive LRU,
+power-of-two physical pixel buckets, grayscale/binary AA identity, and an independent WebGPU
+rehydration adapter. The adapter writes a batched premultiplied `rgba8unorm` texture through the
+existing `OutlineColorAtlas` seam and classifies capability, storage, shader, queue, destruction,
+and cleanup outcomes. All u32 metadata and allocation products pass checked preflight; packing owns
+its snapshot before pipeline compilation. Sweep-line placement validation stays near O(N log N),
+and exact-workgroup-size dispatch groups keep mixed 256/512 padded invocations within 1.15× of
+effective pixels in the browser gate.
+
+`bun run benchmark:sparse-strips` uses the pinned HarfBuzz Arabic glyph 4. The 512-pixel sample
+allocates 11,360 bytes plus 2,451 bytes of encoding scratch against 38,550 dense alpha bytes; final
+and peak ratios are 29.47% and 35.83%. The 1024-pixel sample allocates 22,688 bytes plus 9,509 bytes
+of scratch against 150,822 dense bytes; final and peak ratios are 15.04% and 21.35%. Warm CPU
+rehydration p95 is 1.78 ms at 512 and 6.54 ms at 1024 in the recorded local run. Coverage and RGBA
+hashes remain stable across repeated decoding.
+
+The real Chrome WebGPU fixture rehydrates 256- and 512-pixel buckets, matches the CPU reference with
+maximum channel delta one, zero mismatched channels, and a stable repeated texture hash. CPU
+IR/cache correctness and single-batch GPU pixels are GO. Product routing is HOLD through the
+five-run atlas-pressure, stable-atlas-hit, 600-frame tail, live-plus-retired memory, and package
+promotion gates.
+
+#### HbGpuDrawSpike checkpoint — 2026-08-29
+
+`bun run benchmark:hb-gpu` compiles a native helper into a system temporary directory with argv-form
+`pkg-config` and `clang` calls. The helper shapes the five deterministic Noto subset corpora, then
+passes every unique glyph through `hb_gpu_draw_glyph_or_fail` and `hb_gpu_draw_encode`. The raw
+artifact is [`benchmarks/hb-gpu/results/hb-gpu-draw-native-14.4.0.json`](../../benchmarks/hb-gpu/results/hb-gpu-draw-native-14.4.0.json).
+
+The measured Apple M1 Pro run shaped 151 glyphs / 114 font-local unique glyphs with zero draw
+failures, zero encode failures, zero intra-run blob mismatches, and matching SHA-256 hashes across
+sequential repeats. Warm encode throughput was 377,560 glyphs/s; per-glyph encode was 2.125 µs p50,
+6.882 µs p95, and 10.015 µs p99. The installed WGSL sources total 15,469 bytes. Native timing covers
+CPU shaping and outline blob encode. The packed browser spike owns WGSL compilation, upload cost,
+fragment coverage cost, fill-rate, ordering, blending, and pixel acceptance.
+
+HarfBuzz 14.4.0 documents each blob as 8-byte `RGBA16I` texels in
+[`hb-gpu-draw.cc`](https://github.com/harfbuzz/harfbuzz/blob/14.4.0/src/hb-gpu-draw.cc), while its
+WGSL draw helper consumes `array<vec4<i32>>` in
+[`hb-gpu-draw-fragment.wgsl`](https://github.com/harfbuzz/harfbuzz/blob/14.4.0/src/hb-gpu-draw-fragment.wgsl).
+Direct storage-buffer upload therefore sign-extends each 8-byte texel into 16 bytes. The corpus
+occupies 327,232 packed bytes and 654,464 sign-extended bytes. At the `atlas-pressure` 20,000-unique
+projection, packed 16-bit storage is 57,409,123 bytes and fits the 64 MiB ceiling; direct
+`vec4<i32>` storage is 114,818,246 bytes and triggers the pause gate. The aggregate sign-extended
+p95 is 12,896 bytes per glyph, inside the 16 KiB pathology gate.
+
+The 10,000 glyphs/s native floor represents about 166 cold glyph encodes in one 16.67 ms frame.
+The primary storage gate divides 64 MiB across the `atlas-pressure` 20,000-unique workload, yielding
+3,355 bytes per glyph on average. The 16 KiB p95 gate serves as a single-glyph pathology detector;
+cache capacity follows the mean-byte projection.
+
+The packed browser artifact is GO for both `array<vec2<u32>>` signed-16 unpack and available
+`rgba16sint` texture loads. They produce matching repeated pixel/mask hashes across five script
+samples and project to 57,409,123 bytes at 20,000 unique glyphs. The packaged Worker/Wasm encoder is
+also GO: it matches native blob hashes, reaches 19,607 warm glyphs/s, keeps cold start below 100 ms,
+and releases all synchronized font resources. Its raw artifacts are
+[`hb-gpu-draw-browser-14.4.0.json`](../../benchmarks/hb-gpu/results/hb-gpu-draw-browser-14.4.0.json)
+and
+[`hb-gpu-draw-wasm-browser-14.4.0.json`](../../benchmarks/hb-gpu/results/hb-gpu-draw-wasm-browser-14.4.0.json).
+
+Direct `vec4<i32>` production storage stays PAUSE at 114,818,246 projected bytes. The existing
+SDF/MSDF/color atlas renderer remains the shipping WebGL/WebGPU default. HarfBuzz lists
+`libharfbuzz-gpu` among its experimental libraries, so the lab pins both `harfbuzz-gpu` and
+`harfbuzz` to 14.4.0. Version drift pauses artifact creation; the current atlas renderer supplies
+the compatibility fallback. Reproduction uses `bun run benchmark:hb-gpu`,
+`bun run benchmark:hb-gpu-browser`, and `bun run benchmark:hb-gpu-wasm`. The installed `hb-gpu.h`
+carries the HarfBuzz permissive license; the five fixture fonts retain SIL OFL 1.1 provenance in
+`site/public/fonts/README.md` and remain outside the npm package file set.
+
 Each track needs its own workload and a documented pixel tolerance. None of them may raise the core gzip size.
 
-## Proposed budget tightening
+## Budget status
 
-These are proposals. The specification budgets stay until a human accepts new numbers and Wave 0 can measure them.
+Task 12.5 now has executable current Wave 2 semantics. Promotion stays open through the formal M1
+Pro artifact capture and passing gate. The remaining rows retain proposal status.
 
-| Budget | 1.1.0 rule | Proposed extreme rule |
+| Budget | 1.1.0 historical rule | Current rule or proposal |
 | --- | --- | --- |
 | atlas-pressure frame p95 | unchecked | 16.67 ms after Wave 1 |
 | dynamic-counters frame p95 | 16.67 ms | 8.00 ms after Wave 1 |
 | camera-only CPU at 1M / 50k | folded into frame | 1.00 ms after Wave 3 on WebGPU |
-| live-layer 8M glyphs | synthetic mesh only | measured product path; budget set from Wave 0 |
-| CPU store / 1M | 128 MiB (72 used) | 48 MiB after Wave 2 |
-| transform record | 64 B | 32 B fill-only after Wave 2 |
-| glyph instance | 32 B | 24 B after Wave 2, 32 B still the compatibility ceiling |
-| core ESM gzip | 40 KiB CI fail deferred | still measured; no replacement ceiling |
+| live-layer 8M glyphs | synthetic `million-full` | `million-live` product frame p95 ≤ 16.67 ms |
+| CPU store / 1M | 128 MiB (72 used) | live runtime ≤ 64 MiB; constructor base ≤ 48 MiB + 256 B |
+| transform record | 64 B | 32 B fill core; 48 B effectful maximum |
+| glyph storage | 32 B synthetic instance | 24 B prototype record; 8 B draw reference |
+| core ESM gzip | 40 KiB CI fail deferred | measured graph with deferred fail threshold |
 
 ## Constraints that stay in force
 

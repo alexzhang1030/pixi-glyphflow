@@ -253,7 +253,7 @@
   - Files: src/render/TransformPalette.ts, src/render/shaders.ts, src/render/GlyphMesh.ts, src/render/RenderSurface.ts, src/render/pack.ts
 
 - [x] Task 12.5c: Pack TextStore columns toward 48 MiB / 1M (Wave 2 store).
-  - Acceptance: One million reserved slots allocate ≤ 48 MiB plus the journal floor. Scale/rotation/alpha/anchors are `f16`; generation and source revision are `u16`; occupied/visible/kind share one flag byte; the dirty journal slot list is sparse. Published 128 MiB store ceiling stays. The public `alpha: 0.5` snapshot still round-trips.
+  - Acceptance: One million reserved slots allocate ≤ 48 MiB plus the journal floor. Scale/rotation/alpha/anchors are `f16`; generation is `u16`; source revision is `u32`; occupied/visible/kind share one flag byte; the dirty journal slot list is sparse. Published 128 MiB store ceiling stays. The public `alpha: 0.5` snapshot still round-trips.
   - Verify: bun test tests/TextStore.test.ts tests/DirtyJournal.test.ts tests/pack.test.ts
   - Files: src/store/TextStore.ts, src/store/DirtyJournal.ts, src/render/pack.ts
 
@@ -273,9 +273,9 @@
   - Files: src/atlas/glyphIdentity.ts, src/atlas/GlyphAtlas.ts, src/render/RenderCoordinator.ts, src/render/GlyphInstanceStore.ts, src/render/DirtyRanges.ts, src/render/TransformPalette.ts
 
 - [ ] Task 12.5: Remaining Wave 2 follow-through after measured artifacts.
-  - Acceptance: Published instance, transform, and store ceilings may tighten once M1 Pro Chrome artifacts exist. `million-live` still needs a reference artifact before a live-path frame budget.
-  - Verify: bun run benchmark:check
-  - Files: benchmarks/budgets.ts, docs/performance.md
+  - Acceptance: The formal M1 Pro `million-live` workload uses 1,000,000 labels, 10 warmup frames, and 120 sampled steady-state full-visibility product frames. Its current schema 7 artifact passes the evidence seal plus current browser-build and harness fingerprints. Frame p95 is ≤ 16.67 ms; the complete live runtime store is ≤ 64 MiB; draw references are 8 bytes; prototype records are 24 bytes; fill transforms use a 32-byte core and a 48-byte effectful maximum. The constructor base-store unit ceiling remains 48 MiB plus 256 B. Historical 1.1.0 thresholds retain their independent gate. Completion requires the formal artifact and passing budget command.
+  - Verify: `bun run benchmark -- --workload million-live --renderer webgl` then `bun run build && bun run benchmark:check`
+  - Files: benchmarks/schema.ts, benchmarks/workloads.ts, benchmarks/browser/workloads.ts, benchmarks/budgets.ts, benchmarks/report.ts, benchmarks/artifacts.ts, tests/benchmark-workloads.test.ts, tests/benchmark-artifacts.test.ts, docs/performance.md, benchmarks/PERFORMANCE.md, .agents/docs/performance-plan.md
 
 - [x] Task 12.6: Add a WebGPU compute cull adapter (Wave 3).
   - Acceptance: Camera-only WebGPU frames inside an expanded CPU working set compact the direct single-bank mesh with stable z/insertion order and no instance rewrite. WebGL, unavailable devices, disabled compute culling, and multi-segment meshes keep the tight CPU grid. Diagnostics name the path that ran.
@@ -451,17 +451,159 @@
   - Verify: bun test tests/paletteStorage.test.ts tests/GlyphMesh.test.ts tests/TransformPalette.test.ts tests/RenderCoordinator.test.ts tests/TextLayer.test.ts tests/TextLayer.commit.test.ts tests/computeCull.test.ts && bun run typecheck && bun run docs:check
   - Files: src/render/paletteStorage.ts, src/render/palettePatch.wgsl.ts, src/render/PaletteStoragePass.ts, src/TextLayer.ts
 
-- [x] Task 12.35: Let the GPU own compute-cull boxes on the storage path.
-  - Acceptance: WebGPU storage plus compute-cull position storms do not walk slots to
-    rewrite cull AABBs and do not upload a dirty cull-record span when the local box is
-    unchanged. The cull shader adds palette origin to the local box. Camera-only still
-    uploads nothing. Texture, WebGL, and cpu-grid keep the CPU world-AABB patch.
-    Content-layout that changes the local box still writes CPU records. Hit-test and 1M
-    residency stay. Public `TextLayer` contract stays.
+- [x] Task 12.35: Let the GPU own compute-cull boxes on the storage-backed viewport path.
+  - Acceptance: WebGPU storage plus compute-cull position storms update palette origins and trigger
+    culling with zero CPU AABB walk and zero dirty cull-record upload while the local box stays
+    stable. The cull shader adds the palette origin to each local record. Content-layout changes
+    rewrite local records. Texture, WebGL, and cpu-grid retain CPU world-AABB updates. Hit-test and
+    million-label residency stay stable. The public `TextLayer` contract stays.
   - Verify: bun test tests/computeCull.test.ts tests/paletteStorage.test.ts tests/SpatialIndex.test.ts tests/TextLayer.test.ts tests/TextLayer.commit.test.ts && bun run typecheck && bun run docs:check
-  - Files: src/culling/computeCull.ts, src/culling/computeCull.wgsl.ts, src/render/ComputeCullPass.ts, src/TextLayer.ts
+  - Files: src/culling/computeCull.ts, src/culling/computeCull.wgsl.ts, src/render/ComputeCullPass.ts, src/render/PixiRendererBackend.ts, src/render/GlyphDrawPlanner.ts, src/TextLayer.ts
+
+- [x] Task 12.35a: Bind asynchronous glyph rasters to one render lifetime.
+  - Acceptance: A late raster from an older commit, source/font revision, lifecycle epoch, atlas
+    generation, or renderer destination reaches the stale path and contributes zero atlas uploads.
+    Attach starts the new renderer destination while captured work settles. Detach and destroy
+    settle internally owned raster commits and release their renderer ownership. Injected atlases
+    retain caller lifecycle ownership; public atlas frames and coordinator token frames stay
+    isolated. Active rasterizer errors preserve their rejection. Lifetime metadata scales with
+    pending glyph work. `TextLayer` public exports stay.
+  - Verify: bun test tests/GlyphAtlas.test.ts tests/RenderCoordinator.test.ts tests/TextLayer.render-lifecycle.test.ts tests/TextLayer.commit.test.ts && bun run test:browser -- glyph-rendering lifecycle && bun run typecheck && bun run build
+  - Files: src/TextLayer.ts, src/render/RenderCoordinator.ts, src/atlas/GlyphAtlas.ts, src/atlas/RasterGlyphProvider.ts, src/atlas/types.ts, tests/GlyphAtlas.test.ts, tests/RenderCoordinator.test.ts, tests/TextLayer.render-lifecycle.test.ts, .agents/docs/gotchas.md
+
+- [x] Task 12.36: Measure HarfBuzz GPU Draw native encode.
+  - Acceptance: The temporary native helper uses HarfBuzz 14.4.0 to shape five provenance-pinned
+    Noto subsets and encode every font-local unique glyph through `hb_gpu_draw_glyph_or_fail` plus
+    `hb_gpu_draw_encode`. Raw JSON records hashes, extents, failures, per-glyph bytes/timing,
+    sequential determinism repeats, shader bytes, packed bytes, sign-extended WebGPU bytes, and
+    the 20,000-unique projection. The direct `vec4<i32>` path pauses at 64 MiB; the packed 16-bit
+    representation advances to a browser-only GPU Draw spike. Production rendering stays stable.
+  - Verify: bun test tests/hb-gpu-benchmark.test.ts && bun run benchmark:hb-gpu && bun run typecheck && bun run docs:check
+  - Files: benchmarks/hb-gpu, tests/hb-gpu-benchmark.test.ts, package.json, .agents/docs/performance-plan.md, .agents/docs/gotchas.md
+
+- [x] Task 12.37: Add explicit GPU-scene residency and its formal workload.
+  - Acceptance: `culling.residency: "gpu-scene"` retains one supported shared-prototype WebGPU
+    scene, keeps `"viewport"` as the default, reports stable capability/eligibility fallbacks, and
+    preserves attach/detach/remove/reuse/destroy behavior. Camera commits record zero query,
+    admission, coordinator, and cull-record-upload deltas. Its sealed artifact captures a
+    100,000-position pre-fast-lane commit at 1,600,016 transform bytes and zero cull-record bytes. The
+    byte-exact browser reference compares
+    product single-prototype, forced resident multi-prototype, and forced general shaders at the
+    formal 1M/100K scale. Five schema 7 runs plus one sustained run preserve exact GPU output and
+    pixel identity. Schema 3 promotion evidence owns the formal canonical and sustained status.
+  - Verify: bun test tests/TextLayer.gpu-resident.test.ts tests/GpuResidentScene.test.ts tests/PixiRendererBackend.test.ts tests/paletteStorage.test.ts tests/computeCull.test.ts && bun run test:browser -- gpu-scene-resident && bun run benchmark -- --workload gpu-scene-resident --renderer webgpu && bun run typecheck && bun run docs:check
+  - Files: src/TextLayer.ts, src/types.ts, src/render/GpuResidentScene.ts, src/render/RenderCoordinator.ts, src/render/ComputeCullPass.ts, src/render/PaletteStoragePass.ts, src/render/RenderSurface.ts, src/render/PixiRendererBackend.ts, benchmarks, docs, .agents/docs
+
+- [x] Task 12.38: Validate packed HarfBuzz GPU Draw in browser and Worker/Wasm.
+  - Acceptance: `array<vec2<u32>>` and available `rgba16sint` paths render matching repeated pixel
+    hashes from packed 16-bit blobs. The packaged Worker/Wasm encoder matches native blob hashes,
+    exceeds 10,000 warm glyphs/s, starts within 100 ms, and releases synchronized font resources.
+    Direct `vec4<i32>` storage remains paused at its 114.8 MiB projection.
+  - Verify: bun run benchmark:hb-gpu-browser && bun run benchmark:hb-gpu-wasm && bun test tests/hb-gpu-benchmark.test.ts tests/hb-gpu-encoder.test.ts tests/hb-gpu-wasm.test.ts tests/hb-gpu-wasm-artifact.test.ts
+  - Files: src/hb-gpu, benchmarks/hb-gpu, tests/hb-gpu-benchmark.test.ts, tests/hb-gpu-encoder.test.ts, tests/hb-gpu-wasm.test.ts, package.json
+
+- [x] Task 12.39: Clear GPU-scene resident performance promotion gates.
+  - Acceptance: Product and timestamp single-submit fusion is integrated. The current schema 7
+    five-run set records 1,300 `fusedTimestampResolves` and zero
+    `standaloneTimestampSubmissions`; the 600-frame run records 1,220 and zero. Every run preserves
+    50,000 ordered references with hash `0x45cfd045`, pixel hash `0xa8ad90b4`, and 302,457
+    non-transparent pixels. Schema 4 records exact palette/cull/scene-render segments for all 1,300
+    formal samples. Five of five runs pass every strict budget: aggregate camera p95/p99/max is
+    7.9/9.4/10.6 ms and position is 9.8/11.0/12.5 ms, with zero overruns. Sustained camera is
+    10.5/13.5/21.5 ms with 4/600 overruns and position is 8.1/9.9/11.6 ms with zero overruns. Truth
+    repeatability, formal performance, sustained 600, and promotion are GO. Historical Task 12.39
+    resident inputs preserve 16-byte / 1,600,016-byte captures; the current set uses the dense
+    8-byte / 800,016-byte lane.
+  - Verify: bun test tests/WebGPUFrameTransaction.test.ts tests/gpu-scene-resident-budget.test.ts tests/benchmark-workloads.test.ts && bun run benchmark -- --workload gpu-scene-resident --renderer webgpu && bun run docs:check
+  - Files: src/render/WebGPUFrameTransaction.ts, src/render, benchmarks, tests/WebGPUFrameTransaction.test.ts, tests/gpu-scene-resident-budget.test.ts, tests/benchmark-workloads.test.ts, docs, .agents/docs
+
+- [x] Task 12.40: Prove R1a heterogeneous GPU-scene delivery.
+  - Acceptance: `gpu-scene-heterogeneous-64` runs 1,000,000 resident labels and 100,000 movers
+    through `gpu-scene` with 64 actual single-glyph raster prototypes and 8 independently
+    interleaved canonical paints. Both fresh-process repetitions record 64 prototypes, 8 paints,
+    512 prototype/paint pairs, zero per-label GPU-scene objects, collision disabled, camera upload
+    zero, current dense position upload 800,016 bytes, cull-record upload zero, and one product/fused/standalone
+    submission tuple of 1/1/0 per sampled frame. Independent CPU selection over the 64 prototype
+    bounds matches camera and position compact-output count/hash; paired pixel readbacks and both
+    repetitions match exactly. Delivery requires camera and position p95 at or below 33.34 ms and
+    at least 4× versus the fixed 199.5/199.9 ms GPU Scene v2 baseline. The 16.67 ms promotion target
+    carries an independent status. The existing strict resident gate keeps its current limits.
+  - Status: Delivery and promotion are GO across four refreshed fresh-process repetitions. Camera
+    p95 is 9.6–10.3 ms and position p95 is 11.0–11.4 ms. Count/hash/pixel identity is exact across
+    the two sealed artifacts. Frozen legacy R1a artifacts preserve the indexed 12-byte /
+    1,200,016-byte capture.
+  - Verify: bun test tests/benchmark-artifacts.test.ts tests/benchmark-workloads.test.ts tests/gpu-scene-heterogeneous-budget.test.ts && bun run test:browser -- gpu-scene-heterogeneous && bun run benchmark -- --workload gpu-scene-heterogeneous-64 --renderer webgpu && bun run typecheck && bun run format:check && bun run lint && bun run build && bun run docs:check
+  - Files: benchmarks/schema.ts, benchmarks/workloads.ts, benchmarks/browser, benchmarks/run.ts,
+    benchmarks/artifacts.ts, benchmarks/gpu-scene-heterogeneous-budget.ts, benchmarks/report.ts,
+    benchmarks/PERFORMANCE.md, tests, docs/performance.md, .agents/docs/performance-plan.md
+
+- [x] Task 12.41: Promote dense-contiguous resident movers to the 8-byte lane.
+  - Acceptance: Each resident mover lease explicitly selects `dense` or `indexed`. Sorted, unique,
+    strictly contiguous active slots use exact-f32 `x`/`y` pairs with `baseSlot` and `count` in the
+    16-byte header; 10,000 and 100,000 movers upload exactly 80,016 and 800,016 bytes. Sparse,
+    reordered, duplicate, holed, removed-slot, and overflow inputs use the indexed 12-byte fallback
+    with last-write-wins identity. Growth, overlapping leases, failure, cancellation, device loss,
+    recovery, fused AABB updates, and exact-once release preserve both modes. Browser reference gates
+    retain 50,000 ordered references, hash `0x45cfd045`, pixel hash `0xa8ad90b4`, 302,457
+    non-transparent pixels, zero cull-record upload, and product/fused/standalone submissions 1/1/0.
+    Fresh formal and sustained artifacts must satisfy the strict 16.67 ms gate before R1a position
+    promotion advances.
+  - Status: Source, unit/browser correctness, resident smoke, formal reference, and dense fused
+    compute probe are green. Fresh formal/candidate/sustained artifacts all record exact 800,016-byte
+    uploads and satisfy the strict resident gate. Device/pass/encoder recovery and segmented
+    timestamps are sealed in the current artifact set.
+  - Verify: bun test && bun run test:browser -- gpu-scene-resident gpu-scene-reference gpu-scene-heterogeneous gpu-resident-compute && bun run typecheck && bun run format:check && bun run lint && bun run build && bun run docs:check && bun run benchmark:check
+  - Files: src/store/TextStore.ts, src/render/paletteStorage.ts, src/render/PaletteStoragePass.ts,
+    src/render/palettePatch.wgsl.ts, src/render/GpuResidentScene.ts, src/TextLayer.ts, benchmarks,
+    tests, README.md, docs, .agents/docs
+
+- [x] Task 12.42: Build the R4 map-symbol continuity correctness vertical slice.
+  - Acceptance: One logical record accepts overlapping tile/anchor candidates and selects by f32
+    priority, retained candidate, insertion order, and typed identity. Source presence and collision
+    placement remain separate across fade/readmit/TTL transitions. Frame abort restores provisional
+    ids, reclaimed tombstones, arrays, maps, queues, and counters. Committed reads stay pure and the
+    complete bit-level state hash reacts to every retained identity and transition field.
+  - Status: Correctness is GO across 9 targeted tests and 103 expectations. Repeated 100k local runs
+    place manual-mode frame p95 at 9.85–11.57 ms and every-frame p95 at 14.46–16.17 ms. The dual-mode
+    index microbenchmark is GO. TextLayer product integration remains HOLD through R2 WAL/delta,
+    browser-workload, and sustained-frame gates.
+  - Verify: bun test tests/symbol-continuity.test.ts && bun run benchmark:symbol-continuity && bun run typecheck && bun run lint
+  - Files: src/culling/SymbolContinuityIndex.ts, src/advanced/index.ts,
+    benchmarks/symbol-continuity.ts, tests/symbol-continuity.test.ts, docs, .agents/docs
+
+- [x] Task 12.43: Build the R5 sparse glyph-strip correctness vertical slice.
+  - Acceptance: A versioned 4x4-tile IR retains solid spans implicitly and boundary coverage in
+    compact typed arrays. Cache identity covers every raster-affecting field, caller mutation stays
+    outside retained state, and oversized candidates preserve the current LRU. A batched WebGPU
+    adapter writes premultiplied RGBA8 through the `OutlineColorAtlas` seam with explicit capability,
+    u32/allocation preflight, owned async snapshots, near-O(N log N) overlap validation,
+    size-grouped dispatch, failure, destruction, and exact-once cleanup outcomes. A real HarfBuzz
+    browser fixture proves 256/512 pixel parity within two channel levels, stable repeated hashes,
+    and padded invocations within 1.15× effective pixels.
+  - Status: CPU IR/cache correctness and the WebGPU single-batch browser gate are GO. The 512- and
+    1024-pixel final representations occupy 29.47% and 15.04% of dense alpha bytes. Product routing
+    is HOLD while sustained atlas-pressure, stable-atlas-hit, and whole-frame tail evidence is built.
+  - Verify: bun test tests/outline-sparse-strips.test.ts tests/outline-sparse-strip-compute.test.ts && bun run test:browser -- outline-sparse-strip && bun run benchmark:sparse-strips && bun run typecheck && bun run lint
+  - Files: src/render/outline/sparseStrips.ts, src/render/outline/sparseStripCompute.ts,
+    src/render/outline/sparseStrip.wgsl.ts, benchmarks/sparse-glyph-strips.ts, tests, docs,
+    .agents/docs
 
 - [ ] Task 12.8: Optional extreme quality tracks (Wave 5).
-  - Acceptance: Outline (Slug), collision, SIMD shaping, and SharedArrayBuffer rings land only as opt-in modes with their own workloads and pixel tolerances.
+  - Track status:
+    - [x] Outline GO: explicit `glyphMode: "outline"` WebGPU compute/fragment integration, pixel,
+          and lifecycle gates pass; automatic atlas rendering remains the default.
+    - [x] Collision direct selection/compute and repeatability GO at 11.87 ms WebGPU whole-frame
+          p95 mean. The tri-state spatial route passes exact 1/4 and 7/8 boundary tests,
+          exceptional-output recovery, hit-test coverage, and randomized brute-force parity.
+    - [ ] Packaged HarfBuzz 11.2.1 scalar/SIMD Workers pass five-language exact parity; the formal
+          five-run production path records a 2.51% SIMD regression and holds at `HOLD
+(variant-regression)`. The 418,675-byte raw
+          runtime payload remains an explicit experiment pending a later performance win and human
+          package approval.
+    - [x] SharedArrayBuffer advanced opt-in transport GO with `SharedArrayBuffer`, `Atomics`,
+          cross-origin isolation, leased run views, browser worker coverage, and matching hashes.
+  - Acceptance: Outline, collision, SIMD shaping, and SharedArrayBuffer rings each retain an opt-in
+    boundary, a named end-to-end workload, and a documented pixel/correctness tolerance. The umbrella
+    closes when a production HarfBuzz SIMD asset clears its end-to-end workload.
   - Verify: focused tests plus a named benchmark workload per enabled track
   - Files: src/render, src/shaping, src/worker, benchmarks/workloads.ts

@@ -3,9 +3,11 @@ import type { TextStyleFontWeight } from "pixi.js";
 import { prebuiltGlyphKey } from "../atlas/PrebuiltGlyphProvider";
 import { encodeTinySdf, TINY_SDF_RADIUS } from "../atlas/tinySdf";
 import type { GlyphMetrics, PrebuiltGlyphProviderOptions } from "../atlas/types";
+import { encodeCacheKey } from "../cache/cacheKey";
 
 const DEFAULT_DISTANCE_FIELD_MIN_FONT_SIZE = 48;
 const PAGE_WIDTH = 1024;
+const CHARSET_SDF_PAGE_ID_V2_PREFIX = "pixi-glyphflow/charset-sdf/v2:";
 const EMPTY_INK_RE = /[\p{White_Space}\p{Default_Ignorable_Code_Point}]/u;
 
 export interface CharsetSdfPaint {
@@ -97,12 +99,12 @@ export async function charsetSdfPrebuilt(
   const physicalSize = Math.max(options.fontSize, minSize);
   const rasterScale = physicalSize / options.fontSize;
   const charset = uniqueInkCharset(options.charset);
-  const bakeKey = [
+  const bakeKey = encodeCacheKey([
     options.family,
-    fontWeight,
+    String(fontWeight),
     String(physicalSize),
     [...charset].sort().join(""),
-  ].join("\0");
+  ]);
   const rasterize = options.rasterize ?? paintAlphaGlyph;
   let pending = bakedByKey.get(bakeKey);
   if (pending === undefined) {
@@ -289,7 +291,11 @@ function packFields(
   let pixels = new Uint8Array(0);
 
   const openPage = (): void => {
-    const id = `charset-sdf-${family}-${String(physicalSize)}-${String(pageIndex)}`;
+    const id = `${CHARSET_SDF_PAGE_ID_V2_PREFIX}${encodeCacheKey([
+      family,
+      String(physicalSize),
+      String(pageIndex),
+    ])}`;
     pageHeight = 0;
     cursorX = 0;
     cursorY = 0;

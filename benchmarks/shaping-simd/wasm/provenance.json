@@ -1,0 +1,57 @@
+{
+  "schemaVersion": 1,
+  "status": "experimental-opt-in",
+  "harfbuzz": {
+    "version": "11.2.1",
+    "commit": "33a3f8de60dcad7535f14f07d6710144548853ac",
+    "repository": "https://github.com/harfbuzz/harfbuzz",
+    "licenseFile": "LICENSE.harfbuzz.txt",
+    "sourceRole": "worker-shaping",
+    "hbGpuVersionBoundary": "14.4.0-independent"
+  },
+  "toolchain": {
+    "emscriptenVersion": "3.1.12",
+    "sharedFlags": [
+      "-DHB_TINY",
+      "-DHAVE_CONFIG_OVERRIDE_H",
+      "-O3",
+      "-sMODULARIZE=1",
+      "-sEXPORT_ES6=1",
+      "-sENVIRONMENT=web,worker",
+      "-sFILESYSTEM=0",
+      "-sALLOW_MEMORY_GROWTH=1",
+      "-sALLOW_TABLE_GROWTH=1",
+      "-sEXPORTED_RUNTIME_METHODS=addFunction,removeFunction,stackSave,stackAlloc,stackRestore",
+      "-sEXPORTED_FUNCTIONS=_malloc,_free,_hb_blob_create,_hb_blob_destroy,_hb_face_create,_hb_face_reference,_hb_face_destroy,_hb_face_get_upem,_hb_font_create,_hb_font_destroy,_hb_font_set_scale,_hb_font_set_variations,_hb_font_get_h_extents,_hb_font_get_glyph_extents,_hb_buffer_create,_hb_buffer_destroy,_hb_buffer_reference,_hb_buffer_add_utf16,_hb_buffer_guess_segment_properties,_hb_buffer_set_direction,_hb_buffer_set_language,_hb_language_from_string,_hb_buffer_set_script,_hb_script_from_string,_hb_buffer_get_length,_hb_buffer_get_glyph_infos,_hb_glyph_info_get_glyph_flags,_hb_buffer_get_glyph_positions,_hb_buffer_clear_contents,_hb_feature_from_string,_hb_shape"
+    ],
+    "variantFlags": {
+      "scalar": [],
+      "simd": ["-msimd128"]
+    },
+    "configOverride": ["#undef HB_NO_VAR"]
+  },
+  "assets": {
+    "scalar": {
+      "wasm": "scalar/harfbuzz.wasm",
+      "glue": "scalar/harfbuzz.js",
+      "sha256": "7f4b9f53ab3e02ef76dab317724fd5439b566854f2b8f2b7978d58523e9a691f",
+      "rawBytes": 386129,
+      "gzipBytes": 129771,
+      "simdInstructionCount": 0
+    },
+    "simd": {
+      "wasm": "simd/harfbuzz.wasm",
+      "glue": "simd/harfbuzz.js",
+      "sha256": "950ea9b663cc2a65631b5945e8024265989b2a6bb5861fbb49e979b399ea1799",
+      "rawBytes": 400990,
+      "gzipBytes": 134205,
+      "simdInstructionCount": 2035
+    }
+  },
+  "packageDecision": {
+    "status": "pause",
+    "reason": "human-approval-required",
+    "rawDeltaBytes": 418675,
+    "gzipDeltaBytes": 138827
+  }
+}

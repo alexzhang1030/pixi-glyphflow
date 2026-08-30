@@ -1,0 +1,156 @@
+{
+  "schemaVersion": 1,
+  "benchmark": "hb-gpu-draw-browser",
+  "packageVersion": "1.2.0",
+  "capturedAt": "2026-08-29T07:57:21.303Z",
+  "runtime": {
+    "bun": "1.4.0",
+    "cpu": "Apple M1 Pro",
+    "platform": "darwin",
+    "release": "27.0.0",
+    "architecture": "arm64"
+  },
+  "browser": {
+    "engine": "chrome",
+    "version": "151.0.7922.175",
+    "headless": true,
+    "viewport": {
+      "width": 320,
+      "height": 180
+    }
+  },
+  "sourceArtifact": "benchmarks/hb-gpu/results/hb-gpu-draw-native-14.4.0.json",
+  "sourceArtifactSha256": "ecd2b094416921c3a9b07bb1f1e4ede53891a098bb75c04f598748b1225d8e03",
+  "benchmarkSourcesSha256": {
+    "browser": "c78b7ffdfa01dd07cf828b7f685377a502f48fef35974790d630316600094e30",
+    "packedRuntime": "28ed83a819e0e134368a5f5f19856cb03f13e8ca426c29777315d852a3f1f0c3"
+  },
+  "command": "bun benchmarks/hb-gpu/browser-run.ts",
+  "result": {
+    "artifact": {
+      "harfbuzzVersion": "14.4.0",
+      "corpusCount": 5,
+      "glyphCount": 114,
+      "packedBlobBytes": 327232,
+      "projectedPackedBytes": 57409123
+    },
+    "scene": [
+      {
+        "corpusId": "cjkv",
+        "glyphId": 130,
+        "blobBytes": 12720
+      },
+      {
+        "corpusId": "arabic",
+        "glyphId": 22,
+        "blobBytes": 3976
+      },
+      {
+        "corpusId": "devanagari",
+        "glyphId": 12,
+        "blobBytes": 3856
+      },
+      {
+        "corpusId": "hebrew",
+        "glyphId": 10,
+        "blobBytes": 3336
+      },
+      {
+        "corpusId": "thai",
+        "glyphId": 10,
+        "blobBytes": 3792
+      }
+    ],
+    "capability": {
+      "status": "available",
+      "adapterInfo": "apple / metal-3",
+      "maxStorageBufferBindingSize": 4294967292,
+      "maxBufferSize": 4294967292,
+      "maxTextureDimension2D": 16384,
+      "timestampQuery": true
+    },
+    "packed": {
+      "status": "go",
+      "validationErrors": 0,
+      "compilationMessages": [],
+      "shaderSourceBytes": 14989,
+      "uploadedBytes": 327232,
+      "projectedBytes": 57409123,
+      "pixelHash": "598f2bb4df74431109c7863674295fff45df4940232a9abbf0a1f9ebbe400c4d",
+      "repeatedPixelHash": "598f2bb4df74431109c7863674295fff45df4940232a9abbf0a1f9ebbe400c4d",
+      "maskHash": "52540be95eb2d342679c331b72688aa6baa534fc99dec462884457897cc6a683",
+      "repeatedMaskHash": "52540be95eb2d342679c331b72688aa6baa534fc99dec462884457897cc6a683",
+      "visiblePixels": 5409,
+      "corpusVisiblePixels": [1363, 837, 1231, 571, 1407],
+      "cpuTimingMs": {
+        "artifactFetchMs": 9.200000002980232,
+        "packedDecodeMs": 9.299999997019768,
+        "adapterRequestMs": 5.5999999940395355,
+        "deviceRequestMs": 0.6000000014901161,
+        "shaderAssemblyMs": 0.19999999552965164,
+        "shaderCompilationMs": 2.2000000029802322,
+        "pipelineCreateMs": 2,
+        "uploadMs": 0.8999999985098839,
+        "firstSubmitMs": 0,
+        "firstCompletionMs": 3.1999999955296516,
+        "repeatedSubmitMs": 0,
+        "repeatedCompletionMs": 0.7999999970197678
+      },
+      "gpuTimingNs": 196608,
+      "gpuTimingDraws": 64,
+      "gpuTimingNsSamples": [
+        196608, 196608, 983040, 196608, 393216, 458752, 393216, 393216, 851968, 4128768, 196608,
+        196608, 393216, 917504, 196608, 196608, 196608, 262144, 196608, 196608
+      ],
+      "gpuTimingPerDrawP95Ns": 15360
+    },
+    "rgba16sint": {
+      "status": "go",
+      "validationErrors": 0,
+      "compilationMessages": [],
+      "shaderSourceBytes": 14991,
+      "uploadedBytes": 327232,
+      "projectedBytes": 57409123,
+      "pixelHash": "598f2bb4df74431109c7863674295fff45df4940232a9abbf0a1f9ebbe400c4d",
+      "repeatedPixelHash": "598f2bb4df74431109c7863674295fff45df4940232a9abbf0a1f9ebbe400c4d",
+      "maskHash": "52540be95eb2d342679c331b72688aa6baa534fc99dec462884457897cc6a683",
+      "repeatedMaskHash": "52540be95eb2d342679c331b72688aa6baa534fc99dec462884457897cc6a683",
+      "visiblePixels": 5409,
+      "corpusVisiblePixels": [1363, 837, 1231, 571, 1407],
+      "cpuTimingMs": {
+        "artifactFetchMs": 9.200000002980232,
+        "packedDecodeMs": 9.299999997019768,
+        "adapterRequestMs": 5.5999999940395355,
+        "deviceRequestMs": 0.6000000014901161,
+        "shaderAssemblyMs": 0,
+        "shaderCompilationMs": 2.600000001490116,
+        "pipelineCreateMs": 1.7000000029802322,
+        "uploadMs": 0.5,
+        "firstSubmitMs": 0,
+        "firstCompletionMs": 2.2999999970197678,
+        "repeatedSubmitMs": 0,
+        "repeatedCompletionMs": 1.1000000014901161
+      },
+      "gpuTimingNs": 458752,
+      "gpuTimingDraws": 64,
+      "gpuTimingNsSamples": [
+        524288, 393216, 458752, 458752, 458752, 458752, 720896, 1114112, 458752, 589824, 458752,
+        458752, 458752, 851968, 1310720, 458752, 786432, 786432, 720896, 589824
+      ],
+      "gpuTimingPerDrawP95Ns": 17408,
+      "textureWidth": 1024,
+      "actualTextureHeight": 40,
+      "projectedTextureHeight": 7008
+    },
+    "decision": {
+      "status": "go",
+      "reasons": [],
+      "next": "integrate-packed-outline-cache"
+    }
+  },
+  "consoleMessages": [
+    "debug: [vite] connecting...",
+    "debug: [vite] connected.",
+    "info: hb-gpu-packed-browser {artifact: Object, scene: Array(5), capability: Object, packed: Object, rgba16sint: Object}"
+  ]
+}

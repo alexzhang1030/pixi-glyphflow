@@ -1,5 +1,7 @@
 import type { Blob, Buffer, Face, Font } from "harfbuzzjs";
 
+import { BoundedCache } from "../cache/BoundedCache";
+import { encodeCacheKey } from "../cache/cacheKey";
 import type { FontRegistry } from "../FontRegistry";
 import type { PositionedRun, TextDirection } from "../layout/types";
 import type {
@@ -9,39 +11,71 @@ import type {
   HarfBuzzShaperOptions,
   HarfBuzzShaperStats,
 } from "./types";
+import { canonicalizeVariations } from "./variationKey";
 
-interface FontResource {
+interface FontSourceResource {
+  readonly key: string;
   readonly blob: Blob;
   readonly face: Face;
-  readonly font: Font;
+  readonly bytes: number;
+  references: number;
+  released: boolean;
 }
+
+interface FontResource {
+  readonly source: FontSourceResource;
+  readonly font: Font;
+  users: number;
+  retired: boolean;
+  released: boolean;
+}
+
+const DEFAULT_FONT_RESOURCE_CACHE_ENTRIES = 64;
+const DEFAULT_FONT_RESOURCE_CACHE_BYTES = 32 * 1024 * 1024;
 
 export class HarfBuzzShaper {
   readonly #registry: FontRegistry;
   readonly #loadRuntime: HarfBuzzRuntimeLoader;
-  readonly #cacheSize: number;
-  readonly #fontResources = new Map<string, FontResource>();
-  readonly #cache = new Map<string, Readonly<PositionedRun>>();
+  readonly #fontResources: BoundedCache<string, FontResource>;
+  readonly #fontSources = new Map<string, FontSourceResource>();
+  readonly #liveFontResources = new Set<FontResource>();
+  readonly #cache: BoundedCache<string, Readonly<PositionedRun>>;
   readonly #bufferPool: Buffer[] = [];
+  #fontResourceEvictionFailure: CleanupFailure | undefined;
   #runtimePromise: Promise<HarfBuzzRuntime> | undefined;
   #runtimeLoads = 0;
-  #hits = 0;
-  #misses = 0;
   #shapes = 0;
   #destroyed = false;
 
   constructor(registry: FontRegistry, options: HarfBuzzShaperOptions = {}) {
     this.#registry = registry;
     this.#loadRuntime = options.loadRuntime ?? defaultRuntimeLoader;
-    this.#cacheSize = options.cacheSize ?? 1_000;
-    if (!Number.isSafeInteger(this.#cacheSize) || this.#cacheSize <= 0) {
+    const cacheSize = options.cacheSize ?? 1_000;
+    if (!Number.isSafeInteger(cacheSize) || cacheSize <= 0) {
       throw new TypeError("cacheSize must be a positive safe integer");
     }
+    this.#cache = new BoundedCache({ maxEntries: cacheSize, policy: "lru" });
+    this.#fontResources = new BoundedCache({
+      maxEntries: options.fontResourceCacheEntries ?? DEFAULT_FONT_RESOURCE_CACHE_ENTRIES,
+      maxBytes: options.fontResourceCacheBytes ?? DEFAULT_FONT_RESOURCE_CACHE_BYTES,
+      policy: "lru",
+      // Charge every identity its full source size. Shared family sources make this conservative.
+      sizeOf: (resource) => resource.source.bytes,
+      onEviction: ({ value }) => {
+        const failure = this.#fontResourceEvictionFailure;
+        if (failure === undefined) {
+          this.#retireFontResource(value);
+          return;
+        }
+        captureCleanupFailure(failure, () => this.#retireFontResource(value));
+      },
+    });
   }
 
   async shape(input: HarfBuzzShapeInput): Promise<Readonly<PositionedRun>> {
     this.#assertActive();
     assertInput(input);
+    const { variationKey, cacheKey: variationCacheKey } = canonicalizeVariations(input.variations);
     const registered = this.#registry.get(input.family);
     if (registered?.kind !== "binary") {
       throw new RangeError(`Binary font family is unavailable: ${input.family}`);
@@ -53,45 +87,45 @@ export class HarfBuzzShaper {
     }
 
     const direction = input.direction ?? detectDirection(input.text);
-    const variationKey = variationCacheKey(input.variations);
-    const featureKey = input.features?.join(",") ?? "";
-    const cacheKey = [
+    const featureValues = input.features ?? [];
+    const cacheKey = encodeCacheKey([
       input.family,
-      registered.revision,
-      input.fontSize,
+      String(registered.revision),
+      String(input.fontSize),
       direction,
       input.language ?? "",
       input.script ?? "",
-      featureKey,
-      variationKey,
+      ...featureValues,
+      variationCacheKey,
       input.text,
-    ].join("\u0000");
+    ]);
     const cached = this.#cache.get(cacheKey);
     if (cached !== undefined) {
-      this.#hits += 1;
       return cached;
     }
 
-    this.#misses += 1;
     const runtime = await this.#runtime();
     this.#assertActive();
+    this.#assertFontRevision(input.family, registered.revision);
     const resource = await this.#fontResource(
       runtime,
       input.family,
       registered.revision,
       input.fontSize,
       input.variations,
-      variationKey,
+      variationCacheKey,
     );
-    const buffer = this.#bufferPool.pop() ?? new runtime.Buffer();
+    let buffer: Buffer | undefined;
+    const failure = createCleanupFailure();
 
     try {
+      buffer = this.#bufferPool.pop() ?? new runtime.Buffer();
       buffer.addText(input.text);
       buffer.guessSegmentProperties();
       buffer.setDirection(direction === "rtl" ? runtime.Direction.RTL : runtime.Direction.LTR);
       if (input.language !== undefined) buffer.setLanguage(input.language);
       if (input.script !== undefined) buffer.setScript(input.script);
-      const features = (input.features ?? []).map((value) => {
+      const features = featureValues.map((value) => {
         const feature = runtime.Feature.fromString(value);
         if (feature === undefined) {
           throw new TypeError(`Invalid OpenType feature: ${value}`);
@@ -163,6 +197,7 @@ export class HarfBuzzShaper {
         maxX = Math.abs(penX / 64);
         maxY = -extents.descender / 64;
       }
+      const clusterEnds = resolveClusterEnds(input.text, clusters);
 
       const run = Object.freeze({
         source: "harfbuzz" as const,
@@ -173,6 +208,8 @@ export class HarfBuzzShaper {
         direction,
         glyphIds,
         clusters,
+        clusterEnds,
+        variationKey,
         x,
         y,
         xAdvance,
@@ -186,14 +223,28 @@ export class HarfBuzzShaper {
         }),
       });
       this.#cache.set(cacheKey, run);
-      this.#evictCache();
 
       return run;
+    } catch (error) {
+      retainCleanupFailure(failure, error);
+      throw error;
     } finally {
-      buffer.clearContents?.();
-      if (this.#bufferPool.length < 4) {
-        this.#bufferPool.push(buffer);
+      try {
+        if (buffer !== undefined) {
+          const activeBuffer = buffer;
+          let bufferReusable = false;
+          captureCleanupFailure(failure, () => {
+            activeBuffer.clearContents?.();
+            bufferReusable = true;
+          });
+          if (bufferReusable && this.#bufferPool.length < 4) {
+            this.#bufferPool.push(activeBuffer);
+          }
+        }
+      } finally {
+        captureCleanupFailure(failure, () => this.#releaseFontResourceUse(resource));
       }
+      throwCleanupFailure(failure);
     }
   }
 
@@ -210,54 +261,75 @@ export class HarfBuzzShaper {
     if (!Number.isFinite(fontSize) || fontSize <= 0) {
       throw new TypeError("fontSize must be a positive finite number");
     }
+    const { cacheKey: variationCacheKey } = canonicalizeVariations(variations);
     const registered = this.#registry.get(family);
     if (registered?.kind !== "binary") {
       throw new RangeError(`Binary font family is unavailable: ${family}`);
     }
     const runtime = await this.#runtime();
-    const variationKey = variationCacheKey(variations);
+    this.#assertActive();
+    this.#assertFontRevision(family, registered.revision);
     const resource = await this.#fontResource(
       runtime,
       family,
       registered.revision,
       fontSize,
       variations,
-      variationKey,
+      variationCacheKey,
     );
+    const failure = createCleanupFailure();
 
-    return resource.font.glyphToPath(glyphId);
+    try {
+      return resource.font.glyphToPath(glyphId);
+    } catch (error) {
+      retainCleanupFailure(failure, error);
+      throw error;
+    } finally {
+      captureCleanupFailure(failure, () => this.#releaseFontResourceUse(resource));
+      throwCleanupFailure(failure);
+    }
   }
 
   get stats(): Readonly<HarfBuzzShaperStats> {
+    const cache = this.#cache.stats;
+    const fontResources = this.#fontResources.stats;
     return Object.freeze({
       runtimeLoads: this.#runtimeLoads,
-      fontObjects: this.#fontResources.size,
-      cacheEntries: this.#cache.size,
-      hits: this.#hits,
-      misses: this.#misses,
+      fontObjects: fontResources.entries,
+      fontResourceEntries: fontResources.entries,
+      fontResourceBytes: fontResources.bytes,
+      fontResourceEvictions: fontResources.evictions,
+      cacheEntries: cache.entries,
+      hits: cache.hits,
+      misses: cache.misses,
       shapes: this.#shapes,
       pooledBuffers: this.#bufferPool.length,
+      cacheEvictions: cache.evictions,
     });
   }
 
   clear(): number {
     this.#assertActive();
-    const entries = this.#cache.size + this.#fontResources.size;
-    this.#cache.clear();
-    this.#fontResources.clear();
-    this.#bufferPool.length = 0;
-
-    return entries;
+    return this.#clearResources();
   }
 
   destroy(): void {
     if (this.#destroyed) {
       return;
     }
-    this.#cache.clear();
-    this.#fontResources.clear();
-    this.#bufferPool.length = 0;
     this.#destroyed = true;
+    this.#clearResources();
+  }
+
+  #clearResources(): number {
+    const entries = this.#cache.clear() + this.#fontResources.clear();
+    const failure = createCleanupFailure();
+    for (const resource of this.#liveFontResources) {
+      captureCleanupFailure(failure, () => this.#retireFontResource(resource));
+    }
+    this.#bufferPool.length = 0;
+    throwCleanupFailure(failure);
+    return entries;
   }
 
   async #runtime(): Promise<HarfBuzzRuntime> {
@@ -275,51 +347,159 @@ export class HarfBuzzShaper {
     revision: number,
     fontSize: number,
     variations: Readonly<Record<string, number>> | undefined,
-    variationKey: string,
+    variationCacheKey: string,
   ): Promise<FontResource> {
-    const key = [family, revision, fontSize, variationKey].join(":");
+    const key = encodeCacheKey([family, String(revision), String(fontSize), variationCacheKey]);
     const cached = this.#fontResources.get(key);
     if (cached !== undefined) {
-      return cached;
+      return this.#acquireFontResource(cached);
     }
-    const bytes = this.#registry.getBinaryData(family);
-    if (bytes === undefined) {
-      throw new RangeError(`Binary font data is unavailable: ${family}`);
-    }
-
-    const blob = new runtime.Blob(bytes);
-    const face = new runtime.Face(blob, 0);
-    if (!Number.isFinite(face.upem) || face.upem <= 0) {
-      throw new TypeError(`Binary font has an invalid units-per-em value: ${family}`);
-    }
-    const font = new runtime.Font(face);
-    const scale = Math.max(1, Math.round(fontSize * 64));
-    font.setScale(scale, scale);
-    const variationEntries = Object.entries(variations ?? {});
-    if (variationEntries.length > 0) {
-      font.setVariations(
-        variationEntries.map(([tag, value]) => {
-          if (tag.length !== 4 || !Number.isFinite(value)) {
-            throw new TypeError(`Invalid font variation: ${tag}=${String(value)}`);
+    const sourceKey = encodeCacheKey([family, String(revision)]);
+    let source = this.#fontSources.get(sourceKey);
+    let font: Font | undefined;
+    try {
+      if (source === undefined) {
+        const bytes = this.#registry.getBinaryData(family);
+        if (bytes === undefined) {
+          throw new RangeError(`Binary font data is unavailable: ${family}`);
+        }
+        const blob = new runtime.Blob(bytes);
+        let face: Face | undefined;
+        try {
+          face = new runtime.Face(blob, 0);
+          if (!Number.isFinite(face.upem) || face.upem <= 0) {
+            throw new TypeError(`Binary font has an invalid units-per-em value: ${family}`);
           }
-          return new runtime.Variation(tag, value);
-        }),
-      );
+          source = {
+            key: sourceKey,
+            blob,
+            face,
+            bytes: bytes.byteLength,
+            references: 0,
+            released: false,
+          };
+          this.#fontSources.set(sourceKey, source);
+        } catch (error) {
+          const failure = createCleanupFailure();
+          retainCleanupFailure(failure, error);
+          captureCleanupFailure(failure, () => destroyHarfBuzzObject(face));
+          captureCleanupFailure(failure, () => destroyHarfBuzzObject(blob));
+          throw failure.error;
+        }
+      }
+      font = new runtime.Font(source.face);
+      const scale = Math.max(1, Math.round(fontSize * 64));
+      font.setScale(scale, scale);
+      const variationEntries = Object.entries(variations ?? {});
+      if (variationEntries.length > 0) {
+        font.setVariations(
+          variationEntries.map(([tag, value]) => new runtime.Variation(tag, value)),
+        );
+      }
+
+      const resource: FontResource = {
+        source,
+        font,
+        users: 1,
+        retired: false,
+        released: false,
+      };
+      source.references += 1;
+      this.#liveFontResources.add(resource);
+      font = undefined;
+
+      const insertionFailure = createCleanupFailure();
+      const previousEvictionFailure = this.#fontResourceEvictionFailure;
+      this.#fontResourceEvictionFailure = insertionFailure;
+      try {
+        this.#fontResources.set(key, resource);
+      } catch (error) {
+        retainCleanupFailure(insertionFailure, error);
+      } finally {
+        this.#fontResourceEvictionFailure = previousEvictionFailure;
+      }
+      if (insertionFailure.caught) {
+        if (this.#fontResources.peek(key) === resource) {
+          this.#fontResources.delete(key);
+        }
+        resource.retired = true;
+        captureCleanupFailure(insertionFailure, () => this.#releaseFontResourceUse(resource));
+        throwCleanupFailure(insertionFailure);
+      }
+
+      return resource;
+    } catch (error) {
+      const failure = createCleanupFailure();
+      retainCleanupFailure(failure, error);
+      captureCleanupFailure(failure, () => destroyHarfBuzzObject(font));
+      if (source !== undefined && source.references === 0) {
+        const releasableSource = source;
+        captureCleanupFailure(failure, () => this.#releaseFontSource(releasableSource));
+      }
+      throw failure.error;
     }
+  }
 
-    const resource = { blob, face, font };
-    this.#fontResources.set(key, resource);
-
+  #acquireFontResource(resource: FontResource): FontResource {
+    if (resource.released) {
+      throw new Error("HarfBuzz font resource has been released");
+    }
+    resource.users += 1;
     return resource;
   }
 
-  #evictCache(): void {
-    while (this.#cache.size > this.#cacheSize) {
-      const oldest = this.#cache.keys().next().value as string | undefined;
-      if (oldest === undefined) {
-        return;
-      }
-      this.#cache.delete(oldest);
+  #retireFontResource(resource: FontResource): void {
+    resource.retired = true;
+    this.#releaseFontResource(resource);
+  }
+
+  #releaseFontResourceUse(resource: FontResource): void {
+    if (resource.users <= 0) {
+      throw new Error("HarfBuzz font resource use count underflow");
+    }
+    resource.users -= 1;
+    this.#releaseFontResource(resource);
+  }
+
+  #releaseFontResource(resource: FontResource): void {
+    if (resource.released || !resource.retired || resource.users > 0) return;
+    resource.released = true;
+    const failure = createCleanupFailure();
+    captureCleanupFailure(failure, () => destroyHarfBuzzObject(resource.font));
+    this.#liveFontResources.delete(resource);
+    resource.source.references -= 1;
+    if (resource.source.references < 0) {
+      captureCleanupFailure(failure, () => {
+        throw new Error("HarfBuzz font source reference count underflow");
+      });
+    }
+    if (resource.source.references <= 0) {
+      captureCleanupFailure(failure, () => this.#releaseFontSource(resource.source));
+    }
+    throwCleanupFailure(failure);
+  }
+
+  #releaseFontSource(source: FontSourceResource): void {
+    if (source.released) return;
+    source.released = true;
+    const failure = createCleanupFailure();
+    captureCleanupFailure(failure, () => destroyHarfBuzzObject(source.face));
+    captureCleanupFailure(failure, () => destroyHarfBuzzObject(source.blob));
+    if (this.#fontSources.get(source.key) === source) {
+      this.#fontSources.delete(source.key);
+    }
+    throwCleanupFailure(failure);
+  }
+
+  #assertFontRevision(family: string, revision: number): void {
+    const current = this.#registry.get(family);
+    if (current?.kind !== "binary") {
+      throw new RangeError(`Binary font family is unavailable: ${family}`);
+    }
+    if (current.revision !== revision) {
+      throw new RangeError(
+        `Font revision ${String(revision)} is stale; current revision is ${String(current.revision)}`,
+      );
     }
   }
 
@@ -328,6 +508,41 @@ export class HarfBuzzShaper {
       throw new Error("HarfBuzzShaper has been destroyed");
     }
   }
+}
+
+interface CleanupFailure {
+  caught: boolean;
+  error: unknown;
+}
+
+function createCleanupFailure(): CleanupFailure {
+  return { caught: false, error: undefined };
+}
+
+function captureCleanupFailure(failure: CleanupFailure, cleanup: () => void): void {
+  try {
+    cleanup();
+  } catch (error) {
+    retainCleanupFailure(failure, error);
+  }
+}
+
+function retainCleanupFailure(failure: CleanupFailure, error: unknown): void {
+  if (failure.caught) return;
+  failure.caught = true;
+  failure.error = error;
+}
+
+function throwCleanupFailure(failure: CleanupFailure): void {
+  if (failure.caught) throw failure.error;
+}
+
+function destroyHarfBuzzObject(value: unknown): void {
+  // harfbuzzjs 1.6 owns native-pointer cleanup through FinalizationRegistry. Injected runtimes can
+  // expose destroy for immediate release.
+  if (value === undefined || value === null) return;
+  const destroy = (value as { readonly destroy?: () => void }).destroy;
+  destroy?.call(value);
 }
 
 const defaultRuntimeLoader: HarfBuzzRuntimeLoader = () => import("harfbuzzjs");
@@ -375,9 +590,26 @@ function detectDirection(text: string): TextDirection {
   return "ltr";
 }
 
-function variationCacheKey(variations: Readonly<Record<string, number>> | undefined): string {
-  return Object.entries(variations ?? {})
-    .sort(([left], [right]) => left.localeCompare(right))
-    .map(([tag, value]) => `${tag}=${String(value)}`)
-    .join(",");
+function resolveClusterEnds(text: string, clusters: Readonly<Uint32Array>): Uint32Array {
+  const boundaries = [...new Set(clusters)].sort((left, right) => left - right);
+  for (const boundary of boundaries) {
+    if (boundary > text.length) {
+      throw new RangeError(
+        `HarfBuzz cluster ${String(boundary)} exceeds UTF-16 text length ${String(text.length)}`,
+      );
+    }
+  }
+  const endByStart = new Map<number, number>();
+  for (let index = 0; index < boundaries.length; index += 1) {
+    const start = boundaries[index];
+    if (start === undefined) continue;
+    endByStart.set(start, boundaries[index + 1] ?? text.length);
+  }
+  const ends = new Uint32Array(clusters.length);
+  for (let index = 0; index < clusters.length; index += 1) {
+    const start = clusters[index] ?? 0;
+    const end = endByStart.get(start) ?? text.length;
+    ends[index] = end;
+  }
+  return ends;
 }

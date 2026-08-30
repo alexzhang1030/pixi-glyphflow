@@ -10,10 +10,10 @@ if (requestedWorkload !== undefined && !isBenchmarkWorkload(requestedWorkload)) 
 if (requestedWorkload === undefined) {
   const forwarded = removeArgument(Bun.argv.slice(2), "--workload");
   for (const workload of BENCHMARK_WORKLOADS) {
-    await runScript("run.ts", [...forwarded, "--workload", workload.id]);
+    await runScript("harness-launcher.ts", [...forwarded, "--workload", workload.id]);
   }
 } else {
-  await runScript("run.ts", Bun.argv.slice(2));
+  await runScript("harness-launcher.ts", Bun.argv.slice(2));
 }
 
 await runScript("report.ts", []);

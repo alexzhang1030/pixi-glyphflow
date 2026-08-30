@@ -13,13 +13,15 @@
   </head>
   <body>
     <main id="scene" aria-label="Interactive million-label text scene">
-      <section class="hud" aria-live="polite">
+      <section class="hud">
         <div class="title-row">
           <div>
             <p class="eyebrow">pixi-glyphflow 1.0</p>
             <h1>Million-label viewport lab</h1>
           </div>
-          <span id="state" class="state">Loading</span>
+          <span id="state" class="state" role="status" aria-live="polite" aria-atomic="true"
+            >Loading</span
+          >
         </div>
 
         <dl class="metrics">
@@ -36,8 +38,24 @@
             <dd id="moving">0</dd>
           </div>
           <div>
-            <dt>Revision</dt>
-            <dd id="revision">0</dd>
+            <dt>Prototype glyphs</dt>
+            <dd id="glyphs">0</dd>
+          </div>
+          <div>
+            <dt>FPS</dt>
+            <dd id="fps">0</dd>
+          </div>
+          <div>
+            <dt>Frame p95</dt>
+            <dd id="frame-p95">0 ms</dd>
+          </div>
+          <div>
+            <dt>&gt;20 ms</dt>
+            <dd id="frame-over-budget">0 / 0</dd>
+          </div>
+          <div>
+            <dt>Draw calls</dt>
+            <dd id="draws">0</dd>
           </div>
           <div>
             <dt>Last storm</dt>
@@ -48,17 +66,34 @@
             <dd id="viewport-time">0 ms</dd>
           </div>
           <div>
-            <dt>Draw calls</dt>
-            <dd id="draws">0</dd>
+            <dt>Scene setup</dt>
+            <dd id="scene-setup">0 ms</dd>
           </div>
           <div>
-            <dt>Glyphs</dt>
-            <dd id="glyphs">0</dd>
+            <dt>Revision</dt>
+            <dd id="revision">0</dd>
+          </div>
+          <div>
+            <dt>Renderer</dt>
+            <dd id="renderer">—</dd>
+          </div>
+          <div>
+            <dt>Residency</dt>
+            <dd id="residency">—</dd>
+          </div>
+          <div>
+            <dt>Cull path</dt>
+            <dd id="cull-path">—</dd>
+          </div>
+          <div>
+            <dt>Palette path</dt>
+            <dd id="palette-path">—</dd>
           </div>
         </dl>
 
         <div class="controls">
           <button id="toggle-storm" type="button">Pause position storm</button>
+          <button id="fit-all" type="button">Fit 1M</button>
           <button id="reset-camera" type="button">Reset camera</button>
           <label>
             Rotation

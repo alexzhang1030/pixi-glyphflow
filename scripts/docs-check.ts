@@ -35,6 +35,23 @@ const requiredApiTerms = [
   "uiSdfPrebuilt",
   "charsetSdfPrebuilt",
 ] as const;
+const requiredContractTerms = {
+  "README.md": ["64 prototypes", "8 canonical paints", "schema 4", "800,016", "segmented"],
+  "docs/api.md": ["gpuScenePaintCount", "64-prototype / 8-paint", "encoder epoch"],
+  "docs/architecture.md": [
+    "512 prototype/paint",
+    "encoder epoch",
+    "selectRankedCandidates",
+    "identical-bound",
+  ],
+  "docs/performance.md": [
+    "schema 4",
+    "800,016",
+    "Current collision repeatability",
+    "HOLD (variant-regression)",
+    "fixed RED controls",
+  ],
+} as const;
 const copiedFeatureName = `${"heat"}${"map"}`;
 const forbiddenSourceTraces = [
   new RegExp(`pixi[-_]${copiedFeatureName}`, "iu"),
@@ -68,6 +85,13 @@ for (const term of requiredApiTerms) {
   if (!api.includes(term)) failures.push(`docs/api.md: missing public API term ${term}`);
 }
 
+for (const [relativePath, terms] of Object.entries(requiredContractTerms)) {
+  const content = contents.get(relativePath) ?? "";
+  for (const term of terms) {
+    if (!content.includes(term)) failures.push(`${relativePath}: missing contract term ${term}`);
+  }
+}
+
 const readme = contents.get("README.md") ?? "";
 for (const command of [
   "bun run check",
@@ -87,6 +111,7 @@ if (failures.length > 0) {
       files: documentationFiles.length,
       links: "valid",
       apiTerms: requiredApiTerms.length,
+      contractTerms: Object.values(requiredContractTerms).flat().length,
     }),
   );
 }

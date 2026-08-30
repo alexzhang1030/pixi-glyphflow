@@ -1,0 +1,408 @@
+{
+  "schemaVersion": 2,
+  "kind": "pixi-glyphflow-gpu-scene-resident-repeatability",
+  "packageVersion": "1.2.0",
+  "capturedAt": "2026-08-29T10:19:41.336Z",
+  "workload": "gpu-scene-resident",
+  "renderer": "webgpu",
+  "configuration": {
+    "labelCount": 1000000,
+    "mutationCount": 100000,
+    "warmupFrames": 10,
+    "cameraSampleFrames": 120,
+    "positionSampleFrames": 120
+  },
+  "canonicalCandidate": {
+    "attempt": 10,
+    "artifact": null,
+    "sourceKind": "former-committed-artifact-digest",
+    "sha256": "d4914d86952b310de210cb517d3a2f12073494c86dc38eb609af1095a61de2eb"
+  },
+  "preFixInvalidation": {
+    "attempts": [1, 2, 3, 4, 5],
+    "formerCandidateSha256": "25cede02202171e331c2996dd667046d382f935b020c84e1840ebed35dc4bc29",
+    "reason": "The resident instancesOut buffer held one 8-byte shared-prototype instance while scatter and indirect draw produced 50000 compact references. These attempts did not render the formal output set and remain as invalidated history."
+  },
+  "attempts": [
+    {
+      "attempt": 1,
+      "validity": "pre-fix-invalidated",
+      "capturedAt": null,
+      "outcome": "outlier",
+      "budgetPassed": false,
+      "setupMs": 765.3000000044703,
+      "cameraFrameP95Ms": 1.5,
+      "cameraGpuP95Ms": 0.196608,
+      "positionFrameP95Ms": 84.39999999850988,
+      "positionGpuP95Ms": 75.300864,
+      "failedChecks": [
+        "position-mutation-frame-p95-ms",
+        "position-mutation-gpu-p95-ms"
+      ],
+      "source": {
+        "kind": "runner-log",
+        "artifact": null,
+        "sha256": null
+      }
+    },
+    {
+      "attempt": 2,
+      "validity": "pre-fix-invalidated",
+      "capturedAt": "2026-08-29T09:55:05.141Z",
+      "outcome": "pass",
+      "budgetPassed": true,
+      "setupMs": 769.5999999940395,
+      "cameraFrameP95Ms": 2.2000000029802322,
+      "cameraGpuP95Ms": 0.262144,
+      "positionFrameP95Ms": 9.799999997019768,
+      "positionGpuP95Ms": 0.393216,
+      "failedChecks": [],
+      "source": {
+        "kind": "former-committed-artifact-digest",
+        "artifact": null,
+        "sha256": "25cede02202171e331c2996dd667046d382f935b020c84e1840ebed35dc4bc29"
+      }
+    },
+    {
+      "attempt": 3,
+      "validity": "pre-fix-invalidated",
+      "capturedAt": "2026-08-29T09:55:35.929Z",
+      "outcome": "pass",
+      "budgetPassed": true,
+      "setupMs": 762,
+      "cameraFrameP95Ms": 3.5,
+      "cameraGpuP95Ms": 0.393216,
+      "positionFrameP95Ms": 10.299999997019768,
+      "positionGpuP95Ms": 0.393216,
+      "failedChecks": [],
+      "source": {
+        "kind": "ephemeral-artifact-digest",
+        "artifact": null,
+        "sha256": "ae27b97e3ceb37f611ab121246e81ff99f353b3787900106a5ffc2d3dc7e9897"
+      }
+    },
+    {
+      "attempt": 4,
+      "validity": "pre-fix-invalidated",
+      "capturedAt": "2026-08-29T10:06:11.997Z",
+      "outcome": "outlier",
+      "budgetPassed": false,
+      "setupMs": 770.7000000029802,
+      "cameraFrameP95Ms": 89.09999999403954,
+      "cameraGpuP95Ms": 87.81824,
+      "positionFrameP95Ms": 10.100000001490116,
+      "positionGpuP95Ms": 0.393216,
+      "failedChecks": [
+        "camera-frame-p95-ms",
+        "camera-gpu-p95-ms"
+      ],
+      "source": {
+        "kind": "ephemeral-artifact-digest",
+        "artifact": null,
+        "sha256": "b8f0c4c6ac082baee68e0245ccfe7252030c4b0ef62c8b68f3c83c5e04ed5400"
+      }
+    },
+    {
+      "attempt": 5,
+      "validity": "pre-fix-invalidated",
+      "capturedAt": "2026-08-29T10:06:29.355Z",
+      "outcome": "pass",
+      "budgetPassed": true,
+      "setupMs": 762.4000000059605,
+      "cameraFrameP95Ms": 1.6000000014901161,
+      "cameraGpuP95Ms": 0.196608,
+      "positionFrameP95Ms": 10.900000005960464,
+      "positionGpuP95Ms": 0.393216,
+      "failedChecks": [],
+      "source": {
+        "kind": "ephemeral-artifact-digest",
+        "artifact": null,
+        "sha256": "554fee8adea4475e4f0bfb1e98edf036665b97f740994699f47432bb6c4a17f5"
+      }
+    },
+    {
+      "attempt": 6,
+      "validity": "post-fix-valid",
+      "capturedAt": "2026-08-29T10:17:33.693Z",
+      "outcome": "fail",
+      "budgetPassed": false,
+      "setupMs": 789.1000000014901,
+      "cameraFrameP95Ms": 9.800000004470348,
+      "cameraGpuP95Ms": 8.323072,
+      "cameraFrameOverBudgetCount": 0,
+      "cameraFrameOverBudgetRatio": 0,
+      "cameraFrameP99Ms": 10.100000001490116,
+      "cameraFrameMaxMs": 10.600000001490116,
+      "positionFrameP95Ms": 18.5,
+      "positionGpuP95Ms": 9.371648,
+      "positionFrameOverBudgetCount": 118,
+      "positionFrameOverBudgetRatio": 0.9833333333333333,
+      "positionFrameP99Ms": 19.399999998509884,
+      "positionFrameMaxMs": 19.599999994039536,
+      "submittedGlyphs": 50000,
+      "submittedGlyphsHash": 1171247173,
+      "submittedGlyphsHashSource": "gpu-instances-out-readback",
+      "renderedPixelHash": 2829947060,
+      "renderedPixelHashRepeat": 2829947060,
+      "nonTransparentPixels": 302457,
+      "nonTransparentPixelsRepeat": 302457,
+      "gpuTimingValidSamples": 260,
+      "failedChecks": [
+        "position-mutation-frame-p95-ms",
+        "position-mutation-frame-over-budget-count",
+        "position-mutation-frame-over-budget-ratio",
+        "position-mutation-frame-p99-ms",
+        "position-mutation-frame-max-ms"
+      ],
+      "source": {
+        "kind": "ephemeral-artifact-digest",
+        "artifact": null,
+        "sha256": "91cdc22db54ab9e36dd6f708a5c47ed7458a789e02fc00e728fd1e1b18846cba"
+      }
+    },
+    {
+      "attempt": 7,
+      "validity": "post-fix-valid",
+      "capturedAt": "2026-08-29T10:18:09.708Z",
+      "outcome": "fail",
+      "budgetPassed": false,
+      "setupMs": 777.2000000029802,
+      "cameraFrameP95Ms": 11.100000001490116,
+      "cameraGpuP95Ms": 8.323072,
+      "cameraFrameOverBudgetCount": 0,
+      "cameraFrameOverBudgetRatio": 0,
+      "cameraFrameP99Ms": 12,
+      "cameraFrameMaxMs": 12.5,
+      "positionFrameP95Ms": 18.80000000447035,
+      "positionGpuP95Ms": 9.699328,
+      "positionFrameOverBudgetCount": 120,
+      "positionFrameOverBudgetRatio": 1,
+      "positionFrameP99Ms": 19.700000002980232,
+      "positionFrameMaxMs": 20.099999994039536,
+      "submittedGlyphs": 50000,
+      "submittedGlyphsHash": 1171247173,
+      "submittedGlyphsHashSource": "gpu-instances-out-readback",
+      "renderedPixelHash": 2829947060,
+      "renderedPixelHashRepeat": 2829947060,
+      "nonTransparentPixels": 302457,
+      "nonTransparentPixelsRepeat": 302457,
+      "gpuTimingValidSamples": 260,
+      "failedChecks": [
+        "position-mutation-frame-p95-ms",
+        "position-mutation-frame-over-budget-count",
+        "position-mutation-frame-over-budget-ratio",
+        "position-mutation-frame-p99-ms",
+        "position-mutation-frame-max-ms"
+      ],
+      "source": {
+        "kind": "ephemeral-artifact-digest",
+        "artifact": null,
+        "sha256": "1c0bf280041c644d00b315cffdac17f174eade91472672fa4287deac688cea47"
+      }
+    },
+    {
+      "attempt": 8,
+      "validity": "post-fix-valid",
+      "capturedAt": "2026-08-29T10:18:23.523Z",
+      "outcome": "fail",
+      "budgetPassed": false,
+      "setupMs": 800.7000000029802,
+      "cameraFrameP95Ms": 10.099999994039536,
+      "cameraGpuP95Ms": 8.323072,
+      "cameraFrameOverBudgetCount": 0,
+      "cameraFrameOverBudgetRatio": 0,
+      "cameraFrameP99Ms": 10.900000005960464,
+      "cameraFrameMaxMs": 12.699999995529652,
+      "positionFrameP95Ms": 19.5,
+      "positionGpuP95Ms": 10.092544,
+      "positionFrameOverBudgetCount": 120,
+      "positionFrameOverBudgetRatio": 1,
+      "positionFrameP99Ms": 20.400000005960464,
+      "positionFrameMaxMs": 20.5,
+      "submittedGlyphs": 50000,
+      "submittedGlyphsHash": 1171247173,
+      "submittedGlyphsHashSource": "gpu-instances-out-readback",
+      "renderedPixelHash": 2829947060,
+      "renderedPixelHashRepeat": 2829947060,
+      "nonTransparentPixels": 302457,
+      "nonTransparentPixelsRepeat": 302457,
+      "gpuTimingValidSamples": 260,
+      "failedChecks": [
+        "position-mutation-frame-p95-ms",
+        "position-mutation-frame-over-budget-count",
+        "position-mutation-frame-over-budget-ratio",
+        "position-mutation-frame-p99-ms",
+        "position-mutation-frame-max-ms"
+      ],
+      "source": {
+        "kind": "ephemeral-artifact-digest",
+        "artifact": null,
+        "sha256": "bc299d9ae2a58342f9aeb21629da1f88530ffb65284536d8251adcd3e83f7f11"
+      }
+    },
+    {
+      "attempt": 9,
+      "validity": "post-fix-valid",
+      "capturedAt": "2026-08-29T10:19:29.298Z",
+      "outcome": "fail",
+      "budgetPassed": false,
+      "setupMs": 791.3999999985099,
+      "cameraFrameP95Ms": 11.600000001490116,
+      "cameraGpuP95Ms": 8.323072,
+      "cameraFrameOverBudgetCount": 0,
+      "cameraFrameOverBudgetRatio": 0,
+      "cameraFrameP99Ms": 13.100000001490116,
+      "cameraFrameMaxMs": 13.799999997019768,
+      "positionFrameP95Ms": 20,
+      "positionGpuP95Ms": 10.289152,
+      "positionFrameOverBudgetCount": 120,
+      "positionFrameOverBudgetRatio": 1,
+      "positionFrameP99Ms": 22.100000001490116,
+      "positionFrameMaxMs": 24,
+      "submittedGlyphs": 50000,
+      "submittedGlyphsHash": 1171247173,
+      "submittedGlyphsHashSource": "gpu-instances-out-readback",
+      "renderedPixelHash": 2829947060,
+      "renderedPixelHashRepeat": 2829947060,
+      "nonTransparentPixels": 302457,
+      "nonTransparentPixelsRepeat": 302457,
+      "gpuTimingValidSamples": 260,
+      "failedChecks": [
+        "position-mutation-frame-p95-ms",
+        "position-mutation-frame-over-budget-count",
+        "position-mutation-frame-over-budget-ratio",
+        "position-mutation-frame-p99-ms",
+        "position-mutation-frame-max-ms"
+      ],
+      "source": {
+        "kind": "ephemeral-artifact-digest",
+        "artifact": null,
+        "sha256": "1929e713de8176edf609a6bb8f1fab2d0ae4b83345d28c107979cb27038e731a"
+      }
+    },
+    {
+      "attempt": 10,
+      "validity": "post-fix-valid",
+      "capturedAt": "2026-08-29T10:19:41.336Z",
+      "outcome": "fail",
+      "budgetPassed": false,
+      "setupMs": 802.1000000014901,
+      "cameraFrameP95Ms": 11.899999998509884,
+      "cameraGpuP95Ms": 8.323072,
+      "cameraFrameOverBudgetCount": 1,
+      "cameraFrameOverBudgetRatio": 0.008333333333333333,
+      "cameraFrameP99Ms": 13.299999997019768,
+      "cameraFrameMaxMs": 16.899999998509884,
+      "positionFrameP95Ms": 19.899999998509884,
+      "positionGpuP95Ms": 10.223616,
+      "positionFrameOverBudgetCount": 120,
+      "positionFrameOverBudgetRatio": 1,
+      "positionFrameP99Ms": 21.399999998509884,
+      "positionFrameMaxMs": 21.69999999552965,
+      "submittedGlyphs": 50000,
+      "submittedGlyphsHash": 1171247173,
+      "submittedGlyphsHashSource": "gpu-instances-out-readback",
+      "renderedPixelHash": 2829947060,
+      "renderedPixelHashRepeat": 2829947060,
+      "nonTransparentPixels": 302457,
+      "nonTransparentPixelsRepeat": 302457,
+      "gpuTimingValidSamples": 260,
+      "failedChecks": [
+        "camera-frame-over-budget-count",
+        "camera-frame-over-budget-ratio",
+        "camera-frame-max-ms",
+        "position-mutation-frame-p95-ms",
+        "position-mutation-frame-over-budget-count",
+        "position-mutation-frame-over-budget-ratio",
+        "position-mutation-frame-p99-ms",
+        "position-mutation-frame-max-ms"
+      ],
+      "source": {
+        "kind": "former-committed-artifact-digest",
+        "artifact": null,
+        "sha256": "d4914d86952b310de210cb517d3a2f12073494c86dc38eb609af1095a61de2eb"
+      }
+    }
+  ],
+  "summary": {
+    "attempts": 10,
+    "passed": 0,
+    "failed": 5,
+    "outliers": 0,
+    "preFix": {
+      "attempts": 5,
+      "passed": 3,
+      "outliers": 2,
+      "validity": "invalidated"
+    },
+    "postFix": {
+      "attempts": 5,
+      "passed": 0,
+      "failed": 5,
+      "outliers": 0,
+      "passRate": 0
+    },
+    "postFixSetupMs": [
+      789.1000000014901,
+      777.2000000029802,
+      800.7000000029802,
+      791.3999999985099,
+      802.1000000014901
+    ],
+    "postFixCameraFrameP95Ms": [
+      9.800000004470348,
+      11.100000001490116,
+      10.099999994039536,
+      11.600000001490116,
+      11.899999998509884
+    ],
+    "postFixCameraGpuP95Ms": [8.323072, 8.323072, 8.323072, 8.323072, 8.323072],
+    "postFixPositionFrameP95Ms": [
+      18.5,
+      18.80000000447035,
+      19.5,
+      20,
+      19.899999998509884
+    ],
+    "postFixPositionGpuP95Ms": [9.371648, 9.699328, 10.092544, 10.289152, 10.223616],
+    "frameTail": {
+      "camera": {
+        "samples": 600,
+        "overBudgetCount": 1,
+        "overBudgetRatio": 0.0016666666666666668,
+        "p99Ms": 12.699999995529652,
+        "maxMs": 16.899999998509884
+      },
+      "positionMutation": {
+        "samples": 600,
+        "overBudgetCount": 598,
+        "overBudgetRatio": 0.9966666666666667,
+        "p99Ms": 20.69999999552965,
+        "maxMs": 24
+      }
+    },
+    "outputIdentity": {
+      "completeRuns": 5,
+      "submittedGlyphs": 50000,
+      "submittedGlyphsHash": 1171247173,
+      "submittedGlyphsHashSource": "gpu-instances-out-readback",
+      "renderedPixelHash": 2829947060,
+      "nonTransparentPixels": 302457
+    }
+  },
+  "invariants": {
+    "exactFormalConfiguration": true,
+    "preFixHistoryRetained": true,
+    "preFixResultsInvalidated": true,
+    "fivePostFixRunsRecorded": true,
+    "postFixOutputIdentityStable": true,
+    "postFixPixelIdentityStable": true,
+    "postFixTimingSamplesComplete": true,
+    "canonicalCandidatePassed": false,
+    "canonicalCandidateTailFailureRecorded": true,
+    "canonicalCandidateHashRecorded": true,
+    "correctnessChecksPassedAcrossPostFixAttempts": true,
+    "postFixThroughputBudgetPassed": false,
+    "postFixReleaseTailPassed": false
+  }
+}

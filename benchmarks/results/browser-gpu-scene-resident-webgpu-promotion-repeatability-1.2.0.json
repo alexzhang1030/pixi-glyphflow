@@ -1,0 +1,854 @@
+{
+  "schemaVersion": 4,
+  "kind": "pixi-glyphflow-gpu-scene-resident-repeatability",
+  "capturedAt": "2026-08-29T20:34:32.993Z",
+  "packageVersion": "1.2.0",
+  "workload": "gpu-scene-resident",
+  "renderer": "webgpu",
+  "canonicalCandidate": {
+    "artifact": "browser-gpu-scene-resident-webgpu-canonical-source-1.2.0.json",
+    "packageVersion": "1.2.0",
+    "sha256": "e8149d863b2d75af2e2ac997114597f5ab8ae4a3ca2746cf54c92f7672d69f7c"
+  },
+  "configuration": {
+    "labelCount": 1000000,
+    "mutationCount": 100000,
+    "warmupFrames": 10,
+    "cameraSampleFrames": 120,
+    "positionSampleFrames": 120,
+    "width": 1280,
+    "height": 800
+  },
+  "canonicalOutputIdentity": {
+    "submittedGlyphs": 50000,
+    "submittedGlyphsSource": "gpu-indirect-readback",
+    "submittedGlyphsHash": 1171247173,
+    "submittedGlyphsHashSource": "gpu-instances-out-readback",
+    "renderedPixelHash": 2829947060,
+    "nonTransparentPixels": 302457
+  },
+  "runtimeFingerprint": {
+    "sha256": "5179504654b69449d6d2219ef12d1f6f8a12d053c89881702db871c38dd6fec7",
+    "bun": "1.4.0",
+    "cpu": "Apple M1 Pro",
+    "platform": "darwin",
+    "release": "27.0.0",
+    "architecture": "arm64",
+    "userAgent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) HeadlessChrome/151.0.0.0 Safari/537.36",
+    "gpuAdapter": {
+      "vendor": "apple",
+      "architecture": "metal-3",
+      "device": "",
+      "description": "",
+      "timestampQuery": true,
+      "limits": {
+        "maxStorageBufferBindingSize": 4294967292,
+        "maxBufferSize": 4294967292,
+        "maxStorageBuffersPerShaderStage": 10,
+        "maxStorageBuffersInVertexStage": 10,
+        "maxComputeWorkgroupStorageSize": 16384,
+        "maxComputeInvocationsPerWorkgroup": 256,
+        "maxComputeWorkgroupSizeX": 256,
+        "maxComputeWorkgroupSizeY": 256,
+        "maxComputeWorkgroupSizeZ": 64,
+        "maxComputeWorkgroupsPerDimension": 65535
+      }
+    }
+  },
+  "buildFingerprintSha256": "1cb31044438ee914eb5525b97c751488641312f4271127e32d08fdb0f0b27ef4",
+  "harnessFingerprintSha256": "2c27dffff28bd1029c6c227471cff106f2bcf120ad6f7395c8c5382d8027244e",
+  "runs": [
+    {
+      "run": 1,
+      "artifactFile": "browser-gpu-scene-resident-webgpu-formal-1-1.2.0.json",
+      "candidateSha256": "16fc29c900000817712864ace23e48ed3269961a8ed9cfb4813c6bd39f09a40d",
+      "capturedAt": "2026-08-29T20:32:24.296Z",
+      "capturedAtValid": true,
+      "sampleCapturedAt": "2026-08-29T20:32:24.027Z",
+      "sampleCapturedAtValid": true,
+      "sampleCapturedAtNotAfterArtifact": true,
+      "runId": "0e1c4d2b-5ea5-47c8-8b0a-8b7f993193d6",
+      "buildFingerprintSha256": "1cb31044438ee914eb5525b97c751488641312f4271127e32d08fdb0f0b27ef4",
+      "harnessFingerprintSha256": "2c27dffff28bd1029c6c227471cff106f2bcf120ad6f7395c8c5382d8027244e",
+      "evidenceSha256": "a3add5bdd2f726c0c7d0fdf734917776cf7df83216ddd40cbba19c271ddd6a82",
+      "provenanceValid": true,
+      "packageVersion": "1.2.0",
+      "packageVersionExact": true,
+      "runtimeFingerprint": {
+        "sha256": "5179504654b69449d6d2219ef12d1f6f8a12d053c89881702db871c38dd6fec7",
+        "bun": "1.4.0",
+        "cpu": "Apple M1 Pro",
+        "platform": "darwin",
+        "release": "27.0.0",
+        "architecture": "arm64",
+        "userAgent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) HeadlessChrome/151.0.0.0 Safari/537.36",
+        "gpuAdapter": {
+          "vendor": "apple",
+          "architecture": "metal-3",
+          "device": "",
+          "description": "",
+          "timestampQuery": true,
+          "limits": {
+            "maxStorageBufferBindingSize": 4294967292,
+            "maxBufferSize": 4294967292,
+            "maxStorageBuffersPerShaderStage": 10,
+            "maxStorageBuffersInVertexStage": 10,
+            "maxComputeWorkgroupStorageSize": 16384,
+            "maxComputeInvocationsPerWorkgroup": 256,
+            "maxComputeWorkgroupSizeX": 256,
+            "maxComputeWorkgroupSizeY": 256,
+            "maxComputeWorkgroupSizeZ": 64,
+            "maxComputeWorkgroupsPerDimension": 65535
+          }
+        }
+      },
+      "runtimeFingerprintComplete": true,
+      "budgetPassed": true,
+      "budgetFailures": [],
+      "exactFormalArtifact": true,
+      "exactCanonicalOutput": true,
+      "outputIdentity": {
+        "submittedGlyphs": 50000,
+        "submittedGlyphsHash": 1171247173,
+        "submittedGlyphsHashSource": "gpu-instances-out-readback",
+        "renderedPixelHash": 2829947060,
+        "nonTransparentPixels": 302457
+      },
+      "camera": {
+        "samples": 120,
+        "p95Ms": 8.200000002980232,
+        "p99Ms": 9.5,
+        "maxMs": 9.800000011920929,
+        "overBudgetCount": 0,
+        "overBudgetRatio": 0
+      },
+      "positionMutation": {
+        "samples": 120,
+        "p95Ms": 10.799999997019768,
+        "p99Ms": 12.199999988079071,
+        "maxMs": 12.399999991059303,
+        "overBudgetCount": 0,
+        "overBudgetRatio": 0
+      },
+      "timestamps": {
+        "readbackSubmissions": 260,
+        "fusedTimestampResolves": 260,
+        "standaloneTimestampSubmissions": 0,
+        "timingSamples": 260,
+        "timingFusedTimestampResolves": 260,
+        "timingStandaloneTimestampSubmissions": 0,
+        "validSamples": 260,
+        "segmentedSamples": 260,
+        "validSegmentedSamples": 260,
+        "segmentedFallbackSamples": 0,
+        "segments": {
+          "palette": {
+            "samples": 260,
+            "validSamples": 260,
+            "arraySamples": 240,
+            "arrayValidSamples": 240,
+            "p50Ms": 0,
+            "p95Ms": 0.131072
+          },
+          "cull": {
+            "samples": 260,
+            "validSamples": 260,
+            "arraySamples": 240,
+            "arrayValidSamples": 240,
+            "p50Ms": 0.393216,
+            "p95Ms": 0.917504
+          },
+          "sceneRender": {
+            "samples": 260,
+            "validSamples": 260,
+            "arraySamples": 240,
+            "arrayValidSamples": 240,
+            "p50Ms": 3.60448,
+            "p95Ms": 5.505024
+          }
+        },
+        "segmentedExact": true
+      },
+      "failures": [],
+      "eligible": true
+    },
+    {
+      "run": 2,
+      "artifactFile": "browser-gpu-scene-resident-webgpu-formal-2-1.2.0.json",
+      "candidateSha256": "5d5fd48d24874241e403c16db56cacffb8468807bfdc4cbd3b426558124df476",
+      "capturedAt": "2026-08-29T20:32:32.701Z",
+      "capturedAtValid": true,
+      "sampleCapturedAt": "2026-08-29T20:32:32.339Z",
+      "sampleCapturedAtValid": true,
+      "sampleCapturedAtNotAfterArtifact": true,
+      "runId": "165bf905-e6dc-4d92-a21c-165319cc11a5",
+      "buildFingerprintSha256": "1cb31044438ee914eb5525b97c751488641312f4271127e32d08fdb0f0b27ef4",
+      "harnessFingerprintSha256": "2c27dffff28bd1029c6c227471cff106f2bcf120ad6f7395c8c5382d8027244e",
+      "evidenceSha256": "ccab09c794f58d3d7a240af55d16f21a9706ed9065cde2eebf478d9339c918ab",
+      "provenanceValid": true,
+      "packageVersion": "1.2.0",
+      "packageVersionExact": true,
+      "runtimeFingerprint": {
+        "sha256": "5179504654b69449d6d2219ef12d1f6f8a12d053c89881702db871c38dd6fec7",
+        "bun": "1.4.0",
+        "cpu": "Apple M1 Pro",
+        "platform": "darwin",
+        "release": "27.0.0",
+        "architecture": "arm64",
+        "userAgent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) HeadlessChrome/151.0.0.0 Safari/537.36",
+        "gpuAdapter": {
+          "vendor": "apple",
+          "architecture": "metal-3",
+          "device": "",
+          "description": "",
+          "timestampQuery": true,
+          "limits": {
+            "maxStorageBufferBindingSize": 4294967292,
+            "maxBufferSize": 4294967292,
+            "maxStorageBuffersPerShaderStage": 10,
+            "maxStorageBuffersInVertexStage": 10,
+            "maxComputeWorkgroupStorageSize": 16384,
+            "maxComputeInvocationsPerWorkgroup": 256,
+            "maxComputeWorkgroupSizeX": 256,
+            "maxComputeWorkgroupSizeY": 256,
+            "maxComputeWorkgroupSizeZ": 64,
+            "maxComputeWorkgroupsPerDimension": 65535
+          }
+        }
+      },
+      "runtimeFingerprintComplete": true,
+      "budgetPassed": true,
+      "budgetFailures": [],
+      "exactFormalArtifact": true,
+      "exactCanonicalOutput": true,
+      "outputIdentity": {
+        "submittedGlyphs": 50000,
+        "submittedGlyphsHash": 1171247173,
+        "submittedGlyphsHashSource": "gpu-instances-out-readback",
+        "renderedPixelHash": 2829947060,
+        "nonTransparentPixels": 302457
+      },
+      "camera": {
+        "samples": 120,
+        "p95Ms": 8,
+        "p99Ms": 9.400000005960464,
+        "maxMs": 9.900000005960464,
+        "overBudgetCount": 0,
+        "overBudgetRatio": 0
+      },
+      "positionMutation": {
+        "samples": 120,
+        "p95Ms": 9.700000002980232,
+        "p99Ms": 11,
+        "maxMs": 12.5,
+        "overBudgetCount": 0,
+        "overBudgetRatio": 0
+      },
+      "timestamps": {
+        "readbackSubmissions": 260,
+        "fusedTimestampResolves": 260,
+        "standaloneTimestampSubmissions": 0,
+        "timingSamples": 260,
+        "timingFusedTimestampResolves": 260,
+        "timingStandaloneTimestampSubmissions": 0,
+        "validSamples": 260,
+        "segmentedSamples": 260,
+        "validSegmentedSamples": 260,
+        "segmentedFallbackSamples": 0,
+        "segments": {
+          "palette": {
+            "samples": 260,
+            "validSamples": 260,
+            "arraySamples": 240,
+            "arrayValidSamples": 240,
+            "p50Ms": 0,
+            "p95Ms": 0.131072
+          },
+          "cull": {
+            "samples": 260,
+            "validSamples": 260,
+            "arraySamples": 240,
+            "arrayValidSamples": 240,
+            "p50Ms": 0.393216,
+            "p95Ms": 0.851968
+          },
+          "sceneRender": {
+            "samples": 260,
+            "validSamples": 260,
+            "arraySamples": 240,
+            "arrayValidSamples": 240,
+            "p50Ms": 3.60448,
+            "p95Ms": 5.439488
+          }
+        },
+        "segmentedExact": true
+      },
+      "failures": [],
+      "eligible": true
+    },
+    {
+      "run": 3,
+      "artifactFile": "browser-gpu-scene-resident-webgpu-formal-3-1.2.0.json",
+      "candidateSha256": "3344f553a5586bcc507958ce1119f7e015b5a44acb9681b984f453640053b9d6",
+      "capturedAt": "2026-08-29T20:32:40.254Z",
+      "capturedAtValid": true,
+      "sampleCapturedAt": "2026-08-29T20:32:39.887Z",
+      "sampleCapturedAtValid": true,
+      "sampleCapturedAtNotAfterArtifact": true,
+      "runId": "9bf4795f-6c25-4451-b8ae-a40cfe5b4c0d",
+      "buildFingerprintSha256": "1cb31044438ee914eb5525b97c751488641312f4271127e32d08fdb0f0b27ef4",
+      "harnessFingerprintSha256": "2c27dffff28bd1029c6c227471cff106f2bcf120ad6f7395c8c5382d8027244e",
+      "evidenceSha256": "56c4420f6964fae093836aab22d4e5106e028e7109ac9f419fa53782101e2f45",
+      "provenanceValid": true,
+      "packageVersion": "1.2.0",
+      "packageVersionExact": true,
+      "runtimeFingerprint": {
+        "sha256": "5179504654b69449d6d2219ef12d1f6f8a12d053c89881702db871c38dd6fec7",
+        "bun": "1.4.0",
+        "cpu": "Apple M1 Pro",
+        "platform": "darwin",
+        "release": "27.0.0",
+        "architecture": "arm64",
+        "userAgent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) HeadlessChrome/151.0.0.0 Safari/537.36",
+        "gpuAdapter": {
+          "vendor": "apple",
+          "architecture": "metal-3",
+          "device": "",
+          "description": "",
+          "timestampQuery": true,
+          "limits": {
+            "maxStorageBufferBindingSize": 4294967292,
+            "maxBufferSize": 4294967292,
+            "maxStorageBuffersPerShaderStage": 10,
+            "maxStorageBuffersInVertexStage": 10,
+            "maxComputeWorkgroupStorageSize": 16384,
+            "maxComputeInvocationsPerWorkgroup": 256,
+            "maxComputeWorkgroupSizeX": 256,
+            "maxComputeWorkgroupSizeY": 256,
+            "maxComputeWorkgroupSizeZ": 64,
+            "maxComputeWorkgroupsPerDimension": 65535
+          }
+        }
+      },
+      "runtimeFingerprintComplete": true,
+      "budgetPassed": true,
+      "budgetFailures": [],
+      "exactFormalArtifact": true,
+      "exactCanonicalOutput": true,
+      "outputIdentity": {
+        "submittedGlyphs": 50000,
+        "submittedGlyphsHash": 1171247173,
+        "submittedGlyphsHashSource": "gpu-instances-out-readback",
+        "renderedPixelHash": 2829947060,
+        "nonTransparentPixels": 302457
+      },
+      "camera": {
+        "samples": 120,
+        "p95Ms": 7.9000000059604645,
+        "p99Ms": 8.599999994039536,
+        "maxMs": 8.799999997019768,
+        "overBudgetCount": 0,
+        "overBudgetRatio": 0
+      },
+      "positionMutation": {
+        "samples": 120,
+        "p95Ms": 9.5,
+        "p99Ms": 10.5,
+        "maxMs": 10.900000005960464,
+        "overBudgetCount": 0,
+        "overBudgetRatio": 0
+      },
+      "timestamps": {
+        "readbackSubmissions": 260,
+        "fusedTimestampResolves": 260,
+        "standaloneTimestampSubmissions": 0,
+        "timingSamples": 260,
+        "timingFusedTimestampResolves": 260,
+        "timingStandaloneTimestampSubmissions": 0,
+        "validSamples": 260,
+        "segmentedSamples": 260,
+        "validSegmentedSamples": 260,
+        "segmentedFallbackSamples": 0,
+        "segments": {
+          "palette": {
+            "samples": 260,
+            "validSamples": 260,
+            "arraySamples": 240,
+            "arrayValidSamples": 240,
+            "p50Ms": 0,
+            "p95Ms": 0.589824
+          },
+          "cull": {
+            "samples": 260,
+            "validSamples": 260,
+            "arraySamples": 240,
+            "arrayValidSamples": 240,
+            "p50Ms": 0.393216,
+            "p95Ms": 0.65536
+          },
+          "sceneRender": {
+            "samples": 260,
+            "validSamples": 260,
+            "arraySamples": 240,
+            "arrayValidSamples": 240,
+            "p50Ms": 3.60448,
+            "p95Ms": 5.439488
+          }
+        },
+        "segmentedExact": true
+      },
+      "failures": [],
+      "eligible": true
+    },
+    {
+      "run": 4,
+      "artifactFile": "browser-gpu-scene-resident-webgpu-formal-4-1.2.0.json",
+      "candidateSha256": "ee72006455406b5eced5c8ae7db8d30b2b1bb1a2f2d7d0a7609519ba2fa4ce6f",
+      "capturedAt": "2026-08-29T20:32:47.586Z",
+      "capturedAtValid": true,
+      "sampleCapturedAt": "2026-08-29T20:32:47.231Z",
+      "sampleCapturedAtValid": true,
+      "sampleCapturedAtNotAfterArtifact": true,
+      "runId": "3c7e007e-b90e-437f-9662-18577ad33a6f",
+      "buildFingerprintSha256": "1cb31044438ee914eb5525b97c751488641312f4271127e32d08fdb0f0b27ef4",
+      "harnessFingerprintSha256": "2c27dffff28bd1029c6c227471cff106f2bcf120ad6f7395c8c5382d8027244e",
+      "evidenceSha256": "855671eafd683a7c98a6e4ef0b9ac085bbc1586d7f06247aebb556320fffac24",
+      "provenanceValid": true,
+      "packageVersion": "1.2.0",
+      "packageVersionExact": true,
+      "runtimeFingerprint": {
+        "sha256": "5179504654b69449d6d2219ef12d1f6f8a12d053c89881702db871c38dd6fec7",
+        "bun": "1.4.0",
+        "cpu": "Apple M1 Pro",
+        "platform": "darwin",
+        "release": "27.0.0",
+        "architecture": "arm64",
+        "userAgent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) HeadlessChrome/151.0.0.0 Safari/537.36",
+        "gpuAdapter": {
+          "vendor": "apple",
+          "architecture": "metal-3",
+          "device": "",
+          "description": "",
+          "timestampQuery": true,
+          "limits": {
+            "maxStorageBufferBindingSize": 4294967292,
+            "maxBufferSize": 4294967292,
+            "maxStorageBuffersPerShaderStage": 10,
+            "maxStorageBuffersInVertexStage": 10,
+            "maxComputeWorkgroupStorageSize": 16384,
+            "maxComputeInvocationsPerWorkgroup": 256,
+            "maxComputeWorkgroupSizeX": 256,
+            "maxComputeWorkgroupSizeY": 256,
+            "maxComputeWorkgroupSizeZ": 64,
+            "maxComputeWorkgroupsPerDimension": 65535
+          }
+        }
+      },
+      "runtimeFingerprintComplete": true,
+      "budgetPassed": true,
+      "budgetFailures": [],
+      "exactFormalArtifact": true,
+      "exactCanonicalOutput": true,
+      "outputIdentity": {
+        "submittedGlyphs": 50000,
+        "submittedGlyphsHash": 1171247173,
+        "submittedGlyphsHashSource": "gpu-instances-out-readback",
+        "renderedPixelHash": 2829947060,
+        "nonTransparentPixels": 302457
+      },
+      "camera": {
+        "samples": 120,
+        "p95Ms": 7.9000000059604645,
+        "p99Ms": 9.700000002980232,
+        "maxMs": 10.600000008940697,
+        "overBudgetCount": 0,
+        "overBudgetRatio": 0
+      },
+      "positionMutation": {
+        "samples": 120,
+        "p95Ms": 10,
+        "p99Ms": 10.800000011920929,
+        "maxMs": 10.899999991059303,
+        "overBudgetCount": 0,
+        "overBudgetRatio": 0
+      },
+      "timestamps": {
+        "readbackSubmissions": 260,
+        "fusedTimestampResolves": 260,
+        "standaloneTimestampSubmissions": 0,
+        "timingSamples": 260,
+        "timingFusedTimestampResolves": 260,
+        "timingStandaloneTimestampSubmissions": 0,
+        "validSamples": 260,
+        "segmentedSamples": 260,
+        "validSegmentedSamples": 260,
+        "segmentedFallbackSamples": 0,
+        "segments": {
+          "palette": {
+            "samples": 260,
+            "validSamples": 260,
+            "arraySamples": 240,
+            "arrayValidSamples": 240,
+            "p50Ms": 0,
+            "p95Ms": 0.65536
+          },
+          "cull": {
+            "samples": 260,
+            "validSamples": 260,
+            "arraySamples": 240,
+            "arrayValidSamples": 240,
+            "p50Ms": 0.393216,
+            "p95Ms": 0.589824
+          },
+          "sceneRender": {
+            "samples": 260,
+            "validSamples": 260,
+            "arraySamples": 240,
+            "arrayValidSamples": 240,
+            "p50Ms": 3.60448,
+            "p95Ms": 5.439488
+          }
+        },
+        "segmentedExact": true
+      },
+      "failures": [],
+      "eligible": true
+    },
+    {
+      "run": 5,
+      "artifactFile": "browser-gpu-scene-resident-webgpu-candidate-1.2.0.json",
+      "candidateSha256": "380856aefd4b3f32fc222a7d550c0bdf158cfff3f36e473c6adfe947a34fac82",
+      "capturedAt": "2026-08-29T20:33:48.989Z",
+      "capturedAtValid": true,
+      "sampleCapturedAt": "2026-08-29T20:33:48.731Z",
+      "sampleCapturedAtValid": true,
+      "sampleCapturedAtNotAfterArtifact": true,
+      "runId": "5f15d579-ebb6-4725-93ed-b5c96fdb00b2",
+      "buildFingerprintSha256": "1cb31044438ee914eb5525b97c751488641312f4271127e32d08fdb0f0b27ef4",
+      "harnessFingerprintSha256": "2c27dffff28bd1029c6c227471cff106f2bcf120ad6f7395c8c5382d8027244e",
+      "evidenceSha256": "18483b11317a758abc102baeb0fc3ea33d4f7d634084c363bd1f56dbdf3925c3",
+      "provenanceValid": true,
+      "packageVersion": "1.2.0",
+      "packageVersionExact": true,
+      "runtimeFingerprint": {
+        "sha256": "5179504654b69449d6d2219ef12d1f6f8a12d053c89881702db871c38dd6fec7",
+        "bun": "1.4.0",
+        "cpu": "Apple M1 Pro",
+        "platform": "darwin",
+        "release": "27.0.0",
+        "architecture": "arm64",
+        "userAgent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) HeadlessChrome/151.0.0.0 Safari/537.36",
+        "gpuAdapter": {
+          "vendor": "apple",
+          "architecture": "metal-3",
+          "device": "",
+          "description": "",
+          "timestampQuery": true,
+          "limits": {
+            "maxStorageBufferBindingSize": 4294967292,
+            "maxBufferSize": 4294967292,
+            "maxStorageBuffersPerShaderStage": 10,
+            "maxStorageBuffersInVertexStage": 10,
+            "maxComputeWorkgroupStorageSize": 16384,
+            "maxComputeInvocationsPerWorkgroup": 256,
+            "maxComputeWorkgroupSizeX": 256,
+            "maxComputeWorkgroupSizeY": 256,
+            "maxComputeWorkgroupSizeZ": 64,
+            "maxComputeWorkgroupsPerDimension": 65535
+          }
+        }
+      },
+      "runtimeFingerprintComplete": true,
+      "budgetPassed": true,
+      "budgetFailures": [],
+      "exactFormalArtifact": true,
+      "exactCanonicalOutput": true,
+      "outputIdentity": {
+        "submittedGlyphs": 50000,
+        "submittedGlyphsHash": 1171247173,
+        "submittedGlyphsHashSource": "gpu-instances-out-readback",
+        "renderedPixelHash": 2829947060,
+        "nonTransparentPixels": 302457
+      },
+      "camera": {
+        "samples": 120,
+        "p95Ms": 6.899999991059303,
+        "p99Ms": 7.200000002980232,
+        "maxMs": 7.5,
+        "overBudgetCount": 0,
+        "overBudgetRatio": 0
+      },
+      "positionMutation": {
+        "samples": 120,
+        "p95Ms": 8.299999997019768,
+        "p99Ms": 9.399999991059303,
+        "maxMs": 9.600000008940697,
+        "overBudgetCount": 0,
+        "overBudgetRatio": 0
+      },
+      "timestamps": {
+        "readbackSubmissions": 260,
+        "fusedTimestampResolves": 260,
+        "standaloneTimestampSubmissions": 0,
+        "timingSamples": 260,
+        "timingFusedTimestampResolves": 260,
+        "timingStandaloneTimestampSubmissions": 0,
+        "validSamples": 260,
+        "segmentedSamples": 260,
+        "validSegmentedSamples": 260,
+        "segmentedFallbackSamples": 0,
+        "segments": {
+          "palette": {
+            "samples": 260,
+            "validSamples": 260,
+            "arraySamples": 240,
+            "arrayValidSamples": 240,
+            "p50Ms": 0,
+            "p95Ms": 0.131072
+          },
+          "cull": {
+            "samples": 260,
+            "validSamples": 260,
+            "arraySamples": 240,
+            "arrayValidSamples": 240,
+            "p50Ms": 0.393216,
+            "p95Ms": 0.458752
+          },
+          "sceneRender": {
+            "samples": 260,
+            "validSamples": 260,
+            "arraySamples": 240,
+            "arrayValidSamples": 240,
+            "p50Ms": 3.60448,
+            "p95Ms": 3.735552
+          }
+        },
+        "segmentedExact": true
+      },
+      "failures": [],
+      "eligible": true
+    }
+  ],
+  "sustained600": {
+    "artifactFile": "browser-gpu-scene-resident-webgpu-fastlane-fused-600-1.2.0.json",
+    "candidateSha256": "61dd5fb7932fcb10868bb9fa3be13b6e4e71201b010da2b783464c8faedaddf5",
+    "capturedAt": "2026-08-29T20:34:04.551Z",
+    "capturedAtValid": true,
+    "sampleCapturedAt": "2026-08-29T20:34:04.130Z",
+    "sampleCapturedAtValid": true,
+    "sampleCapturedAtNotAfterArtifact": true,
+    "sampleCapturedAtDistinctFromTruthRuns": true,
+    "runId": "85db6ffc-a163-49ec-80d5-3779e44964aa",
+    "buildFingerprintSha256": "1cb31044438ee914eb5525b97c751488641312f4271127e32d08fdb0f0b27ef4",
+    "harnessFingerprintSha256": "2c27dffff28bd1029c6c227471cff106f2bcf120ad6f7395c8c5382d8027244e",
+    "evidenceSha256": "509d330e09c4e669133afa085effbfbe7c678516192d9fc5fe1c4b9d88215961",
+    "provenanceValid": true,
+    "buildFingerprintMatchesTruthRuns": true,
+    "harnessFingerprintMatchesTruthRuns": true,
+    "runIdentityDistinctFromTruthRuns": true,
+    "packageVersion": "1.2.0",
+    "packageVersionExact": true,
+    "runtimeFingerprint": {
+      "sha256": "5179504654b69449d6d2219ef12d1f6f8a12d053c89881702db871c38dd6fec7",
+      "bun": "1.4.0",
+      "cpu": "Apple M1 Pro",
+      "platform": "darwin",
+      "release": "27.0.0",
+      "architecture": "arm64",
+      "userAgent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) HeadlessChrome/151.0.0.0 Safari/537.36",
+      "gpuAdapter": {
+        "vendor": "apple",
+        "architecture": "metal-3",
+        "device": "",
+        "description": "",
+        "timestampQuery": true,
+        "limits": {
+          "maxStorageBufferBindingSize": 4294967292,
+          "maxBufferSize": 4294967292,
+          "maxStorageBuffersPerShaderStage": 10,
+          "maxStorageBuffersInVertexStage": 10,
+          "maxComputeWorkgroupStorageSize": 16384,
+          "maxComputeInvocationsPerWorkgroup": 256,
+          "maxComputeWorkgroupSizeX": 256,
+          "maxComputeWorkgroupSizeY": 256,
+          "maxComputeWorkgroupSizeZ": 64,
+          "maxComputeWorkgroupsPerDimension": 65535
+        }
+      }
+    },
+    "runtimeFingerprintComplete": true,
+    "runtimeFingerprintMatchesTruthRuns": true,
+    "exactSustainedArtifact": true,
+    "budgetPassed": true,
+    "budgetFailures": [],
+    "exactCanonicalOutput": true,
+    "outputIdentity": {
+      "submittedGlyphs": 50000,
+      "submittedGlyphsHash": 1171247173,
+      "submittedGlyphsHashSource": "gpu-instances-out-readback",
+      "renderedPixelHash": 2829947060,
+      "nonTransparentPixels": 302457
+    },
+    "camera": {
+      "samples": 600,
+      "p95Ms": 10.5,
+      "p99Ms": 13.5,
+      "maxMs": 21.5,
+      "overBudgetCount": 4,
+      "overBudgetRatio": 0.006666666666666667
+    },
+    "positionMutation": {
+      "samples": 600,
+      "p95Ms": 8.099999979138374,
+      "p99Ms": 9.900000005960464,
+      "maxMs": 11.599999994039536,
+      "overBudgetCount": 0,
+      "overBudgetRatio": 0
+    },
+    "uploads": {
+      "cameraTransformMaxBytes": 0,
+      "cameraCullRecordMaxBytes": 0,
+      "positionTransformMinBytes": 800016,
+      "positionTransformMaxBytes": 800016,
+      "positionTransformExactSamples": 600,
+      "positionCullRecordMaxBytes": 0
+    },
+    "timestamps": {
+      "readbackSubmissions": 1220,
+      "fusedTimestampResolves": 1220,
+      "standaloneTimestampSubmissions": 0,
+      "timingSamples": 1220,
+      "timingFusedTimestampResolves": 1220,
+      "timingStandaloneTimestampSubmissions": 0,
+      "validSamples": 1220,
+      "segmentedSamples": 1220,
+      "validSegmentedSamples": 1220,
+      "segmentedFallbackSamples": 0,
+      "segments": {
+        "palette": {
+          "samples": 1220,
+          "validSamples": 1220,
+          "arraySamples": 1200,
+          "arrayValidSamples": 1200,
+          "p50Ms": 0,
+          "p95Ms": 0.131072
+        },
+        "cull": {
+          "samples": 1220,
+          "validSamples": 1220,
+          "arraySamples": 1200,
+          "arrayValidSamples": 1200,
+          "p50Ms": 0.393216,
+          "p95Ms": 0.720896
+        },
+        "sceneRender": {
+          "samples": 1220,
+          "validSamples": 1220,
+          "arraySamples": 1200,
+          "arrayValidSamples": 1200,
+          "p50Ms": 3.60448,
+          "p95Ms": 6.291456
+        }
+      },
+      "segmentedExact": true
+    },
+    "failures": [],
+    "eligible": true
+  },
+  "summary": {
+    "runCount": 5,
+    "uniqueCandidateShaCount": 5,
+    "outputIdentityStable": true,
+    "camera": {
+      "samples": 600,
+      "p95Ms": 7.9000000059604645,
+      "p99Ms": 9.400000005960464,
+      "maxMs": 10.600000008940697,
+      "overBudgetCount": 0,
+      "overBudgetRatio": 0
+    },
+    "positionMutation": {
+      "samples": 600,
+      "p95Ms": 9.799999997019768,
+      "p99Ms": 11.000000014901161,
+      "maxMs": 12.5,
+      "overBudgetCount": 0,
+      "overBudgetRatio": 0
+    },
+    "timestamps": {
+      "readbackSubmissions": 1300,
+      "fusedTimestampResolves": 1300,
+      "standaloneTimestampSubmissions": 0,
+      "timingFusedTimestampResolves": 1300,
+      "timingSamples": 1300,
+      "timingStandaloneTimestampSubmissions": 0,
+      "validSamples": 1300,
+      "segmentedSamples": 1300,
+      "validSegmentedSamples": 1300,
+      "segmentedFallbackSamples": 0,
+      "segments": {
+        "palette": {
+          "samples": 1300,
+          "validSamples": 1300,
+          "arraySamples": 1200,
+          "arrayValidSamples": 1200,
+          "p50Ms": 0,
+          "p95Ms": 0.131072
+        },
+        "cull": {
+          "samples": 1300,
+          "validSamples": 1300,
+          "arraySamples": 1200,
+          "arrayValidSamples": 1200,
+          "p50Ms": 0.393216,
+          "p95Ms": 0.589824
+        },
+        "sceneRender": {
+          "samples": 1300,
+          "validSamples": 1300,
+          "arraySamples": 1200,
+          "arrayValidSamples": 1200,
+          "p50Ms": 3.60448,
+          "p95Ms": 5.439488
+        }
+      },
+      "segmentedExact": true
+    }
+  },
+  "invariants": {
+    "exactlyFiveRuns": true,
+    "isolatedCandidateArtifacts": true,
+    "everyRunProvenanceValid": true,
+    "uniqueRunIds": true,
+    "uniqueCapturedAt": true,
+    "everyRunCapturedAtValid": true,
+    "everyRunSampleCapturedAtValid": true,
+    "everyRunSampleCapturedAtNotAfterArtifact": true,
+    "uniqueSampleCapturedAt": true,
+    "uniqueEvidenceSha256": true,
+    "buildFingerprintStable": true,
+    "harnessFingerprintStable": true,
+    "everyRunPackageVersionExact": true,
+    "everyRunRuntimeFingerprintComplete": true,
+    "runtimeFingerprintStable": true,
+    "everyRunFormal": true,
+    "everyRunBudgetPassed": true,
+    "everyRunCanonicalOutput": true,
+    "outputIdentityStable": true,
+    "everyRunTimingComplete": true,
+    "everyRunTimestampExact": true,
+    "everyRunSegmentedTimestampExact": true,
+    "truthRepeatabilityReady": true,
+    "formalPerformanceReady": true,
+    "sustained600Ready": true,
+    "promotionReady": true
+  },
+  "truthRepeatability": {
+    "status": "GO",
+    "reasons": []
+  },
+  "promotion": {
+    "status": "GO",
+    "reasons": []
+  }
+}

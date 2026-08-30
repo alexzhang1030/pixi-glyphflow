@@ -18,6 +18,39 @@ export interface GlyphRequest {
   readonly generation: number;
 }
 
+/** Internal render lifetime shared by every glyph request prepared by one coordinator ticket. */
+export interface RenderTokenScope {
+  readonly lifecycleEpoch: number;
+  readonly commitTicket: number;
+  readonly fontRegistryRevision: number;
+  readonly destinationIdentity: object;
+}
+
+/** Internal value object carried from raster continuation through the atlas frame boundary. */
+export interface RenderToken extends GlyphRequest, RenderTokenScope {
+  readonly sourceRevision: number;
+}
+
+/** @internal Signals provider disposal while an owning render lifetime is retiring. */
+export class RasterProviderDisposedError extends Error {
+  constructor(message = "RasterGlyphProvider has been destroyed") {
+    super(message);
+  }
+}
+
+/** @internal Exact identity for one coordinator frame boundary. */
+export function sameRenderScope(
+  left: Readonly<RenderTokenScope>,
+  right: Readonly<RenderTokenScope>,
+): boolean {
+  return (
+    left.lifecycleEpoch === right.lifecycleEpoch &&
+    left.commitTicket === right.commitTicket &&
+    left.fontRegistryRevision === right.fontRegistryRevision &&
+    left.destinationIdentity === right.destinationIdentity
+  );
+}
+
 export interface GlyphRaster {
   readonly mode: GlyphMode;
   readonly width: number;
@@ -25,6 +58,27 @@ export interface GlyphRaster {
   readonly pixels: Uint8Array;
   readonly metrics?: Readonly<GlyphMetrics>;
 }
+
+/** WebGPU-owned RGBA source whose sub-rectangle is copied into a color atlas page. */
+export interface ExternalColorGlyphRaster {
+  readonly mode: "color";
+  readonly width: number;
+  readonly height: number;
+  readonly source: Readonly<{
+    readonly texture: GPUTexture;
+    readonly format: "rgba8unorm";
+    readonly width: number;
+    readonly height: number;
+  }>;
+  readonly sourceX: number;
+  readonly sourceY: number;
+  readonly metrics?: Readonly<GlyphMetrics>;
+  /** Idempotent ownership release supplied by the producing rasterizer. */
+  release(): void;
+}
+
+/** CPU rasters and opt-in GPU color rasters accepted by the atlas staging seam. */
+export type AtlasGlyphRaster = GlyphRaster | ExternalColorGlyphRaster;
 
 export interface GlyphMetrics {
   readonly bearingX: number;
@@ -58,6 +112,15 @@ export interface AtlasUpload {
   readonly pixels: Uint8Array;
 }
 
+/** Ownership transfers to the atlas-commit consumer until eviction or surface destruction. */
+export interface AtlasExternalUpload {
+  readonly entry: Readonly<AtlasEntry>;
+  readonly source: Readonly<ExternalColorGlyphRaster["source"]>;
+  readonly sourceX: number;
+  readonly sourceY: number;
+  release(): void;
+}
+
 export interface AtlasPageInfo {
   readonly id: number;
   readonly mode: GlyphMode;
@@ -70,6 +133,7 @@ export interface AtlasPageInfo {
 export interface AtlasCommit {
   readonly entries: readonly Readonly<AtlasEntry>[];
   readonly uploads: readonly Readonly<AtlasUpload>[];
+  readonly externalUploads: readonly Readonly<AtlasExternalUpload>[];
   readonly evictedKeys: readonly GlyphCacheKey[];
 }
 
@@ -77,6 +141,8 @@ export interface GlyphAtlasOptions {
   readonly pageWidth?: number;
   readonly pageHeight?: number;
   readonly maxBytes?: number;
+  /** Bound for request-generation identities retained across atlas lifetimes. */
+  readonly requestGenerationCacheEntries?: number;
 }
 
 export interface GlyphAtlasStats {
@@ -85,6 +151,10 @@ export interface GlyphAtlasStats {
   readonly pages: number;
   readonly allocatedBytes: number;
   readonly pinnedEntries: number;
+  readonly requestGenerationEntries: number;
+  readonly requestGenerationProtectedEntries: number;
+  readonly requestGenerationTombstones: number;
+  readonly requestGenerationEvictions: number;
   readonly requests: number;
   readonly stagedResults: number;
   readonly staleResults: number;
@@ -114,12 +184,18 @@ export interface PrebuiltGlyphRecord {
 export interface PrebuiltGlyphProviderOptions {
   readonly pages: readonly PrebuiltGlyphPage[];
   readonly glyphs: readonly PrebuiltGlyphRecord[];
+  readonly materializationCacheEntries?: number;
+  readonly materializationCacheBytes?: number;
+  readonly materializationCachePolicy?: "lru" | "fifo";
 }
 
 export interface PrebuiltGlyphProviderStats {
   readonly glyphs: number;
   readonly pages: number;
   readonly cacheEntries: number;
+  readonly cacheBytes: number;
+  readonly cacheEvictions: number;
+  readonly cacheEvictedBytes: number;
   readonly hits: number;
   readonly misses: number;
 }
@@ -131,6 +207,8 @@ export interface RasterGlyphRequest {
   readonly fontRevision: number;
   readonly glyphId: number;
   readonly glyphText: string;
+  /** Canonical sorted OpenType variation-axis identity from shaping. */
+  readonly variationKey?: string;
   readonly fontSize: number;
   readonly fontWeight?: TextStyleFontWeight;
   readonly mode: GlyphMode;

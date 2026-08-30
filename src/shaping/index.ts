@@ -1,5 +1,9 @@
 export { HarfBuzzShaper } from "./HarfBuzzShaper";
-export { HarfBuzzWorkerShaper, StaleShapeResultError } from "./HarfBuzzWorkerShaper";
+export {
+  HarfBuzzWorkerShaper,
+  StaleShapeResultError,
+  WorkerQueueOverflowError,
+} from "./HarfBuzzWorkerShaper";
 export type {
   HarfBuzzPositionedRun,
   HarfBuzzRuntime,

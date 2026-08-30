@@ -1,5 +1,13 @@
+import { encodeCacheKey } from "../cache/cacheKey";
 import { FontRegistry } from "../FontRegistry";
 import type { HarfBuzzShapeInput } from "../shaping/types";
+import { canonicalizeVariations } from "../shaping/variationKey";
+import {
+  inheritPositionedRunLease,
+  ownedPositionedRun,
+  releasePositionedRun,
+  retainPositionedRun,
+} from "./PositionedRunLease";
 import type {
   BitmapLayoutInput,
   LayoutEngineOptions,
@@ -32,10 +40,10 @@ export class LayoutEngine {
   }
 
   layout(labelId: number, sourceRevision: number, input: TextLayoutInput): LayoutResult {
-    this.#assertActive();
+    if (this.#destroyed) throw new Error("LayoutEngine has been destroyed");
     assertIdentity("labelId", labelId);
     assertIdentity("sourceRevision", sourceRevision);
-    assertInput(input);
+    const variationCacheKey = assertInput(input);
     this.#layouts += 1;
     return this.#layoutFrom({
       labelId,
@@ -43,19 +51,28 @@ export class LayoutEngine {
       input,
       direction: input.direction ?? detectDirection(input.text),
       families: this.#resolveFamilies(input.style.fontFamily),
+      variationCacheKey,
       startIndex: 0,
       missingRun: undefined,
     });
   }
 
   #layoutFrom(walk: LayoutWalk): LayoutResult {
+    try {
+      return this.#layoutFromUnchecked(walk);
+    } catch (error) {
+      return throwAfterPositionedRunCleanup(error, takeMissingRun(walk));
+    }
+  }
+
+  #layoutFromUnchecked(walk: LayoutWalk): LayoutResult {
     const { input, direction, families } = walk;
     for (let index = walk.startIndex; index < families.length; index += 1) {
       const family = families[index];
       if (family === undefined) continue;
       const registered = this.#registry.get(family);
       if (registered?.kind === "binary") {
-        const shaped = this.#shape(walk.labelId, walk.sourceRevision, {
+        const shaped = this.#shape(walk, {
           family,
           text: input.text,
           fontSize: resolveFontSize(input.style.fontSize),
@@ -67,17 +84,41 @@ export class LayoutEngine {
           ...(input.variations === undefined ? {} : { variations: input.variations }),
         });
         if (isPromise(shaped)) {
-          return shaped.then((run) => {
-            if (hasCompleteGlyphCoverage(run)) return applyWritingMode(run, input);
-            return this.#layoutFrom({
-              ...walk,
-              startIndex: index + 1,
-              missingRun: walk.missingRun ?? run,
-            });
-          });
+          const missingRun = takeMissingRun(walk);
+          return shaped.then(
+            (run) => {
+              if (hasCompleteGlyphCoverage(run)) {
+                return completeLayoutRun(run, input, missingRun);
+              }
+              if (missingRun !== undefined) {
+                try {
+                  releasePositionedRuns(run);
+                } catch (error) {
+                  return throwAfterPositionedRunCleanup(error, missingRun);
+                }
+              }
+
+              return this.#layoutFrom({
+                ...walk,
+                startIndex: index + 1,
+                missingRun: missingRun ?? run,
+              });
+            },
+            (error: unknown) => throwAfterPositionedRunCleanup(error, missingRun),
+          );
         }
-        if (hasCompleteGlyphCoverage(shaped)) return applyWritingMode(shaped, input);
-        walk.missingRun ??= shaped;
+        if (hasCompleteGlyphCoverage(shaped)) {
+          return completeLayoutRun(shaped, input, takeMissingRun(walk));
+        }
+        if (walk.missingRun === undefined) {
+          walk.missingRun = shaped;
+        } else {
+          try {
+            releasePositionedRuns(shaped);
+          } catch (error) {
+            return throwAfterPositionedRunCleanup(error, takeMissingRun(walk));
+          }
+        }
         continue;
       }
 
@@ -100,11 +141,18 @@ export class LayoutEngine {
         ...(input.maxLines === undefined ? {} : { maxLines: input.maxLines }),
         ...(input.ellipsis === undefined ? {} : { ellipsis: input.ellipsis }),
       });
-      if (isPromise(laidOut)) return laidOut.then((run) => applyWritingMode(run, input));
-      return applyWritingMode(laidOut, input);
+      if (isPromise(laidOut)) {
+        const missingRun = takeMissingRun(walk);
+        return laidOut.then(
+          (run) => completeLayoutRun(run, input, missingRun),
+          (error: unknown) => throwAfterPositionedRunCleanup(error, missingRun),
+        );
+      }
+      return completeLayoutRun(laidOut, input, takeMissingRun(walk));
     }
 
-    if (walk.missingRun !== undefined) return applyWritingMode(walk.missingRun, input);
+    const missingRun = takeMissingRun(walk);
+    if (missingRun !== undefined) return completeLayoutRun(missingRun, input, undefined);
     throw new Error("Font fallback resolution produced no layout candidate");
   }
 
@@ -127,23 +175,23 @@ export class LayoutEngine {
     this.#destroyed = true;
   }
 
-  #shape(labelId: number, sourceRevision: number, input: HarfBuzzShapeInput): LayoutResult {
-    const key = shapeCacheKey(input);
+  #shape(walk: LayoutWalk, input: HarfBuzzShapeInput): LayoutResult {
+    const key = shapeCacheKey(input, walk.variationCacheKey);
     const cached = this.#shapeCache.get(key);
     if (cached !== undefined) {
       this.#shapeCache.delete(key);
       this.#shapeCache.set(key, cached);
-      return cached;
+      return isPromise(cached) ? cached.then((run) => retainPositionedRun(run)) : cached;
     }
 
     this.#harfbuzzLayouts += 1;
-    const pending = this.#harfbuzz.shape(labelId, sourceRevision, input);
+    const pending = this.#harfbuzz.shape(walk.labelId, walk.sourceRevision, input);
     this.#shapeCache.set(key, pending);
     void pending.then(
       (run) => {
         if (this.#shapeCache.get(key) === pending) {
           this.#shapeCache.delete(key);
-          this.#shapeCache.set(key, run);
+          this.#shapeCache.set(key, ownedPositionedRun(run));
         }
       },
       () => {
@@ -193,12 +241,6 @@ export class LayoutEngine {
     if (this.#familyCache.size >= 256) this.#familyCache.clear();
     this.#familyCache.set(key, families);
     return families;
-  }
-
-  #assertActive(): void {
-    if (this.#destroyed) {
-      throw new Error("LayoutEngine has been destroyed");
-    }
   }
 }
 
@@ -278,8 +320,66 @@ interface LayoutWalk {
   readonly input: TextLayoutInput;
   readonly direction: TextDirection;
   readonly families: readonly string[];
+  readonly variationCacheKey: string;
   readonly startIndex: number;
   missingRun: Readonly<PositionedRun> | undefined;
+}
+
+function takeMissingRun(walk: LayoutWalk): Readonly<PositionedRun> | undefined {
+  const run = walk.missingRun;
+  walk.missingRun = undefined;
+  return run;
+}
+
+function completeLayoutRun(
+  run: Readonly<PositionedRun>,
+  input: Readonly<TextLayoutInput>,
+  discardedRun: Readonly<PositionedRun> | undefined,
+): Readonly<PositionedRun> {
+  let result: Readonly<PositionedRun>;
+  try {
+    result = applyWritingMode(run, input);
+  } catch (error) {
+    return throwAfterPositionedRunCleanup(error, discardedRun, run);
+  }
+
+  try {
+    releasePositionedRuns(discardedRun);
+  } catch (error) {
+    return throwAfterPositionedRunCleanup(error, result);
+  }
+  return result;
+}
+
+function releasePositionedRuns(...runs: readonly (Readonly<PositionedRun> | undefined)[]): void {
+  const seen = new Set<Readonly<PositionedRun>>();
+  let firstError: unknown;
+  let failed = false;
+  for (const run of runs) {
+    if (run === undefined || seen.has(run)) continue;
+    seen.add(run);
+    try {
+      releasePositionedRun(run);
+    } catch (error) {
+      if (!failed) {
+        firstError = error;
+        failed = true;
+      }
+    }
+  }
+  if (failed) throw firstError;
+}
+
+function throwAfterPositionedRunCleanup(
+  primaryError: unknown,
+  ...runs: readonly (Readonly<PositionedRun> | undefined)[]
+): never {
+  try {
+    releasePositionedRuns(...runs);
+  } catch {
+    // The primary operation defines the rejection while every cleanup still runs.
+  }
+  throw primaryError;
 }
 
 function isPromise<T>(value: T | Promise<T>): value is Promise<T> {
@@ -290,25 +390,18 @@ function hasCompleteGlyphCoverage(run: Readonly<PositionedRun>): boolean {
   return run.glyphCount === 0 || !run.glyphIds.includes(0);
 }
 
-function shapeCacheKey(input: HarfBuzzShapeInput): string {
-  const variations =
-    input.variations === undefined
-      ? ""
-      : Object.entries(input.variations)
-          .sort(([left], [right]) => left.localeCompare(right))
-          .map(([axis, value]) => `${axis}=${String(value)}`)
-          .join(",");
-  return [
+function shapeCacheKey(input: HarfBuzzShapeInput, variationCacheKey: string): string {
+  return encodeCacheKey([
     input.family,
-    input.fontRevision ?? 0,
-    input.fontSize,
+    String(input.fontRevision ?? 0),
+    String(input.fontSize),
     input.direction ?? "",
     input.language ?? "",
     input.script ?? "",
-    input.features?.join(",") ?? "",
-    variations,
+    ...(input.features ?? []),
+    variationCacheKey,
     input.text,
-  ].join("\u0000");
+  ]);
 }
 
 function assertIdentity(name: string, value: number): void {
@@ -317,7 +410,7 @@ function assertIdentity(name: string, value: number): void {
   }
 }
 
-function assertInput(input: TextLayoutInput): void {
+function assertInput(input: TextLayoutInput): string {
   if (typeof input.text !== "string") {
     throw new TypeError("Layout text must be a string");
   }
@@ -333,6 +426,7 @@ function assertInput(input: TextLayoutInput): void {
   if (input.ellipsis !== undefined && typeof input.ellipsis !== "string") {
     throw new TypeError("ellipsis must be a string");
   }
+  const variationCacheKey = canonicalizeVariations(input.variations).cacheKey;
   if (
     input.writingMode !== undefined &&
     input.writingMode !== "horizontal-tb" &&
@@ -340,6 +434,7 @@ function assertInput(input: TextLayoutInput): void {
   ) {
     throw new TypeError("writingMode must be horizontal-tb or vertical-rl");
   }
+  return variationCacheKey;
 }
 
 function applyWritingMode(
@@ -348,7 +443,7 @@ function applyWritingMode(
 ): Readonly<PositionedRun> {
   if (input.writingMode === undefined || input.writingMode === "horizontal-tb") return run;
   if (run.glyphCount === 0) {
-    return Object.freeze({
+    return inheritPositionedRunLease(run, {
       ...run,
       bounds: Object.freeze({ x: 0, y: 0, width: 0, height: 0 }),
     });
@@ -366,7 +461,12 @@ function applyWritingMode(
   const yAdvance = new Float32Array(run.glyphCount);
   const cellStarts = new Float32Array(lineCount);
   const lastClusters = Array.from<number | undefined>({ length: lineCount });
-  const inlineAdvance = resolveInlineAdvance(input);
+  const fontSize = resolveFontSize(input.style.fontSize);
+  const letterSpacing = input.style.letterSpacing;
+  const spacing =
+    typeof letterSpacing === "number" && Number.isFinite(letterSpacing) ? letterSpacing : 0;
+  const advance = fontSize + spacing;
+  const inlineAdvance = advance > 0 ? advance : fontSize;
   let height = 0;
 
   for (let index = 0; index < run.glyphCount; index += 1) {
@@ -385,7 +485,7 @@ function applyWritingMode(
     height = Math.max(height, cursors[line] ?? 0);
   }
 
-  return Object.freeze({
+  return inheritPositionedRunLease(run, {
     ...run,
     x,
     y,
@@ -407,16 +507,6 @@ function resolveLineAdvance(
   if (run.bounds.height > 0 && lineCount > 0) return run.bounds.height / lineCount;
 
   return resolveFontSize(input.style.fontSize);
-}
-
-function resolveInlineAdvance(input: Readonly<TextLayoutInput>): number {
-  const fontSize = resolveFontSize(input.style.fontSize);
-  const letterSpacing = input.style.letterSpacing;
-  const spacing =
-    typeof letterSpacing === "number" && Number.isFinite(letterSpacing) ? letterSpacing : 0;
-  const advance = fontSize + spacing;
-
-  return advance > 0 ? advance : fontSize;
 }
 
 function resolveFontSize(value: number | string | undefined): number {

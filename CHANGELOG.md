@@ -4,6 +4,19 @@
 
 ### Fixed
 
+- GPU-scene setup now hydrates every resident transform row before the first compute draw. Shared
+  prototype draw state remains prototype-scoped while distant label palette alpha and position rows
+  reach the storage buffer in the same setup commit.
+- GPU-scene compact output now reserves eight bytes per maximum submitted glyph. The earlier
+  shared-prototype allocation reserved one reference while scatter produced 50,000 references;
+  formal checks now read back `instancesOut` and require stable selection and pixel identity.
+- WebGPU device and Pixi command-encoder replacement now advance explicit epochs. Pending frame
+  work moves to the live encoder, resident resources rebuild on the live device, and retired-epoch
+  callbacks release only their captured resources.
+- The GPU-scene fill fragment now preserves byte-exact parity with general
+  `over(fill, zero)` composition through a dynamic-zero expression. Product single-prototype,
+  forced resident multi-prototype, and forced general shaders match pixel hash `0xa8ad90b4` and
+  302,457 non-transparent pixels in the formal 1M/100K browser reference fixture.
 - WebGPU storage-palette meshes no longer pass a leftover `uTransformTexture` resource into Pixi.
   That unknown name became bind group 99 with an undefined layout, and the first compute-cull
   `createBindGroup` threw. The storage path now binds `uTransforms` only, and it stays on the
@@ -11,6 +24,15 @@
 
 ### Changed
 
+- `prebuiltGlyphKey` now emits the `pixi-glyphflow/prebuilt/v2:` wire format with UTF-16
+  length-prefixed fields. `PrebuiltGlyphProvider` preserves valid legacy six-field NUL-delimited
+  aliases during ingestion and lookup. Applications that persist or index the exported key
+  directly should rebuild those caches or dual-read v2 and legacy keys during migration.
+- `charsetSdfPrebuilt` now emits public page ids under `pixi-glyphflow/charset-sdf/v2:` with
+  length-prefixed family, physical-size, and page-index fields. The earlier hyphen format emitted
+  `charset-sdf-a-1e-7-0` for both family `"a"` at `1e-7` and family `"a-1e"` at `7`.
+  Applications that persist generated charset pages should rebake them once during migration;
+  self-contained legacy payloads remain readable through their stored glyph-to-page references.
 - The homepage live demo frames a readable multilingual specimen band, paints that first camera
   view before the rest of the million-label allocate, and reports `stats.palettePath` next to
   the cull path. Extra engine numbers sit behind a disclosure. WebGL stays on the texture
@@ -18,6 +40,36 @@
 
 ### Added
 
+- `TextLayer.whenDestroyed()` observes internally owned asynchronous teardown while `destroy()`
+  retains PixiJS's synchronous signature. `TextLayer.whenRendererReleased()` observes the latest
+  actual renderer graph release across detach, replacement, activation rollback, and provider
+  cleanup. Both promises retain first-error identity.
+- `culling.residency: "gpu-scene"` explicitly opts a supported uniform WebGPU scene into full GPU
+  residency. The default remains `"viewport"`. Capability and scene fallbacks retain viewport
+  behavior and report a stable `TextLayerResidencyFallbackReason`.
+- `TextLayerStats` reports `residencyRequested`, `residencyActive`,
+  `residencyFallbackReason`, `gpuResidentLabels`, `gpuScenePrototypeCount`,
+  `gpuScenePaintCount`, `deferredSpatialLabels`, `cullRecordUploadBytes`, `lastSceneSetupMs`, and cumulative WebGPU frame
+  transaction total/fused/standalone submissions. The root entry exports `TextLayerResidency` and
+  `TextLayerResidencyFallbackReason` as types.
+- GPU-scene compilation retains up to 64 rendered prototypes and 8 canonical paints, partitions
+  the scene into at most 512 prototype/paint columns, and extends that bounded scene through
+  monotonic appends.
+- WebGPU resident work uses one renderer-scoped frame transaction. Palette slices retain commit
+  order, cull work coalesces to the latest viewport, and Pixi's command encoder receives palette,
+  cull, and render stages before one product submission. Recovery and capacity flushes have a
+  separately counted standalone path.
+- Collision selection accepts proven pre-ranked monotonic candidates, skips the rank sort, and
+  caches contiguous identical-bound runs. Packed record writes invalidate touched runs and
+  structural changes retire the complete cache.
+- Optional `pixi-glyphflow/outline` provides an explicit `glyphMode: "outline"` WebGPU
+  compute-to-color-atlas plugin for projected huge HarfBuzz glyphs. CPU/WGSL pixel references,
+  browser production wiring, capability fallbacks, and lifecycle races are covered.
+- Optional `pixi-glyphflow/hb-gpu` provides the packed HarfBuzz 14.4 Worker/Wasm outline encoder.
+  Native parity, packed WebGPU rendering, 10,000 glyph/s, 100 ms cold-start, and font-resource
+  release gates pass.
+- The advanced entry exports `SabShapeTransport` and its capability detector for an explicit
+  cross-origin-isolated, zero-copy HarfBuzz worker transport.
 - `TextLayerCullingOptions.offscreenAdmitBudgetBytes` caps compute-cull first-seen admission
   for labels that sit only in the 0.25-viewport prepare ring. Each intern-hit ring label charges
   32 bytes. Tight-view labels always finish. Default is 65536. `0` admits the tight view only.
@@ -31,12 +83,33 @@
 
 ### Performance
 
-- WebGPU storage plus compute-cull owns world AABBs. Cull records store the local box. The
-  cull shader adds `transforms[slot].xy` from the same table the move pass writes. A
-  position-only storm does not walk slots to patch cull AABBs and does not upload a dirty
-  cull-record span. Camera-only still uploads nothing. Texture, WebGL, and cpu-grid keep
-  the CPU world-AABB path. Content-layout, first-seen, and visibility changes that change
-  the local box still write CPU records. Hit-test stays on store x/y.
+- GPU-scene camera commits refresh the compute viewport uniform while spatial query, admission,
+  coordinator, and cull-record upload deltas stay zero. Position commits dispatch fused transform
+  and absolute-AABB patches before culling. Sorted, unique, strictly contiguous active slots use
+  the dense exact-f32 mover lane and upload 800,016 transform bytes for 100,000 movers. Sparse,
+  reordered, duplicate, and holed batches use the indexed 12-byte fallback. Both lanes upload zero
+  CPU cull-record bytes. Five independent schema 7 formal runs preserve 50,000 ordered
+  references with hash `0x45cfd045`, pixel hash `0xa8ad90b4`, and 302,457 non-transparent pixels.
+  Their schema 4 aggregate records camera p95/p99/max 7.9/9.4/10.6 ms and position
+  9.8/11.0/12.5 ms, with 0/600 frames above 16.67 ms in each phase. All five runs pass every
+  formal budget, so truth repeatability, formal performance, and promotion are GO.
+- An independent 600-camera / 600-position run records camera p95/p99/max 10.5/13.5/21.5 ms with
+  4/600 overruns and position 8.1/9.9/11.6 ms with zero overruns. Formal and sustained timestamp telemetry is
+  1,300/1,300/0 and 1,220/1,220/0 readback/fused/standalone submissions. All 1,300 formal segmented
+  samples resolve palette/cull/scene-render boundaries with zero fallback and p95
+  0.13/0.59/5.44 ms.
+- Formal schema 7 artifacts seal production-build, harness, and runtime fingerprints plus distinct
+  UUIDv4 run ids and self-verifying evidence digests. The schema 4 aggregate verifies all six
+  independent 120/600-frame invocations before reporting truth and promotion status.
+- Current heterogeneous GPU-scene evidence covers 64 prototypes × 8 paints, 512 bins, and the
+  dense 800,016-byte mover upload. Delivery and the independent 16.67 ms promotion are GO; four
+  fresh-process repetitions record 9.6–10.3 ms camera p95 and 11.0–11.4 ms position p95.
+  Historical R1a captures preserve the indexed 12-byte / 1,200,016-byte evidence.
+- Collision schema 2 repeatability preserves 512 selected labels, 4,096 glyphs, and selection hash
+  `0x611785c5` across three WebGL and three WebGPU runs. Direct CPU/collision and WebGPU whole-frame
+  budgets pass; repeatability is GO at 12.2/11.5/11.9 ms WebGPU p95.
+- Packaged HarfBuzz worker SIMD output parity passes. Scalar mean is 54.08 ms and SIMD mean is
+  55.44 ms, so the formal decision is `HOLD (variant-regression)`.
 - WebGL dirty uploads of the `rgba32float` transform table blank after the first allocation:
   both `texSubImage2D` and a second `texImage2D` of the same GL texture (`glError` 0) wipe the
   first view. Unbind the palette from each mesh and from GL `TEXTURE_2D` units, dirty-upload
@@ -49,8 +122,9 @@
   with `maxStorageBuffersInVertexStage` 0 keep the texture path.
   `requestComputeCullGpu()` requests that vertex-storage limit. `TextLayerStats.palettePath`
   reports `"storage"` or `"texture"`. Published budgets stay. Hit-test still uses the aliased
-  store columns. On storage plus compute-cull, records store the local box and the cull
-  shader adds palette origin, so a position storm does not upload mover AABBs.
+  store columns. Storage-backed viewport compute-cull records store local boxes, and the cull
+  shader adds the live palette origin. Position storms upload zero cull-record bytes. GPU-scene
+  records keep absolute AABBs and receive fused palette-plus-AABB patches.
 - Prebuilt distance-field pages rematch by physical size. A `charsetSdfPrebuilt` bake at 14px
   crops a 13px or 32px first sight of the same glyph and interns the field, instead of starting
   TinySDF or MSDF. Sizes above `distanceFieldMinFontSize` still generate. On-screen unique ink

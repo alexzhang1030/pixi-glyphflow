@@ -92,10 +92,10 @@ export const BENCHMARK_WORKLOADS: readonly Readonly<BenchmarkWorkloadDefinition>
     "Live TextLayer full visibility: one million labels through the coordinator mesh",
     1_000_000,
     1,
-    1,
-    5,
+    10,
+    120,
     600_000,
-    false,
+    true,
   ),
   define(
     "first-seen",
@@ -117,6 +117,42 @@ export const BENCHMARK_WORKLOADS: readonly Readonly<BenchmarkWorkloadDefinition>
     300_000,
     false,
   ),
+  define(
+    "gpu-scene-v2",
+    "Real-renderer two-phase GPU scene: camera pan/zoom plus 100,000 position mutations",
+    1_000_000,
+    100_000,
+    10,
+    120,
+    900_000,
+  ),
+  define(
+    "gpu-scene-heterogeneous-64",
+    "WebGPU-resident heterogeneous scene: 64 prototypes, 8 canonical paints, camera-only frames, and 100,000 packed position mutations",
+    1_000_000,
+    100_000,
+    10,
+    120,
+    900_000,
+  ),
+  define(
+    "gpu-scene-resident",
+    "WebGPU-resident scene: one prototype, camera-only frames, and 100,000 packed position mutations",
+    1_000_000,
+    100_000,
+    10,
+    120,
+    900_000,
+  ),
+  define(
+    "label-collision",
+    "One million high-overlap labels under deterministic collision and density selection",
+    1_000_000,
+    1,
+    5,
+    120,
+    900_000,
+  ),
 ]);
 
 export function getBenchmarkWorkload(
@@ -130,6 +166,10 @@ export function getBenchmarkWorkload(
 
 export function isBenchmarkWorkload(value: string): value is BrowserBenchmarkWorkload {
   return BENCHMARK_WORKLOADS.some((workload) => workload.id === value);
+}
+
+export function browserBenchmarkRepetitions(workload: BrowserBenchmarkWorkload): number {
+  return workload === "gpu-scene-heterogeneous-64" ? 2 : 1;
 }
 
 function define(

@@ -22,11 +22,6 @@ export function unpackHalf2x16(packed: number): readonly [number, number] {
   return [f16FromBits(packed & 0xffff), f16FromBits((packed >>> 16) & 0xffff)];
 }
 
-export function floatFromBits(bits: number): number {
-  U32[0] = bits >>> 0;
-  return F32[0] ?? 0;
-}
-
 export function bitsFromFloat(value: number): number {
   F32[0] = value;
   return U32[0] ?? 0;

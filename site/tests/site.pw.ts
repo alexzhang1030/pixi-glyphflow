@@ -200,6 +200,8 @@ test("keeps the fully zoomed-out WebGPU pressure test within its uniform budget"
   await expect(demo).toHaveAttribute("data-renderer-backend", "webgpu");
   await expectCullPath(page, "compute-cull");
   await expectPalettePath(page);
+  await expect(demo).toHaveAttribute("data-residency-active", "gpu-scene");
+  await expect(demo).toHaveAttribute("data-residency-fallback", "");
   const canvas = demo.locator(".demo-canvas");
   await canvas.focus();
   for (let step = 0; step < 8; step += 1) {

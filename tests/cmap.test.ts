@@ -10,6 +10,10 @@ describe("OpenType glyph remapping", () => {
     expect(direct.bytes).toBe(font);
     expect(direct.glyphText).toBe("A");
 
+    const directCluster = prepareGlyphFont(font, 10, "A\u0301");
+    expect(directCluster.bytes).toBe(font);
+    expect(directCluster.glyphText).toBe("A");
+
     const alternate = prepareGlyphFont(font, 42, "A");
     expect(alternate.bytes).not.toBe(font);
     expect(alternate.glyphText).toBe("A");
