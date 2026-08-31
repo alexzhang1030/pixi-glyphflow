@@ -7,40 +7,47 @@
 `TextLayer` extends PixiJS `Container` and owns dense label state, culling, rendering coordination,
 and diagnostics.
 
-| Member                                       | Result                           | Contract                                           |
-| -------------------------------------------- | -------------------------------- | -------------------------------------------------- |
-| `create(spec)`                               | `TextId`                         | Create one label with layer-local identity         |
-| `createMany(specs)`                          | `TextId[]`                       | Validate and create a batch in input order         |
-| `get(id)`                                    | `TextLabelSnapshot \| undefined` | Read an immutable state snapshot                   |
-| `has(id)`                                    | `boolean`                        | Check current identity ownership                   |
-| `update(id, patch)`                          | `boolean`                        | Apply one partial mutation                         |
-| `updateLabel(id, patch)`                     | `boolean`                        | Compatibility alias for `update`                   |
-| `updateMany(entries)`                        | `number`                         | Apply validated partial-object updates             |
-| `updatePositions(ids, positions)`            | `number`                         | Apply packed x/y columns                           |
-| `updateTextPositions(ids, texts, positions)` | `number`                         | Apply text and packed x/y columns together         |
-| `createGroup()`                              | `TextGroupId`                    | Create one unique layer-local group identity       |
-| `hasGroup(group)`                            | `boolean`                        | Check current group identity ownership             |
-| `setGroupVisible(group, visible)`            | `number`                         | Apply a group mask and return affected label count |
-| `removeGroup(group)`                         | `boolean`                        | Retire a group and detach its retained labels      |
-| `showAll()`                                  | `number`                         | Show every current label in one columnar pass      |
-| `hideAll()`                                  | `number`                         | Hide every current label in one columnar pass      |
-| `remove(id)`                                 | `boolean`                        | Retire one identity and its render state           |
-| `removeMany(ids)`                            | `number`                         | Retire current identities                          |
-| `clear()`                                    | `number`                         | Retire every label                                 |
-| `compact()`                                  | `TextCompactionResult`           | Shrink unused CPU capacity while preserving IDs    |
-| `commit()`                                   | `Promise<TextRevision>`          | Publish dirty state and await render work          |
-| `setViewportBounds(bounds)`                  | `void`                           | Set layer-local culling bounds                     |
-| `getBoundsFor(id, output?, space?)`          | `BoundsData \| undefined`        | Read accepted local or world bounds                |
-| `hitTest(point, space?)`                     | `TextId \| undefined`            | Return the topmost visible label                   |
-| `attach(renderer)`                           | `void`                           | Associate a WebGL or WebGPU renderer               |
-| `detach()`                                   | `void`                           | Release renderer resources and retain label state  |
-| `whenRendererReleased()`                     | `Promise<void>`                  | Observe the latest actual renderer graph release   |
-| `destroy(options?)`                          | `void`                           | Start best-effort owned-resource teardown          |
-| `whenDestroyed()`                            | `Promise<void>`                  | Observe completion and the first teardown failure  |
-| `stats`                                      | `TextLayerStats`                 | Read an immutable diagnostics snapshot             |
+| Member                                        | Result                           | Contract                                           |
+| --------------------------------------------- | -------------------------------- | -------------------------------------------------- |
+| `create(spec)`                                | `TextId`                         | Create one label with layer-local identity         |
+| `createMany(specs)`                           | `TextId[]`                       | Validate and create a batch in input order         |
+| `get(id)`                                     | `TextLabelSnapshot \| undefined` | Read an immutable state snapshot                   |
+| `has(id)`                                     | `boolean`                        | Check current identity ownership                   |
+| `update(id, patch)`                           | `boolean`                        | Apply one partial mutation                         |
+| `updateLabel(id, patch)`                      | `boolean`                        | Compatibility alias for `update`                   |
+| `updateMany(entries)`                         | `number`                         | Apply validated partial-object updates             |
+| `updatePositions(ids, positions)`             | `number`                         | Apply packed x/y columns                           |
+| `updateTransforms(ids, positions, rotations)` | `number`                         | Apply packed x/y and per-label radians             |
+| `updateTextPositions(ids, texts, positions)`  | `number`                         | Apply text and packed x/y columns together         |
+| `createGroup()`                               | `TextGroupId`                    | Create one unique layer-local group identity       |
+| `hasGroup(group)`                             | `boolean`                        | Check current group identity ownership             |
+| `setGroupVisible(group, visible)`             | `number`                         | Apply a group mask and return affected label count |
+| `removeGroup(group)`                          | `boolean`                        | Retire a group and detach its retained labels      |
+| `showAll()`                                   | `number`                         | Show every current label in one columnar pass      |
+| `hideAll()`                                   | `number`                         | Hide every current label in one columnar pass      |
+| `remove(id)`                                  | `boolean`                        | Retire one identity and its render state           |
+| `removeMany(ids)`                             | `number`                         | Retire current identities                          |
+| `clear()`                                     | `number`                         | Retire every label                                 |
+| `compact()`                                   | `TextCompactionResult`           | Shrink unused CPU capacity while preserving IDs    |
+| `commit()`                                    | `Promise<TextRevision>`          | Publish dirty state and await render work          |
+| `setViewportBounds(bounds)`                   | `void`                           | Set layer-local culling bounds                     |
+| `getBoundsFor(id, output?, space?)`           | `BoundsData \| undefined`        | Read accepted local or world bounds                |
+| `hitTest(point, space?)`                      | `TextId \| undefined`            | Return the topmost visible label                   |
+| `attach(renderer)`                            | `void`                           | Associate a WebGL or WebGPU renderer               |
+| `detach()`                                    | `void`                           | Release renderer resources and retain label state  |
+| `whenRendererReleased()`                      | `Promise<void>`                  | Observe the latest actual renderer graph release   |
+| `destroy(options?)`                           | `void`                           | Start best-effort owned-resource teardown          |
+| `whenDestroyed()`                             | `Promise<void>`                  | Observe completion and the first teardown failure  |
+| `stats`                                       | `TextLayerStats`                 | Read an immutable diagnostics snapshot             |
 
 `TextId` includes a layer namespace, slot, and generation. Stale and foreign identities fail bulk
 validation before state publication.
+
+`updateTransforms` accepts `Float32Array` or `Float64Array` positions and rotations. Positions
+contain two values per ID; rotations contain one angle in radians per ID. The complete batch is
+validated before mutation. Coordinates must fit finite f32 values and angles must fit finite
+binary16 values, matching the label store. Duplicate IDs apply in input order. Scale, anchors,
+paint, and text retain their current values.
 
 `destroy()` retains PixiJS's synchronous `void` signature, runs every best-effort cleanup step,
 and throws the first synchronous teardown failure after the remaining steps run. `whenDestroyed()`
@@ -75,7 +82,7 @@ scene as GPU cull records and shared prototype data. Activation requires all of 
   buffers;
 - every effective-visible label belongs to a bounded set of up to 64 rendered prototypes and 8
   canonical fill paints, forming at most 512 prototype/paint columns; all labels use fill-only
-  styling, alpha 1, unit scale, zero rotation and anchors, z index 0, and normal blend;
+  styling, alpha 1, unit scale, per-label rotation, zero anchors, z index 0, and normal blend;
 - initial slots and insertion orders are dense and increasing.
 
 The layer evaluates capability and eligibility in deterministic order. A requested GPU scene that
@@ -101,9 +108,20 @@ and zero CPU cull-record bytes. Sparse, reordered, duplicate, and holed commits 
 transform origins and absolute cull AABBs before cull dispatch. Spatial rebucketing stays deferred
 until `getBoundsFor`, `hitTest`, a CPU query, or a viewport fallback needs the grid.
 
+Rigid-transform commits use dense 12-byte `x`/`y`/packed-sin-cos commands or indexed 16-byte
+`slot`/`x`/`y`/packed-sin-cos commands, plus the same 16-byte header. Vertex transforms, GPU culling,
+and CPU hit bounds share the packed binary16 sin/cos. Moving an already-rotated label through
+`updatePositions` retains the 8/12-byte position ABI. `updateTransforms`, ordinary angle patches,
+and mixed position/angle batches all select this resident path when the scene remains eligible.
+
 Monotonic appends that remain within the 64-prototype / 8-paint matrix extend the scene. Removes
-write tombstones. Slot reuse, content/style edits, visibility/effect changes, and full-transform
-edits select `unsupported-scene` and rebuild through viewport residency. `detach()` selects
+write tombstones. Text changes, `wordWrapWidth`, explicit newlines, and `layout.writingMode`
+rebind affected labels to immutable shared prototypes. Repeated layouts reuse their geometry;
+changed palette and cull rows upload through dirty ranges. Each resident epoch retains up to 64
+text/style/layout candidates, 64 exact rendered prototypes, and 8 paints, including earlier
+variants. Exceeding those bounds selects viewport residency. Slot reuse, visibility/effect
+changes, non-unit scale, nonzero anchors/z, and shaping overrides also select `unsupported-scene`
+and rebuild through viewport residency. `detach()` selects
 `renderer-unavailable`; a later `attach()` evaluates the requested residency again. `destroy()`
 releases the resident records, local-bounds storage, palette binding, and deferred spatial journal.
 

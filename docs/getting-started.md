@@ -128,6 +128,7 @@ await layer.commit();
 ## High-frequency updates
 
 `updateMany` accepts ergonomic partial objects. `updatePositions` accepts packed x/y columns.
+`updateTransforms` adds one rotation in radians per label alongside packed x/y columns.
 `updateTextPositions` combines broadcast or per-label text with packed x/y columns.
 
 ```ts

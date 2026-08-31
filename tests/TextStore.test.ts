@@ -10,6 +10,28 @@ import { TextStore } from "../src/store/TextStore";
 import { TextDirty, type TextStoreLabel, type TextStoreLabelPatch } from "../src/store/types";
 
 describe("TextStore", () => {
+  test("validates packed rigid transforms before mutation and retains exact dirty domains", () => {
+    const store = new TextStore();
+    const ids = [store.create(label()), store.create(label())];
+    store.publishDirty();
+    ids.forEach((id) => store.consumePositionOnly(store.slotOf(id)!));
+    const xy = new Float32Array([10, 20, 30, 40]);
+    expect(() => store.updateTransforms(ids, xy, new Float32Array([0.5, Number.NaN]))).toThrow(
+      "finite",
+    );
+    expect(() => store.updateTransforms(ids, xy, new Float32Array([0.5]))).toThrow("per TextId");
+    expect(store.get(ids[0]!)!.x).toBe(0);
+    expect(store.pendingDirty.labels).toBe(0);
+    expect(store.updateTransforms(ids, xy, new Float64Array([0.5, 0]))).toBe(2);
+    expect(store.get(ids[0]!)).toMatchObject({ x: 10, y: 20, rotation: 0.5, sourceRevision: 1 });
+    expect(store.consumePositionOnly(store.slotOf(ids[0]!)!)).toBe(false);
+    expect(store.consumePositionOnly(store.slotOf(ids[1]!)!)).toBe(true);
+    expect(store.updateTransforms(ids, xy, new Float32Array([0.5, 0]))).toBe(0);
+    expect(store.updateTransforms([ids[0]!, ids[0]!], xy, new Float32Array([1, -1]))).toBe(2);
+    expect(store.get(ids[0]!)).toMatchObject({ x: 30, y: 40, rotation: -1 });
+    expect(store.pendingDirty).toEqual({ labels: 2, mask: TextDirty.Transform });
+  });
+
   test("creates stable identities and immutable snapshots", () => {
     const store = new TextStore({ initialCapacity: 2 });
     const id = store.create(label({ text: "alpha", x: 12 }));
@@ -599,6 +621,12 @@ describe("TextStore", () => {
     expect(store.anchorsZeroAt(slot ?? -1)).toBe(true);
     expect(store.unitTransformAt(slot ?? -1)).toBe(true);
     expect(store.admitLaneAt(slot ?? -1)).toBe(true);
+    store.update(id, { rotation: 0.5 });
+    expect(store.admitLaneAt(slot ?? -1)).toBe(false);
+    expect(store.admitLaneAt(slot ?? -1, true)).toBe(true);
+    store.update(id, { rotation: 1e6 });
+    expect(store.admitLaneAt(slot ?? -1, true)).toBe(false);
+    store.update(id, { rotation: 0 });
     store.update(id, { anchorX: 0.5 });
     expect(store.anchorsZeroAt(slot ?? -1)).toBe(false);
     expect(store.admitLaneAt(slot ?? -1)).toBe(false);

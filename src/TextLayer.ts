@@ -70,7 +70,7 @@ import {
   RenderCoordinator,
   type AdmitLaneGroup,
   type ResidentAdmitLaneGroup,
-  type ResidentAdmitLaneResult,
+  type ResidentPrototypeColumn,
   type RenderChange,
   type RenderCommitResult,
   type RenderDrawState,
@@ -140,9 +140,11 @@ interface LayerRenderChange extends RenderChange {
 interface GpuResidentCommitPlan {
   readonly setup: boolean;
   readonly appendGroups?: readonly ResidentAdmitLaneGroup[];
+  readonly rebindGroups?: readonly ResidentAdmitLaneGroup[];
   readonly moveBatch?: Readonly<TextStoreResidentPositionUpdates>;
   readonly moveSlots?: Uint32Array;
   readonly moveXy?: Float32Array;
+  readonly moveRotations?: Float32Array;
   readonly removeSlots?: Uint32Array;
   readonly viewport: CullViewport;
 }
@@ -727,6 +729,50 @@ export class TextLayer extends Container {
     }
     this.#recordMutation(TextDirty.Transform, changed);
 
+    return changed;
+  }
+
+  /** Apply packed x/y positions and one rotation in radians per label; return the changed count. */
+  updateTransforms(
+    ids: readonly TextId[] | Float64Array,
+    positions: Float32Array | Float64Array,
+    rotations: Float32Array | Float64Array,
+  ): number {
+    this.#assertActive();
+    this.#syncSpatialOrigins();
+    const scene = this.#residencyActive === "gpu-scene" ? this.#gpuResidentScene : undefined;
+    const changed = this.#store.updateTransforms(
+      ids,
+      positions,
+      rotations,
+      scene === undefined
+        ? (slot) => {
+            const id = this.#store.idAt(slot);
+            if (id !== undefined && this.#store.copyBoundsLabelAt(slot, this.#labelScratch)) {
+              this.#reindexCurrentSlot(
+                slot,
+                id,
+                this.#labelScratch,
+                this.#renderCoordinator?.getRun(slot)?.bounds,
+              );
+            }
+          }
+        : undefined,
+      scene === undefined
+        ? undefined
+        : (_slots, count) => {
+            this.#spatial.reserveDeferredRehash(count);
+            scene.reservePositionNotes(count);
+          },
+      scene === undefined
+        ? undefined
+        : (slots, count) => {
+            this.#spatial.deferRehashMany(slots, count);
+            scene.notePositions(slots, count);
+            if (this.#collisionEnabled) this.#invalidateCollisionRecords(slots, count);
+          },
+    );
+    this.#recordMutation(TextDirty.Transform, changed);
     return changed;
   }
 
@@ -1498,6 +1544,8 @@ export class TextLayer extends Container {
         return fallback();
       }
       const movers: number[] = [];
+      const rebinds: number[] = [];
+      let rigidTransforms = false;
       const removals: number[] = [];
       const appends: number[] = [];
       const publishedRecordCount = scene?.stats.recordCount ?? 0;
@@ -1512,7 +1560,7 @@ export class TextLayer extends Container {
           removals.push(slot);
           continue;
         }
-        const publishedActive = scene?.isActive(slot) === true;
+        const publishedActive = scene?.isActive(slot, this.#spatial.orderOf(slot)) === true;
         const publishedTombstone =
           scene !== undefined && slot < publishedRecordCount && !publishedActive;
         const plannedActive = slot < plannedRecordCount && !publishedTombstone;
@@ -1524,8 +1572,18 @@ export class TextLayer extends Container {
           appends.push(slot);
           continue;
         }
-        if (this.#positionOnly[slot] === 1 && this.#dirtyMasks[slot] === TextDirty.Transform) {
+        if (!this.#isGpuResidentCandidate(slot)) {
+          this.#deactivateGpuResidentScene("unsupported-scene");
+          return fallback();
+        }
+        const mask = this.#dirtyMasks[slot] ?? TextDirty.None;
+        if ((mask & (TextDirty.Content | TextDirty.Style)) !== 0) {
+          rebinds.push(slot);
+          continue;
+        }
+        if (mask === TextDirty.Transform) {
           movers.push(slot);
+          rigidTransforms ||= this.#positionOnly[slot] !== 1;
           continue;
         }
         this.#deactivateGpuResidentScene("unsupported-scene");
@@ -1550,23 +1608,46 @@ export class TextLayer extends Container {
         this.#gpuResidentPlannedRecordCount = plannedRecordCount + slots.length;
       }
 
-      let moveSlots: Uint32Array | undefined;
-      let moveXy: Float32Array | undefined;
-      if (movers.length > 0) {
-        if (residentPositions !== undefined) {
+      let rebindGroups: readonly ResidentAdmitLaneGroup[] | undefined;
+      if (rebinds.length > 0) {
+        const slots = Uint32Array.from(rebinds).sort();
+        rebindGroups = this.#buildGpuResidentGroups(compiler, slots, slots.length);
+        if (rebindGroups === undefined) {
           this.#deactivateGpuResidentScene("unsupported-scene");
           return fallback();
         }
-        moveSlots = Uint32Array.from(movers);
+      }
+
+      let moveSlots: Uint32Array | undefined;
+      let moveXy: Float32Array | undefined;
+      let moveRotations: Float32Array | undefined;
+      if (movers.length > 0 || (residentPositions !== undefined && rebinds.length > 0)) {
+        if (residentPositions === undefined) {
+          moveSlots = Uint32Array.from(movers);
+        } else {
+          const moving = new Set(movers);
+          const rebound = new Set(rebinds);
+          for (let index = 0; index < residentPositions.count; index += 1) {
+            const slot = residentPositions.slots[index] ?? 0;
+            if (this.#store.occupiedAt(slot) && !rebound.has(slot)) moving.add(slot);
+          }
+          moveSlots = Uint32Array.from(moving);
+        }
         moveSlots.sort();
         moveXy = new Float32Array(moveSlots.length * 2);
         this.#store.positionsInto(moveSlots, moveSlots.length, moveXy);
+        if (rigidTransforms) {
+          moveRotations = new Float32Array(moveSlots.length);
+          this.#store.rotationsInto(moveSlots, moveSlots.length, moveRotations);
+        }
       }
       plan = {
         setup: false,
         ...(appendGroups === undefined ? {} : { appendGroups }),
+        ...(rebindGroups === undefined ? {} : { rebindGroups }),
         ...(residentPositions === undefined ? {} : { moveBatch: residentPositions }),
         ...(moveSlots === undefined || moveXy === undefined ? {} : { moveSlots, moveXy }),
+        ...(moveRotations === undefined ? {} : { moveRotations }),
         ...(removals.length === 0 ? {} : { removeSlots: Uint32Array.from(removals).sort() }),
         viewport: this.#drawViewport() ?? FULL_CULL_VIEWPORT,
       };
@@ -1613,24 +1694,35 @@ export class TextLayer extends Container {
       const runResidentWork = async (): Promise<void> => {
         const setupStart = performance.now();
         let currentScene = this.#gpuResidentScene;
-        let residentResult: Readonly<ResidentAdmitLaneResult> | undefined;
+        let residentResult: Readonly<RenderCommitResult> | undefined;
         let surfaceAdoptedResult = false;
         let recoveringViewport = false;
         const completedParts: RenderCommitResult[] = [];
         try {
-          const groups = plan.appendGroups;
-          if (groups !== undefined) {
+          for (const mode of ["append", "rebind"] as const) {
+            const groups = mode === "append" ? plan.appendGroups : plan.rebindGroups;
+            if (groups === undefined) continue;
             const coordinatorStart = performance.now();
             const baseRecordCount = currentScene?.stats.recordCount ?? 0;
-            const baseDrawInstanceCount = currentScene?.stats.activeGlyphInstances ?? 0;
-            residentResult = await coordinator.applyResidentAdmitLane(groups, compiler, {
+            let baseDrawInstanceCount = currentScene?.stats.activeGlyphInstances ?? 0;
+            if (mode === "rebind" && currentScene !== undefined) {
+              for (const group of groups) {
+                baseDrawInstanceCount -= currentScene.referencedGlyphCount(
+                  group.slots,
+                  group.count,
+                );
+              }
+            }
+            const part = await coordinator.applyResidentAdmitLane(groups, compiler, {
+              mode,
               capacityFits: (recordCount, drawInstanceCount) =>
                 surface.gpuSceneCapacityFits(
-                  baseRecordCount + recordCount,
+                  baseRecordCount + (mode === "append" ? recordCount : 0),
                   baseDrawInstanceCount + drawInstanceCount,
                 ),
             });
-            if (residentResult?.residentFallbackReason === "device-limit") {
+            if (part?.residentFallbackReason === "device-limit") {
+              this.#retainRenderResults(...completedParts.splice(0));
               this.#lastRenderCoordinatorMs = performance.now() - coordinatorStart;
               this.#deactivateGpuResidentScene("device-limit");
               recoveringViewport = true;
@@ -1638,15 +1730,15 @@ export class TextLayer extends Container {
               recoveringViewport = false;
               return;
             }
-            if (residentResult !== undefined) completedParts.push(residentResult);
-            this.#lastRenderCoordinatorMs = performance.now() - coordinatorStart;
+            if (part !== undefined) completedParts.push(part);
+            this.#lastRenderCoordinatorMs += performance.now() - coordinatorStart;
             if (
               !this.#isGpuResidentWorkCurrent(coordinator, surface, lifecycleEpoch, residentEpoch)
             ) {
               releaseRenderExternalUploads(...completedParts.splice(0));
               return;
             }
-            if (residentResult === undefined) {
+            if (part === undefined) {
               this.#retainRenderResults(...completedParts.splice(0));
               this.#deactivateGpuResidentScene("unsupported-scene");
               recoveringViewport = true;
@@ -1654,55 +1746,69 @@ export class TextLayer extends Container {
               recoveringViewport = false;
               return;
             }
-            const columns = residentResult.residentColumns;
+            const columns = part.residentColumns;
             if (columns.length === 0) {
               this.#retainRenderResults(...completedParts.splice(0));
               this.#deactivateGpuResidentScene("setup-failed");
               return;
             }
-            if (plan.setup) {
+            if (plan.setup && mode === "append") {
               currentScene = new GpuResidentScene({ initialCapacity: this.#store.capacity });
               currentScene.setupMany(columns);
-              currentScene.bindOriginColumns(this.#store.xColumn, this.#store.yColumn);
-            } else if (currentScene === undefined || !currentScene.appendMany(columns)) {
+              currentScene.bindOriginColumns(
+                this.#store.xColumn,
+                this.#store.yColumn,
+                this.#store.rotationColumn,
+              );
+            } else if (
+              currentScene === undefined ||
+              !(mode === "append"
+                ? currentScene.appendMany(columns)
+                : currentScene.rebindMany(columns))
+            ) {
               this.#retainRenderResults(...completedParts.splice(0));
               this.#deactivateGpuResidentScene("unsupported-scene");
+              recoveringViewport = true;
+              await this.#recoverGpuResidentStalePlan(coordinator, surface, lifecycleEpoch);
+              recoveringViewport = false;
               return;
             }
             const spatialStart = performance.now();
-            for (const column of columns) {
-              this.#spatial.placeMany(column.slots, column.count, column.xy, {
-                x: column.localBounds[0] ?? 0,
-                y: column.localBounds[1] ?? 0,
-                width: column.localBounds[2] ?? 0,
-                height: column.localBounds[3] ?? 0,
-              });
-            }
+            this.#placeGpuResidentColumns(currentScene, columns);
             this.#lastSpatialUpdateMs += performance.now() - spatialStart;
+            residentResult = mergeRenderResults(residentResult, part);
           }
           if (currentScene === undefined) {
             this.#deactivateGpuResidentScene("setup-failed");
             return;
           }
-          if (plan.moveBatch !== undefined) {
+          if (plan.moveSlots !== undefined && plan.moveXy !== undefined) {
             const paletteStart = performance.now();
-            const moves = currentScene.updatePositionsPacked(plan.moveBatch);
+            const moves =
+              plan.moveRotations === undefined
+                ? currentScene.updatePositions(plan.moveSlots, plan.moveSlots.length, plan.moveXy)
+                : currentScene.updateTransforms(
+                    plan.moveSlots,
+                    plan.moveSlots.length,
+                    plan.moveXy,
+                    plan.moveRotations,
+                  );
             surface.queuePaletteMoves(moves.paletteMoves);
             this.#lastPaletteWriteMs = performance.now() - paletteStart;
-          } else if (plan.moveSlots !== undefined && plan.moveXy !== undefined) {
+          } else if (plan.moveBatch !== undefined) {
             const paletteStart = performance.now();
-            const moves = currentScene.updatePositions(
-              plan.moveSlots,
-              plan.moveSlots.length,
-              plan.moveXy,
-            );
+            const moves = currentScene.updatePositionsPacked(plan.moveBatch);
             surface.queuePaletteMoves(moves.paletteMoves);
             this.#lastPaletteWriteMs = performance.now() - paletteStart;
           }
           if (plan.removeSlots !== undefined) {
             currentScene.remove(plan.removeSlots, plan.removeSlots.length);
           }
-          surface.bindOriginColumns(currentScene.originX, currentScene.originY);
+          surface.bindOriginColumns(
+            currentScene.originX,
+            currentScene.originY,
+            this.#store.rotationColumn,
+          );
           const computeUpdate = currentScene.snapshot(plan.viewport);
           const result = mergeRenderResults(this.#pendingRenderResult, residentResult);
           const surfaceStart = performance.now();
@@ -1723,15 +1829,19 @@ export class TextLayer extends Container {
           this.#lastSurfaceApplyMs = performance.now() - surfaceStart;
           this.#lastUploadMs = surface.stats.lastUploadMs;
           if (surface.stats.cullPath !== "compute-cull") {
-            currentScene.flushSpatialMoves(() => {});
-            this.#spatial.flushDeferredRehash();
+            this.#flushGpuResidentSpatialMoves(currentScene);
             const recoveryPaletteStart = performance.now();
-            if (
-              plan.moveBatch === undefined &&
-              plan.moveSlots !== undefined &&
-              plan.moveXy !== undefined
-            ) {
-              coordinator.applyPositionLane(plan.moveSlots, plan.moveSlots.length, plan.moveXy);
+            if (plan.moveSlots !== undefined && plan.moveXy !== undefined) {
+              if (plan.moveRotations === undefined) {
+                coordinator.applyPositionLane(plan.moveSlots, plan.moveSlots.length, plan.moveXy);
+              } else {
+                coordinator.transforms.writeRigidTransforms(
+                  plan.moveSlots,
+                  plan.moveSlots.length,
+                  plan.moveXy,
+                  plan.moveRotations,
+                );
+              }
             }
             this.#recoverGpuResidentPositionLeases(coordinator);
             this.#lastPaletteWriteMs += performance.now() - recoveryPaletteStart;
@@ -1811,6 +1921,7 @@ export class TextLayer extends Container {
     type Draft = {
       readonly text: string;
       readonly style: Readonly<TextStyleOptions>;
+      readonly layout: Readonly<TextLayoutOptions> | undefined;
       readonly prototypeCandidateIndex: number;
       count: number;
       write: number;
@@ -1824,19 +1935,17 @@ export class TextLayer extends Container {
     for (let index = 0; index < sourceCount; index += 1) {
       const slot = selectedSlots === undefined ? index : selectedSlots[index];
       if (selectedSlots === undefined && !this.#store.occupiedAt(index)) continue;
-      if (
-        slot === undefined ||
-        !this.#isAdmitLaneCandidate(slot) ||
-        !this.#isGpuResidentSlotEffectivelyVisible(slot)
-      ) {
+      if (slot === undefined || !this.#isGpuResidentCandidate(slot)) {
         return undefined;
       }
       const text = this.#store.textAt(slot);
       const style = this.#store.styleAt(slot);
+      const id = this.#store.idAt(slot);
+      const layout = id === undefined ? undefined : this.#layouts.get(id);
       if (text === undefined || style === undefined) return undefined;
       const order = this.#spatial.orderOf(slot);
       if (order === undefined) return undefined;
-      const pair = compiler.admitCandidate(text, style);
+      const pair = compiler.admitCandidate(text, style, layout);
       if (pair === undefined) return undefined;
       let draftIndex = pairDrafts[pair] ?? -1;
       let draft = draftIndex < 0 ? undefined : drafts[draftIndex];
@@ -1845,6 +1954,7 @@ export class TextLayer extends Container {
         draft = {
           text,
           style,
+          layout,
           prototypeCandidateIndex: Math.floor(pair / GPU_SCENE_MAX_PAINTS),
           count: 0,
           write: 0,
@@ -1869,9 +1979,11 @@ export class TextLayer extends Container {
       }
       const text = this.#store.textAt(slot);
       const style = this.#store.styleAt(slot);
+      const id = this.#store.idAt(slot);
+      const layout = id === undefined ? undefined : this.#layouts.get(id);
       const order = this.#spatial.orderOf(slot);
       if (text === undefined || style === undefined || order === undefined) return undefined;
-      const pair = compiler.admitCandidate(text, style);
+      const pair = compiler.admitCandidate(text, style, layout);
       const draft = pair === undefined ? undefined : drafts[pairDrafts[pair] ?? -1];
       if (draft === undefined) return undefined;
       draft.slots[draft.write] = slot;
@@ -1881,13 +1993,17 @@ export class TextLayer extends Container {
     return drafts.map((draft) => {
       const xy = new Float32Array(draft.count * 2);
       this.#store.positionsInto(draft.slots, draft.count, xy);
+      const rotations = new Float32Array(draft.count);
+      this.#store.rotationsInto(draft.slots, draft.count, rotations);
       return {
         slots: draft.slots,
         count: draft.count,
         xy,
+        rotations,
         orders: draft.orders,
         text: draft.text,
         style: draft.style,
+        ...(draft.layout === undefined ? {} : { layout: draft.layout }),
         zIndex: 0,
         blendMode: "normal",
         prototypeCandidateIndex: draft.prototypeCandidateIndex,
@@ -1901,14 +2017,55 @@ export class TextLayer extends Container {
     });
   }
 
-  #isGpuResidentSlotEffectivelyVisible(slot: number): boolean {
+  #isGpuResidentCandidate(slot: number): boolean {
+    if (!this.#store.admitLaneAt(slot, true)) return false;
     const id = this.#store.idAt(slot);
-    return id !== undefined && this.#isEffectivelyVisible(id, true);
+    return (
+      id !== undefined &&
+      !this.#shaping.has(id) &&
+      !this.#trustedRuns.has(id) &&
+      this.#isEffectivelyVisible(id, true)
+    );
   }
 
-  #flushGpuResidentSpatialMoves(): number {
-    this.#gpuResidentScene?.flushSpatialMoves(() => {});
-    return this.#spatial.flushDeferredRehash();
+  #placeGpuResidentColumns(
+    scene: GpuResidentScene,
+    columns: readonly Readonly<ResidentPrototypeColumn>[],
+  ): void {
+    for (const column of columns) {
+      if (column.rotations === undefined || column.rotations.every((angle) => angle === 0)) {
+        this.#spatial.placeMany(column.slots, column.count, column.xy, {
+          x: column.localBounds[0] ?? 0,
+          y: column.localBounds[1] ?? 0,
+          width: column.localBounds[2] ?? 0,
+          height: column.localBounds[3] ?? 0,
+        });
+      } else {
+        this.#placeGpuResidentBounds(scene, column.slots, column.count);
+      }
+      if (this.#collisionEnabled) this.#invalidateCollisionRecords(column.slots, column.count);
+    }
+  }
+
+  #placeGpuResidentBounds(scene: GpuResidentScene, slots: Uint32Array, count: number): void {
+    for (let index = 0; index < count; index += 1) {
+      const slot = slots[index] ?? 0;
+      if (
+        this.#isGpuResidentCandidate(slot) &&
+        scene.isActive(slot, this.#spatial.orderOf(slot)) &&
+        scene.copyBounds(slot, this.#boundsScratch)
+      ) {
+        this.#spatial.updateCurrent(slot, this.#boundsScratch, 0, true);
+      }
+    }
+  }
+
+  #flushGpuResidentSpatialMoves(scene = this.#gpuResidentScene): number {
+    const moved =
+      scene?.flushSpatialMoves((slots, count) => {
+        this.#placeGpuResidentBounds(scene, slots, count);
+      }) ?? 0;
+    return moved + this.#spatial.flushDeferredRehash();
   }
 
   #recoverGpuResidentPositionLeases(coordinator: RenderCoordinator): void {
@@ -2673,7 +2830,7 @@ export class TextLayer extends Container {
     if (x === this.#boundOriginX) return;
     const y = this.#store.yColumn;
     this.#spatial.bindOrigins(x, y);
-    this.#gpuResidentScene?.bindOriginColumns(x, y);
+    this.#gpuResidentScene?.bindOriginColumns(x, y, this.#store.rotationColumn);
     this.#boundOriginX = x;
   }
 

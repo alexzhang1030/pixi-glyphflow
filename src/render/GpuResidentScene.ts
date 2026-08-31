@@ -6,13 +6,19 @@ import {
   type CullViewport,
 } from "../culling/computeCull";
 import { DIRTY_MAX_RANGES, DirtyRanges } from "./DirtyRanges";
+import { packF16, unpackF16 } from "./pack";
 import {
   PALETTE_DENSE_MOVE_STRIDE,
   PALETTE_DENSE_MOVE_WORDS,
   PALETTE_MOVE_STRIDE,
   PALETTE_MOVE_WORDS,
+  PALETTE_DENSE_TRANSFORM_MOVE_STRIDE,
+  PALETTE_DENSE_TRANSFORM_MOVE_WORDS,
+  PALETTE_INDEXED_TRANSFORM_MOVE_STRIDE,
+  PALETTE_INDEXED_TRANSFORM_MOVE_WORDS,
+  packResidentRotation,
   paletteMoveUploadBytes,
-  writeResidentAabbF32,
+  writeResidentRotatedAabbF32,
   type PaletteMoveUpload,
 } from "./paletteStorage";
 
@@ -27,6 +33,8 @@ export interface GpuResidentAdmitColumn {
   readonly slots: Uint32Array;
   readonly count: number;
   readonly xy: Float32Array;
+  /** Decoded binary16 label rotations; omitted columns use zero rotation. */
+  readonly rotations?: Float32Array;
   readonly orders: Uint32Array;
   /** Shared local x, y, width, height for every slot in this prototype column. */
   readonly localBounds: Float32Array;
@@ -96,6 +104,8 @@ export class GpuResidentScene {
   #originX: Float32Array<ArrayBufferLike> = new Float32Array(0);
   #originY: Float32Array<ArrayBufferLike> = new Float32Array(0);
   #originsExternal = false;
+  #rotations: Uint16Array<ArrayBufferLike> = new Uint16Array(0);
+  #rotationsExternal = false;
   #orders = new Uint32Array(0);
   #prototypeIds = new Uint32Array(0);
   #prototypeBounds = new Float32Array(0);
@@ -106,6 +116,7 @@ export class GpuResidentScene {
   #spatialXy = new Float32Array(0);
   #moveCommands = new ArrayBuffer(0);
   #pendingSpatialMoves = 0;
+  #recordsNeedReconcile = false;
   #capacity = 0;
   #recordCount = 0;
   #activeLabels = 0;
@@ -161,6 +172,7 @@ export class GpuResidentScene {
     this.#repackSignals = 0;
     this.#repackRequired = false;
     this.#pendingSpatialMoves = 0;
+    this.#recordsNeedReconcile = false;
     this.#lastOrder = inspection.lastOrder;
     this.#dirty.clear();
     for (const column of columns) this.#writeColumn(column);
@@ -168,7 +180,7 @@ export class GpuResidentScene {
   }
 
   /** Alias the authoritative TextStore origins so mover intake writes x/y once. @internal */
-  bindOriginColumns(originX: Float32Array, originY: Float32Array): void {
+  bindOriginColumns(originX: Float32Array, originY: Float32Array, rotations?: Uint16Array): void {
     this.#assertActive();
     if (!(originX instanceof Float32Array) || !(originY instanceof Float32Array)) {
       throw new TypeError("GPU resident origin columns must be Float32Array");
@@ -179,9 +191,16 @@ export class GpuResidentScene {
     if (originX.length < this.#capacity) {
       throw new RangeError("GPU resident origin columns are shorter than scene capacity");
     }
+    if (rotations !== undefined && rotations.length < this.#capacity) {
+      throw new RangeError("GPU resident rotation column is shorter than scene capacity");
+    }
     this.#originX = originX;
     this.#originY = originY;
     this.#originsExternal = true;
+    if (rotations !== undefined) {
+      this.#rotations = rotations;
+      this.#rotationsExternal = true;
+    }
   }
 
   append(column: Readonly<GpuResidentAdmitColumn>): boolean {
@@ -207,7 +226,6 @@ export class GpuResidentScene {
     }
     this.#assertPrototypeBounds(columns, true);
     this.#ensureCapacity(inspection.recordEnd);
-    this.#reconcilePendingRecords();
     for (const column of columns) this.#writeColumn(column);
     this.#recordCount = inspection.recordEnd;
     this.#lastOrder = inspection.lastOrder;
@@ -220,6 +238,73 @@ export class GpuResidentScene {
       }
     }
     return true;
+  }
+
+  /** Replace existing slot bindings after text, wrap width, or writing-flow changes. */
+  rebindMany(columns: readonly Readonly<GpuResidentAdmitColumn>[]): boolean {
+    this.#assertActive();
+    let count = 0;
+    let removedGlyphs = 0;
+    let addedGlyphs = 0;
+    for (const column of columns) {
+      validateColumn(column);
+      if (column.zIndex !== 0 || column.blendMode !== "normal") {
+        throw new TypeError("GPU resident rebind requires zero z-index and normal blending");
+      }
+      count += column.count;
+      addedGlyphs += column.count * column.instanceCount;
+      for (let index = 0; index < column.count; index += 1) {
+        const slot = column.slots[index] ?? 0;
+        if (
+          slot >= this.#recordCount ||
+          this.#occupied[slot] !== 1 ||
+          column.orders[index] !== this.#orders[slot]
+        ) {
+          this.#repackRequired = true;
+          return false;
+        }
+        removedGlyphs += this.#recordUints[slot * WORDS_PER_RECORD + 5] ?? 0;
+      }
+    }
+    const slots = new Uint32Array(count);
+    let offset = 0;
+    for (const column of columns) {
+      slots.set(column.slots.subarray(0, column.count), offset);
+      offset += column.count;
+    }
+    slots.sort();
+    for (let index = 1; index < slots.length; index += 1) {
+      if (slots[index] === slots[index - 1]) {
+        throw new TypeError("GPU resident rebind contains duplicate slots");
+      }
+    }
+    const nextGlyphs = this.#activeGlyphInstances - removedGlyphs + addedGlyphs;
+    if (!Number.isSafeInteger(nextGlyphs) || nextGlyphs > 0xffff_ffff) {
+      throw new RangeError("GPU resident draw instance count exceeds uint32 capacity");
+    }
+    this.#assertPrototypeBounds(columns, true);
+    for (const slot of slots) {
+      this.#activeGlyphInstances -= this.#recordUints[slot * WORDS_PER_RECORD + 5] ?? 0;
+      this.#activeLabels -= 1;
+      this.#releasePrototypeRef(this.#prototypeIds[slot] ?? 0);
+    }
+    for (const column of columns) this.#writeColumn(column);
+    for (const slot of slots) {
+      this.#dirty.record(slot * GPU_RESIDENT_RECORD_STRIDE, GPU_RESIDENT_RECORD_STRIDE);
+    }
+    return true;
+  }
+
+  referencedGlyphCount(slots: Uint32Array, count: number): number {
+    this.#assertActive();
+    let glyphs = 0;
+    for (let index = 0; index < count; index += 1) {
+      const slot = slots[index] ?? 0;
+      if (slot < this.#recordCount && this.#occupied[slot] === 1) {
+        glyphs += this.#recordUints[slot * WORDS_PER_RECORD + 5] ?? 0;
+      }
+    }
+    return glyphs;
   }
 
   remove(slots: Uint32Array, count: number): number {
@@ -236,9 +321,7 @@ export class GpuResidentScene {
       this.#activeLabels -= 1;
       this.#tombstones += 1;
       const prototypeId = this.#prototypeIds[slot] ?? 0;
-      const refs = this.#prototypeRefs.get(prototypeId) ?? 0;
-      if (refs <= 1) this.#prototypeRefs.delete(prototypeId);
-      else this.#prototypeRefs.set(prototypeId, refs - 1);
+      this.#releasePrototypeRef(prototypeId);
       this.#dirty.record(slot * GPU_RESIDENT_RECORD_STRIDE, GPU_RESIDENT_RECORD_STRIDE);
       removed += 1;
     }
@@ -287,8 +370,10 @@ export class GpuResidentScene {
         commandFloats[commandBase + 1] = x;
         commandFloats[commandBase + 2] = y;
       }
-      this.#originX[slot] = x;
-      this.#originY[slot] = y;
+      if (!this.#originsExternal) {
+        this.#originX[slot] = x;
+        this.#originY[slot] = y;
+      }
       this.notePosition(slot);
       written += 1;
     }
@@ -297,6 +382,73 @@ export class GpuResidentScene {
       : { mode: "indexed", commands: this.#moveCommands, count: written };
     return {
       paletteMoves,
+      recordDirty: "none",
+    };
+  }
+
+  /** Pack position and rotation changes while retaining prototype geometry and cull records. */
+  updateTransforms(
+    slots: Uint32Array,
+    count: number,
+    xy: Float32Array,
+    rotations: Float32Array,
+  ): Readonly<GpuResidentPositionUpdate> {
+    this.#assertActive();
+    validatePositionColumns(slots, count, xy);
+    if (rotations.length < count) {
+      throw new TypeError("GPU resident rotations are shorter than count");
+    }
+    let dense = count > 0;
+    const baseSlot = slots[0] ?? 0;
+    for (let index = 0; index < count; index += 1) {
+      const slot = slots[index] ?? 0;
+      if (
+        !Number.isFinite(xy[index * 2]) ||
+        !Number.isFinite(xy[index * 2 + 1]) ||
+        !Number.isFinite(rotations[index])
+      ) {
+        throw new TypeError("GPU resident transform values must be finite");
+      }
+      if (slot >= this.#capacity || this.#occupied[slot] !== 1 || slot !== baseSlot + index) {
+        dense = false;
+      }
+    }
+    const commandBytes =
+      count * (dense ? PALETTE_DENSE_TRANSFORM_MOVE_STRIDE : PALETTE_INDEXED_TRANSFORM_MOVE_STRIDE);
+    if (this.#moveCommands.byteLength !== commandBytes) {
+      this.#moveCommands = new ArrayBuffer(commandBytes);
+    }
+    const commandUints = new Uint32Array(this.#moveCommands);
+    const commandFloats = new Float32Array(this.#moveCommands);
+    this.reservePositionNotes(count);
+    let written = 0;
+    for (let index = 0; index < count; index += 1) {
+      const slot = slots[index] ?? 0;
+      if (slot >= this.#capacity || this.#occupied[slot] !== 1) continue;
+      const x = Math.fround(xy[index * 2] ?? 0);
+      const y = Math.fround(xy[index * 2 + 1] ?? 0);
+      const rotationBits = packF16(rotations[index] ?? 0);
+      const packedRotation = packResidentRotation(unpackF16(rotationBits));
+      const base =
+        written *
+        (dense ? PALETTE_DENSE_TRANSFORM_MOVE_WORDS : PALETTE_INDEXED_TRANSFORM_MOVE_WORDS);
+      const offset = dense ? 0 : 1;
+      if (!dense) commandUints[base] = slot;
+      commandFloats[base + offset] = x;
+      commandFloats[base + offset + 1] = y;
+      commandUints[base + offset + 2] = packedRotation;
+      if (!this.#originsExternal) {
+        this.#originX[slot] = x;
+        this.#originY[slot] = y;
+      }
+      if (!this.#rotationsExternal) this.#rotations[slot] = rotationBits;
+      this.notePosition(slot);
+      written += 1;
+    }
+    return {
+      paletteMoves: dense
+        ? { mode: "dense-transform", baseSlot, commands: this.#moveCommands, count: written }
+        : { mode: "indexed-transform", commands: this.#moveCommands, count: written },
       recordDirty: "none",
     };
   }
@@ -315,6 +467,7 @@ export class GpuResidentScene {
     this.#assertActive();
     assertUint("slot", slot);
     if (slot >= this.#capacity || this.#occupied[slot] !== 1) return false;
+    this.#recordsNeedReconcile = true;
     if (this.#movedFlags[slot] === 1) return false;
     this.#ensureMovedCapacity(this.#pendingSpatialMoves + 1);
     this.#movedFlags[slot] = 1;
@@ -336,6 +489,7 @@ export class GpuResidentScene {
       throw new TypeError("GPU resident position slot list is shorter than count");
     }
     this.reservePositionNotes(count);
+    if (count > 0) this.#recordsNeedReconcile = true;
     const flags = this.#movedFlags;
     const journal = this.#movedSlots;
     let pending = this.#pendingSpatialMoves;
@@ -362,7 +516,7 @@ export class GpuResidentScene {
     if (move.commands.byteLength < commandBytes) {
       throw new RangeError("GPU resident packed move commands are shorter than count");
     }
-    if (move.mode === "dense") {
+    if (move.mode === "dense" || move.mode === "dense-transform") {
       if (!Number.isSafeInteger(move.baseSlot) || move.baseSlot < 0) {
         throw new TypeError("GPU resident dense move baseSlot must be a non-negative safe integer");
       }
@@ -402,6 +556,7 @@ export class GpuResidentScene {
       written += 1;
     }
     this.#pendingSpatialMoves = 0;
+    this.#recordsNeedReconcile = false;
     if (written > 0) visitor(this.#movedSlots, written, this.#spatialXy);
     return written;
   }
@@ -420,6 +575,8 @@ export class GpuResidentScene {
       });
       recordDirty = ranges.length === 0 ? "none" : ranges;
     }
+    // Banded structural uploads can include moved neighbors in their unchanged gaps.
+    if (recordDirty !== "none") this.#reconcilePendingRecords();
     const update: GpuResidentCullUpdate = {
       records: this.#records,
       recordCount: this.#recordCount,
@@ -444,6 +601,22 @@ export class GpuResidentScene {
     return this.#originY;
   }
 
+  /** Copy current rendered bounds for CPU query reconciliation. */
+  copyBounds(
+    slot: number,
+    output: { x: number; y: number; width: number; height: number },
+  ): boolean {
+    this.#assertActive();
+    if (slot >= this.#capacity || this.#occupied[slot] !== 1) return false;
+    this.#reconcileRecord(slot);
+    const base = slot * WORDS_PER_RECORD;
+    output.x = this.#recordFloats[base] ?? 0;
+    output.y = this.#recordFloats[base + 1] ?? 0;
+    output.width = (this.#recordFloats[base + 2] ?? 0) - output.x;
+    output.height = (this.#recordFloats[base + 3] ?? 0) - output.y;
+    return true;
+  }
+
   get repackRequired(): boolean {
     this.#assertActive();
     return this.#repackRequired;
@@ -454,10 +627,14 @@ export class GpuResidentScene {
     this.#repackRequired = false;
   }
 
-  isActive(slot: number): boolean {
+  isActive(slot: number, order?: number): boolean {
     this.#assertActive();
     assertUint("slot", slot);
-    return slot < this.#capacity && this.#occupied[slot] === 1;
+    return (
+      slot < this.#capacity &&
+      this.#occupied[slot] === 1 &&
+      (order === undefined || this.#orders[slot] === order)
+    );
   }
 
   get stats(): Readonly<GpuResidentSceneStats> {
@@ -471,6 +648,7 @@ export class GpuResidentScene {
         this.#records.byteLength +
         this.#occupied.byteLength +
         (this.#originsExternal ? 0 : this.#originX.byteLength + this.#originY.byteLength) +
+        (this.#rotationsExternal ? 0 : this.#rotations.byteLength) +
         this.#orders.byteLength +
         this.#prototypeIds.byteLength +
         this.#prototypeBounds.byteLength +
@@ -495,6 +673,8 @@ export class GpuResidentScene {
     this.#originX = new Float32Array(0);
     this.#originY = new Float32Array(0);
     this.#originsExternal = false;
+    this.#rotations = new Uint16Array(0);
+    this.#rotationsExternal = false;
     this.#orders = new Uint32Array(0);
     this.#prototypeIds = new Uint32Array(0);
     this.#prototypeBounds = new Float32Array(0);
@@ -510,6 +690,7 @@ export class GpuResidentScene {
     this.#activeGlyphInstances = 0;
     this.#tombstones = 0;
     this.#pendingSpatialMoves = 0;
+    this.#recordsNeedReconcile = false;
     this.#prototypeBoundsCount = 0;
     this.#localBoundsDirty = false;
     this.#lastOrder = -1;
@@ -541,8 +722,9 @@ export class GpuResidentScene {
       const slot = column.slots[index] ?? 0;
       const x = Math.fround(column.xy[index * 2] ?? 0);
       const y = Math.fround(column.xy[index * 2 + 1] ?? 0);
+      const rotationBits = packF16(column.rotations?.[index] ?? 0);
       const base = slot * WORDS_PER_RECORD;
-      writeResidentAabbF32(
+      writeResidentRotatedAabbF32(
         this.#recordFloats,
         base,
         x,
@@ -551,14 +733,18 @@ export class GpuResidentScene {
         boundsY,
         boundsWidth,
         boundsHeight,
+        packResidentRotation(unpackF16(rotationBits)),
       );
       this.#recordUints[base + 4] = column.instanceOffset;
       this.#recordUints[base + 5] = column.instanceCount;
       this.#recordUints[base + 6] = slot;
       this.#recordUints[base + 7] = boundsIndex;
       this.#occupied[slot] = 1;
-      this.#originX[slot] = x;
-      this.#originY[slot] = y;
+      if (!this.#originsExternal) {
+        this.#originX[slot] = x;
+        this.#originY[slot] = y;
+      }
+      if (!this.#rotationsExternal) this.#rotations[slot] = rotationBits;
       this.#orders[slot] = column.orders[index] ?? 0;
       this.#prototypeIds[slot] = column.prototypeId;
       this.#activeLabels += 1;
@@ -581,6 +767,8 @@ export class GpuResidentScene {
     this.#originX = new Float32Array(capacity);
     this.#originY = new Float32Array(capacity);
     this.#originsExternal = false;
+    this.#rotations = new Uint16Array(capacity);
+    this.#rotationsExternal = false;
     this.#orders = new Uint32Array(capacity);
     this.#prototypeIds = new Uint32Array(capacity);
     this.#prototypeBounds = new Float32Array(4);
@@ -603,6 +791,9 @@ export class GpuResidentScene {
     ) {
       throw new RangeError("GPU resident external origin columns are shorter than append capacity");
     }
+    if (this.#rotationsExternal && this.#rotations.length < capacity) {
+      throw new RangeError("GPU resident external rotation column is shorter than append capacity");
+    }
     const records = new ArrayBuffer(capacity * GPU_RESIDENT_RECORD_STRIDE);
     new Uint8Array(records).set(new Uint8Array(this.#records));
     const recordFloats = new Float32Array(records);
@@ -610,6 +801,9 @@ export class GpuResidentScene {
     const occupied = growUint8(this.#occupied, capacity);
     const originX = this.#originsExternal ? this.#originX : growFloat32(this.#originX, capacity);
     const originY = this.#originsExternal ? this.#originY : growFloat32(this.#originY, capacity);
+    const rotations = this.#rotationsExternal
+      ? this.#rotations
+      : growUint16(this.#rotations, capacity);
     const orders = growUint32(this.#orders, capacity);
     const prototypeIds = growUint32(this.#prototypeIds, capacity);
     const movedFlags = growUint8(this.#movedFlags, capacity);
@@ -620,6 +814,7 @@ export class GpuResidentScene {
     this.#occupied = occupied;
     this.#originX = originX;
     this.#originY = originY;
+    this.#rotations = rotations;
     this.#orders = orders;
     this.#prototypeIds = prototypeIds;
     this.#movedFlags = movedFlags;
@@ -646,7 +841,7 @@ export class GpuResidentScene {
     const boundsY = this.#prototypeBounds[boundsBase + 1] ?? 0;
     const boundsWidth = this.#prototypeBounds[boundsBase + 2] ?? 0;
     const boundsHeight = this.#prototypeBounds[boundsBase + 3] ?? 0;
-    writeResidentAabbF32(
+    writeResidentRotatedAabbF32(
       this.#recordFloats,
       base,
       x,
@@ -655,19 +850,28 @@ export class GpuResidentScene {
       boundsY,
       boundsWidth,
       boundsHeight,
+      packResidentRotation(unpackF16(this.#rotations[slot] ?? 0)),
     );
   }
 
   #reconcilePendingRecords(): void {
+    if (!this.#recordsNeedReconcile) return;
     for (let index = 0; index < this.#pendingSpatialMoves; index += 1) {
       const slot = this.#movedSlots[index] ?? 0;
       if (this.#occupied[slot] === 1) this.#reconcileRecord(slot);
     }
+    this.#recordsNeedReconcile = false;
   }
 
   #signalRepack(): void {
     this.#repackRequired = true;
     this.#repackSignals += 1;
+  }
+
+  #releasePrototypeRef(prototypeId: number): void {
+    const refs = this.#prototypeRefs.get(prototypeId) ?? 0;
+    if (refs <= 1) this.#prototypeRefs.delete(prototypeId);
+    else this.#prototypeRefs.set(prototypeId, refs - 1);
   }
 
   #registerPrototypeBounds(
@@ -878,7 +1082,8 @@ function validateColumn(column: Readonly<GpuResidentAdmitColumn>): void {
   if (
     column.count > column.slots.length ||
     column.count > column.orders.length ||
-    column.count * 2 > column.xy.length
+    column.count * 2 > column.xy.length ||
+    (column.rotations !== undefined && column.rotations.length < column.count)
   ) {
     throw new RangeError("GPU resident typed columns are shorter than count");
   }
@@ -896,6 +1101,13 @@ function validateColumn(column: Readonly<GpuResidentAdmitColumn>): void {
   for (let index = 0; index < column.count * 2; index += 1) {
     if (!Number.isFinite(column.xy[index])) {
       throw new TypeError("GPU resident xy values must be finite");
+    }
+  }
+  if (column.rotations !== undefined) {
+    for (let index = 0; index < column.count; index += 1) {
+      if (!Number.isFinite(column.rotations[index])) {
+        throw new TypeError("GPU resident rotations must be finite");
+      }
     }
   }
 }
@@ -932,6 +1144,12 @@ function growUint8(source: Uint8Array, capacity: number): Uint8Array<ArrayBuffer
 
 function growUint32(source: Uint32Array, capacity: number): Uint32Array<ArrayBuffer> {
   const next = new Uint32Array(new ArrayBuffer(capacity * Uint32Array.BYTES_PER_ELEMENT));
+  next.set(source);
+  return next;
+}
+
+function growUint16(source: Uint16Array, capacity: number): Uint16Array<ArrayBuffer> {
+  const next = new Uint16Array(new ArrayBuffer(capacity * Uint16Array.BYTES_PER_ELEMENT));
   next.set(source);
   return next;
 }

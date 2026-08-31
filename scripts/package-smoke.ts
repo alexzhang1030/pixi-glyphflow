@@ -40,10 +40,12 @@ try {
 const layer = new TextLayer();
 const id = layer.create({ text: "package smoke", x: 12, y: 24 });
 layer.updateLabel(id, { text: "package smoke passed" });
+layer.updateTransforms(new Float64Array([id]), new Float32Array([32, 48]), new Float32Array([0.5]));
 const revision = await layer.commit();
 const snapshot = layer.get(id);
 
-if (Number(revision) !== 1 || snapshot?.text !== "package smoke passed") {
+if (Number(revision) !== 1 || snapshot?.text !== "package smoke passed" ||
+    snapshot.x !== 32 || snapshot.y !== 48 || snapshot.rotation !== 0.5) {
   throw new Error("Packed package smoke test failed");
 }
 

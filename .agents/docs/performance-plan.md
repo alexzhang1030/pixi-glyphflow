@@ -286,7 +286,7 @@ GO.
 `culling.residency: "gpu-scene"` is an explicit opt-in with `"viewport"` as the default. The
 supported lane requires WebGPU compute, a storage palette, sufficient device limits, collision
 disabled, and at most 64 effective-visible rendered prototypes crossed with 8 canonical paints
-across 512 typed columns. Labels use fill-only unit transforms, zero anchors/z, alpha 1, normal
+across 512 typed columns. Labels use fill-only unit scale with per-label rotation, zero anchors/z, alpha 1, normal
 blend, and dense monotonic setup slots. Capability and eligibility failures retain viewport
 residency with one stable public fallback reason.
 
@@ -297,6 +297,10 @@ contiguous active position wave submits one dense 8-byte exact-f32 `x`/`y` comma
 12-byte `slot`/`x`/`y` commands with the same header. The fused palette pass writes transform origins
 and record AABBs before compute culling. CPU spatial rebucketing stays in a typed deferred journal
 until a CPU query or fallback consumes it.
+
+The [rigid-transform and layout delta checkpoint](#rigid-transform-and-layout-delta-checkpoint-2026-08-31)
+extends this ABI and resident mutation contract. The promotion artifacts below retain their
+original position-only workload and build identity.
 
 The current promotion proof uses five independent schema 7 formal runs and one schema 4 aggregate:
 
@@ -702,6 +706,51 @@ Version snapshot: Mapbox GL JS main manifest 3.29.0; MapLibre GL JS main manifes
 Execution priority is R1 Heterogeneous GPU Scene, then R2 Revisioned Scene WAL, then R3
 Skia-tier Router. R4 and R5 retain independent continuity and sparse-path laboratories with their
 own output and sustained-frame gates.
+
+#### Rigid-transform and layout delta checkpoint (2026-08-31)
+
+The opt-in GPU scene accepts per-label rotation, compact position/rotation waves, and bounded
+text/layout rebinding. `TextLayer.updateTransforms(ids, xy, rotations)` validates typed columns
+transactionally and stores radians in the existing binary16 angle column. Dense position commands
+remain 8 bytes; dense rigid commands use 12 bytes; indexed commands add a 4-byte slot. Every wave
+has a 16-byte header. The fused compute pass patches palette transforms and rotated four-corner
+AABBs together; steady position/rotation waves upload zero structural cull-record bytes.
+
+Text, explicit newlines, wrap width, and writing-mode changes compile a `rebind` revision over
+existing label slots. Immutable prototype geometry occupies independent arena slots, preserving
+labels that still reference an older layout. The compiler retains at most 64 candidate layouts,
+64 exact prototypes, and 8 canonical paints over its lifetime. Capacity or eligibility overflow
+uses the existing viewport recovery path. A full acknowledged Scene WAL, checkpoint retirement,
+and the R4 product integration gate remain scheduled separately.
+
+Verification is reproducible with `bun test`, `bunx playwright test
+tests/browser/gpu-transform-layout.pw.ts`, and `tests/browser/gpu-scene-reference.pw.ts`.
+The new fixture compares single/run/heterogeneous resident pixels with the general renderer across
+rotation, position, wrap, explicit newline, vertical writing, and offscreen return. Its sustained
+case records 120 frames per phase, actual indirect submitted glyph counts, accepted upload bytes,
+and optional GPU timestamps. Unit coverage includes overlapping commits, failed uploads, aborted
+frames, device replacement, and structural dirty bands overlapping deferred movers.
+
+Local diagnostic workload: serve `tests/browser/gpu-transform-layout.html` with
+`?stress=1&labels=1000000&movers=100000&frames=120`. The 1280×800 fixture submits every label;
+the wrap phase mutates 1,000 labels and submits 1,001,000 glyphs. On the local Apple/Metal WebGPU
+adapter, the final timestamp-instrumented run measured:
+
+| Phase | Whole-frame p95 | Commit p95 | Scene GPU p95 | Accepted per-frame uploads |
+| --- | --- | --- | --- | --- |
+| Position, 100k movers | 42.2 ms | 0.4 ms | 29.95 ms | 800,016 transform bytes; 0 cull-record bytes |
+| Position + rotation, 100k movers | 57.1 ms | 13.9 ms | 30.02 ms | 1,200,016 transform bytes; 0 cull-record bytes |
+| Wrap, 1k rebindings | 41.2 ms | 1.8 ms | 29.95 ms | 0 transform-command bytes; 32,000 cull-record bytes |
+
+The preceding wrap run spent 10.9 ms p95 in commit; two later runs measured 1.7–1.8 ms. A record-reconciliation flag reduces repeated
+work while preserving the pending spatial-query journal. These development diagnostics use serial
+GPU completion/readback and a densely overlapping million-visible workload; formal sealed
+50k-visible artifact budgets retain their own measurement and promotion contract. Million-visible
+60 Hz remains open, with measured GPU draw cost already above the 16.67 ms frame budget.
+
+Current branch gates: `bun run check` passes 956 tests and package validation; the complete browser
+matrix passes 28 cases. `bun run benchmark:check` rejects seven sealed artifacts whose build
+fingerprints precede this implementation. Refreshing that formal evidence remains a release gate.
 
 #### R4 map-symbol continuity checkpoint — 2026-08-30
 

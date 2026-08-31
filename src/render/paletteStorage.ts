@@ -1,4 +1,5 @@
 import { CULL_RECORD_STRIDE, planComputeCullStorageBytes } from "../culling/computeCull";
+import { packHalf2x16, unpackF16 } from "./pack";
 
 export type PalettePath = "texture" | "storage";
 
@@ -6,7 +7,8 @@ export type PalettePath = "texture" | "storage";
 export const PALETTE_ORIGIN_FLOATS = 8;
 export const PALETTE_PATCH_WORKGROUP = 256;
 
-export type PaletteMoveMode = "dense" | "indexed";
+export type PalettePositionMoveMode = "dense" | "indexed";
+export type PaletteMoveMode = PalettePositionMoveMode | "dense-transform" | "indexed-transform";
 
 /** Dense exact-f32 move command: x, y. The 16-byte header supplies the first slot. */
 export const PALETTE_DENSE_MOVE_STRIDE = 8;
@@ -17,6 +19,14 @@ export const PALETTE_INDEXED_MOVE_STRIDE = 12;
 /** Frozen indexed mover ABI alias retained for existing internal callers and historical evidence. */
 export const PALETTE_MOVE_STRIDE: number = PALETTE_INDEXED_MOVE_STRIDE;
 export const PALETTE_MOVE_WORDS: number = PALETTE_MOVE_STRIDE / Uint32Array.BYTES_PER_ELEMENT;
+/** Dense transform command: exact-f32 x/y and packed binary16 sin/cos. */
+export const PALETTE_DENSE_TRANSFORM_MOVE_STRIDE = 12;
+export const PALETTE_DENSE_TRANSFORM_MOVE_WORDS: number =
+  PALETTE_DENSE_TRANSFORM_MOVE_STRIDE / Uint32Array.BYTES_PER_ELEMENT;
+/** Indexed transform command: slot, exact-f32 x/y, and packed binary16 sin/cos. */
+export const PALETTE_INDEXED_TRANSFORM_MOVE_STRIDE = 16;
+export const PALETTE_INDEXED_TRANSFORM_MOVE_WORDS: number =
+  PALETTE_INDEXED_TRANSFORM_MOVE_STRIDE / Uint32Array.BYTES_PER_ELEMENT;
 export const PALETTE_MOVE_UNIFORM_BYTES = 16;
 /** Shared resident local bounds: x, y, width, height. */
 export const RESIDENT_LOCAL_BOUNDS_STRIDE = 16;
@@ -52,7 +62,20 @@ export interface PaletteIndexedMoveUpload extends PaletteMoveUploadBase {
   readonly mode: "indexed";
 }
 
-export type PaletteMoveUpload = PaletteDenseMoveUpload | PaletteIndexedMoveUpload;
+export interface PaletteDenseTransformMoveUpload extends PaletteMoveUploadBase {
+  readonly mode: "dense-transform";
+  readonly baseSlot: number;
+}
+
+export interface PaletteIndexedTransformMoveUpload extends PaletteMoveUploadBase {
+  readonly mode: "indexed-transform";
+}
+
+export type PaletteMoveUpload =
+  | PaletteDenseMoveUpload
+  | PaletteIndexedMoveUpload
+  | PaletteDenseTransformMoveUpload
+  | PaletteIndexedTransformMoveUpload;
 
 interface ResidentPaletteMoveReferenceBase {
   readonly transforms: Float32Array;
@@ -147,6 +170,12 @@ export function residentLocalBoundsBytes(count: number): number {
   return count * RESIDENT_LOCAL_BOUNDS_STRIDE;
 }
 
+/** Exact packed rotation shared by CPU setup, compact commands, culling, and vertex transforms. */
+export function packResidentRotation(rotation: number): number {
+  if (rotation === 0) return 0x3c00_0000;
+  return packHalf2x16(Math.fround(Math.sin(rotation)), Math.fround(Math.cos(rotation)));
+}
+
 /** Write one absolute AABB with the same left-associated f32 additions as WGSL. */
 export function writeResidentAabbF32(
   records: Float32Array,
@@ -164,6 +193,52 @@ export function writeResidentAabbF32(
   records[base + 1] = minY;
   records[base + 2] = Math.fround(minX + Math.fround(width));
   records[base + 3] = Math.fround(minY + Math.fround(height));
+}
+
+/** Write a rotated absolute AABB from the packed sin/cos consumed by the resident vertex shader. */
+export function writeResidentRotatedAabbF32(
+  records: Float32Array,
+  base: number,
+  x: number,
+  y: number,
+  localX: number,
+  localY: number,
+  width: number,
+  height: number,
+  packedRotation: number,
+): void {
+  const sin = unpackF16(packedRotation);
+  const cos = unpackF16(packedRotation >>> 16);
+  if (sin === 0 && cos === 1) {
+    writeResidentAabbF32(records, base, x, y, localX, localY, width, height);
+    return;
+  }
+  const left = Math.fround(localX);
+  const top = Math.fround(localY);
+  const right = Math.fround(left + Math.fround(width));
+  const bottom = Math.fround(top + Math.fround(height));
+  const originX = Math.fround(x);
+  const originY = Math.fround(y);
+  const leftCos = Math.fround(left * cos);
+  const leftSin = Math.fround(left * sin);
+  const rightCos = Math.fround(right * cos);
+  const rightSin = Math.fround(right * sin);
+  const topCos = Math.fround(top * cos);
+  const topSin = Math.fround(top * sin);
+  const bottomCos = Math.fround(bottom * cos);
+  const bottomSin = Math.fround(bottom * sin);
+  const x0 = Math.fround(originX + Math.fround(leftCos - topSin));
+  const y0 = Math.fround(originY + Math.fround(leftSin + topCos));
+  const x1 = Math.fround(originX + Math.fround(rightCos - topSin));
+  const y1 = Math.fround(originY + Math.fround(rightSin + topCos));
+  const x2 = Math.fround(originX + Math.fround(rightCos - bottomSin));
+  const y2 = Math.fround(originY + Math.fround(rightSin + bottomCos));
+  const x3 = Math.fround(originX + Math.fround(leftCos - bottomSin));
+  const y3 = Math.fround(originY + Math.fround(leftSin + bottomCos));
+  records[base] = Math.min(x0, x1, x2, x3);
+  records[base + 1] = Math.min(y0, y1, y2, y3);
+  records[base + 2] = Math.max(x0, x1, x2, x3);
+  records[base + 3] = Math.max(y0, y1, y2, y3);
 }
 
 /** Host reference for the fused palette-origin and absolute resident-AABB patch. */
@@ -186,19 +261,31 @@ export function applyResidentPaletteMoves(
   const recordUints = new Uint32Array(input.records);
   const commandUints = new Uint32Array(input.commands);
   const commandFloats = new Float32Array(input.commands);
+  const transformUints = new Uint32Array(
+    input.transforms.buffer,
+    input.transforms.byteOffset,
+    input.transforms.length,
+  );
   const transformCapacity = Math.floor(input.transforms.length / PALETTE_ORIGIN_FLOATS);
   let transformsPatched = 0;
   let recordsPatched = 0;
   for (let index = 0; index < input.count; index += 1) {
-    const dense = input.mode === "dense";
-    const commandBase = index * (dense ? PALETTE_DENSE_MOVE_WORDS : PALETTE_MOVE_WORDS);
+    const dense = input.mode === "dense" || input.mode === "dense-transform";
+    const transform = input.mode === "dense-transform" || input.mode === "indexed-transform";
+    const commandBase = index * paletteMoveWords(input.mode);
     const slot = dense ? input.baseSlot + index : (commandUints[commandBase] ?? 0);
     const x = commandFloats[commandBase + (dense ? 0 : 1)] ?? 0;
     const y = commandFloats[commandBase + (dense ? 1 : 2)] ?? 0;
+    const rotation = transform ? (commandUints[commandBase + (dense ? 2 : 3)] ?? 0) : undefined;
+    let packedRotation = 0;
     if (slot < transformCapacity) {
       const transformBase = slot * PALETTE_ORIGIN_FLOATS;
       input.transforms[transformBase] = x;
       input.transforms[transformBase + 1] = y;
+      if (rotation !== undefined) {
+        transformUints[transformBase + 4] = rotation;
+      }
+      packedRotation = transformUints[transformBase + 4] ?? 0;
       transformsPatched += 1;
     }
     if (slot >= input.recordCount) continue;
@@ -210,7 +297,17 @@ export function applyResidentPaletteMoves(
     const localY = input.localBounds[boundsBase + 1] ?? 0;
     const width = input.localBounds[boundsBase + 2] ?? 0;
     const height = input.localBounds[boundsBase + 3] ?? 0;
-    writeResidentAabbF32(recordFloats, recordBase, x, y, localX, localY, width, height);
+    writeResidentRotatedAabbF32(
+      recordFloats,
+      recordBase,
+      x,
+      y,
+      localX,
+      localY,
+      width,
+      height,
+      packedRotation,
+    );
     recordsPatched += 1;
   }
   return Object.freeze({ transformsPatched, recordsPatched, cullRecordUploadBytes: 0 });
@@ -375,19 +472,30 @@ export function applyPaletteMoves(data: Float32Array, move: Readonly<PaletteMove
   assertMoveRange(move);
   const uints = new Uint32Array(move.commands);
   const floats = new Float32Array(move.commands);
+  const dataUints = new Uint32Array(data.buffer, data.byteOffset, data.length);
   const floatsPerLabel = PALETTE_ORIGIN_FLOATS;
   let written = 0;
   for (let index = 0; index < move.count; index += 1) {
-    const dense = move.mode === "dense";
-    const base = index * (dense ? PALETTE_DENSE_MOVE_WORDS : PALETTE_MOVE_WORDS);
+    const dense = move.mode === "dense" || move.mode === "dense-transform";
+    const transform = move.mode === "dense-transform" || move.mode === "indexed-transform";
+    const base = index * paletteMoveWords(move.mode);
     const slot = dense ? move.baseSlot + index : (uints[base] ?? 0);
     const offset = slot * floatsPerLabel;
-    if (offset + 1 >= data.length) continue;
+    if (offset + (transform ? 4 : 1) >= data.length) continue;
     const nextX = floats[base + (dense ? 0 : 1)] ?? 0;
     const nextY = floats[base + (dense ? 1 : 2)] ?? 0;
-    if (data[offset] === nextX && data[offset + 1] === nextY) continue;
+    const rotation = transform ? (uints[base + (dense ? 2 : 3)] ?? 0) : undefined;
+    const rotationBits = rotation === undefined ? (dataUints[offset + 4] ?? 0) : rotation;
+    if (
+      data[offset] === nextX &&
+      data[offset + 1] === nextY &&
+      (!transform || dataUints[offset + 4] === rotationBits)
+    ) {
+      continue;
+    }
     data[offset] = nextX;
     data[offset + 1] = nextY;
+    if (transform) dataUints[offset + 4] = rotationBits;
     written += 1;
   }
   return written;
@@ -421,11 +529,19 @@ function paletteMoveStride(mode: PaletteMoveMode): number {
       return PALETTE_DENSE_MOVE_STRIDE;
     case "indexed":
       return PALETTE_INDEXED_MOVE_STRIDE;
+    case "dense-transform":
+      return PALETTE_DENSE_TRANSFORM_MOVE_STRIDE;
+    case "indexed-transform":
+      return PALETTE_INDEXED_TRANSFORM_MOVE_STRIDE;
     default: {
       const _exhaustive: never = mode;
       throw new TypeError(`Unsupported palette move mode: ${String(_exhaustive)}`);
     }
   }
+}
+
+function paletteMoveWords(mode: PaletteMoveMode): number {
+  return paletteMoveStride(mode) / Uint32Array.BYTES_PER_ELEMENT;
 }
 
 function assertMoveCount(count: number): void {
@@ -439,7 +555,7 @@ function assertMoveRange(move: Readonly<PaletteMoveUpload>): void {
     throw new TypeError("palette move commands must be an ArrayBuffer");
   }
   assertMoveCount(move.count);
-  if (move.mode !== "dense") return;
+  if (move.mode !== "dense" && move.mode !== "dense-transform") return;
   if (!Number.isSafeInteger(move.baseSlot) || move.baseSlot < 0 || move.baseSlot > 0xffff_ffff) {
     throw new TypeError("dense palette move baseSlot must be a uint32 safe integer");
   }

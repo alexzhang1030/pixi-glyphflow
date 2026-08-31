@@ -409,12 +409,15 @@ storage budgets stay until a human accepts new numbers.
 
 - Reserve the expected label capacity.
 - Reuse `Float64Array` IDs and `Float32Array` position buffers.
-- Use `updatePositions` for movement and `updateTextPositions` for counter-style streams.
+- Use `updatePositions` for movement, `updateTransforms` for positions plus rotation, and
+  `updateTextPositions` for counter-style streams.
 - Keep viewport culling enabled for large worlds.
 - Leave `computeCull` at `"auto"` for WebGPU camera workloads. Set it to `false` to force the
   WebGL-compatible CPU grid.
 - Keep `culling.residency` at its `"viewport"` default for general scenes. Select `"gpu-scene"`
-  for the documented uniform fill-only scene and verify `stats.residencyActive` after setup.
+  for the documented bounded fill-only scene and verify `stats.residencyActive` after setup and
+  layout edits. Resident rotation uses 12-byte dense or 16-byte indexed fused commands; wrap,
+  newline, and writing-flow edits rebind shared prototypes within the retained 64/8 capacity.
 - Pass `requestComputeCullGpu()` into `Application.init({ gpu })` so compute cull can bind
   instance storage larger than the 128 MiB WebGPU default, and so the vertex stage can bind
   the palette storage buffer. WebGL and devices without vertex storage keep the texture

@@ -5,10 +5,44 @@ import {
   TRANSFORM_PALETTE_STRIDE,
   TransformPalette,
 } from "../src/advanced";
-import { bitsFromFloat, unpackHalf2x16 } from "../src/render/pack";
+import { bitsFromFloat, packF16, unpackHalf2x16 } from "../src/render/pack";
+import { packResidentRotation } from "../src/render/paletteStorage";
 import { canonicalFillPaint } from "../src/render/TransformPalette";
 
 describe("TransformPalette", () => {
+  test("restores canonical rotations from authoritative columns on a device rebuild", () => {
+    const palette = new TransformPalette({ initialCapacity: 2, textureWidth: 4 });
+    const slots = new Uint32Array([0, 1]);
+    palette.writeCanonicalFills(
+      slots,
+      2,
+      new Float32Array([10, 20, 30, 40]),
+      canonicalFillPaint(0x123456),
+      new Float32Array([0.5, -0.5]),
+    );
+    palette.consumeDirty();
+    palette.refreshOrigins(
+      new Float32Array([50, 60]),
+      new Float32Array([70, 80]),
+      new Uint16Array([packF16(1), packF16(-1)]),
+    );
+    const words = new Uint32Array(palette.data.buffer);
+    expect([words[4], words[12]]).toEqual([packResidentRotation(1), packResidentRotation(-1)]);
+    expect([palette.data[0], palette.data[1], palette.data[8], palette.data[9]]).toEqual([
+      50, 70, 60, 80,
+    ]);
+    expect(palette.consumeDirty()).toEqual([]);
+    palette.writeRigidTransforms(
+      slots,
+      2,
+      new Float32Array([1, 2, 3, 4]),
+      new Float32Array([0, 0.5]),
+    );
+    expect([words[4], words[12]]).toEqual([packResidentRotation(0), packResidentRotation(0.5)]);
+    expect(palette.consumeDirty()).toEqual([{ offset: 0, length: 64 }]);
+    palette.destroy();
+  });
+
   test("stores a 32-byte fill-only record with packed rotation and color", () => {
     const palette = new TransformPalette({ initialCapacity: 2, textureWidth: 4 });
     const changed = palette.set(1, fillTransform(), { width: 40, height: 10 });

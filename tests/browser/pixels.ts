@@ -55,7 +55,7 @@ export async function measureCanvasPixelProfile(
   return profileRows(image.data, width, height, width * 4);
 }
 
-async function readTargetPixels(
+export async function readTargetPixels(
   app: Application,
   target: Container,
   width: number,

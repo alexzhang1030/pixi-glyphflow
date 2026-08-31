@@ -4,7 +4,7 @@ import {
   PALETTE_DENSE_MOVE_WORDS,
   PALETTE_MOVE_STRIDE,
   PALETTE_MOVE_WORDS,
-  type PaletteMoveMode,
+  type PalettePositionMoveMode,
 } from "../render/paletteStorage";
 import type { TextId } from "../types";
 import { assertBlendMode, decodeBlendMode, encodeBlendMode } from "./blendModes";
@@ -76,7 +76,7 @@ export interface TextStoreResidentPositionStats {
 }
 
 interface ResidentPositionStorage {
-  mode: PaletteMoveMode;
+  mode: PalettePositionMoveMode;
   baseSlot: number;
   capacity: number;
   readonly commands: ArrayBuffer;
@@ -279,7 +279,7 @@ export class TextStore {
    *
    * @internal
    */
-  admitLaneAt(slot: number): boolean {
+  admitLaneAt(slot: number, allowRotation = false): boolean {
     if (slot >= this.#highWater || !this.#occupied(slot)) return false;
     if (!this.#visible(slot) || (this.#zIndex[slot] ?? 0) !== 0) return false;
     if ((this.#blendModes[slot] ?? 0) !== BLEND_NORMAL) return false;
@@ -288,7 +288,8 @@ export class TextStore {
     if (
       this.#scaleX[slot] !== F16_ONE ||
       this.#scaleY[slot] !== F16_ONE ||
-      this.#rotation[slot] !== F16_ZERO
+      ((this.#rotation[slot] ?? 0) & 0x7c00) === 0x7c00 ||
+      (!allowRotation && this.#rotation[slot] !== F16_ZERO)
     ) {
       return false;
     }
@@ -356,12 +357,24 @@ export class TextStore {
     return this.#y;
   }
 
+  /** Live binary16 rotation column for resident reconciliation and device recovery. @internal */
+  get rotationColumn(): Uint16Array {
+    return this.#rotation;
+  }
+
   /** Copy x/y columns for a slot list into packed pairs without snapshots. @internal */
   positionsInto(slots: Uint32Array, count: number, xy: Float32Array): void {
     for (let index = 0; index < count; index += 1) {
       const slot = slots[index] ?? 0;
       xy[index * 2] = this.#x[slot] ?? 0;
       xy[index * 2 + 1] = this.#y[slot] ?? 0;
+    }
+  }
+
+  /** Copy decoded rotations for a slot list without snapshots. @internal */
+  rotationsInto(slots: Uint32Array, count: number, rotations: Float32Array): void {
+    for (let index = 0; index < count; index += 1) {
+      rotations[index] = readF16(this.#rotation, slots[index] ?? 0);
     }
   }
 
@@ -583,7 +596,7 @@ export class TextStore {
         current?.mode === "dense" &&
         denseSource &&
         firstChangedSlot === current.baseSlot + current.count;
-      const mode: PaletteMoveMode =
+      const mode: PalettePositionMoveMode =
         denseSource && (current === undefined || current.count === 0 || canExtendDense)
           ? "dense"
           : "indexed";
@@ -631,6 +644,56 @@ export class TextStore {
 
     if (captureResidentPositions && changed > 0) residentBatchVisitor?.(slots, changed);
 
+    return changed;
+  }
+
+  /** Apply validated rigid transforms through typed columns; rotations use radians. @internal */
+  updateTransforms(
+    ids: readonly TextId[] | Float64Array,
+    positions: Float32Array | Float64Array,
+    rotations: Float32Array | Float64Array,
+    visitor?: (slot: number) => void,
+    preflight?: (slots: Uint32Array, count: number) => void,
+    batchVisitor?: (slots: Uint32Array, count: number) => void,
+  ): number {
+    if (positions.length !== ids.length * 2 || rotations.length !== ids.length) {
+      throw new TypeError("transforms must contain one x/y pair and rotation per TextId");
+    }
+    if (this.#positionSlots.length < ids.length) {
+      this.#positionSlots = new Uint32Array(nextPowerOfTwo(ids.length));
+    }
+    const slots = this.#positionSlots;
+    for (let index = 0; index < ids.length; index += 1) {
+      const id = ids[index];
+      if (id === undefined) throw new TypeError(`Missing TextId at index ${String(index)}`);
+      slots[index] = this.#requireSlot(id as TextId);
+      const x = Math.fround(positions[index * 2] ?? Number.NaN);
+      const y = Math.fround(positions[index * 2 + 1] ?? Number.NaN);
+      const rotation = unpackF16(packF16(rotations[index] ?? Number.NaN));
+      if (!Number.isFinite(x) || !Number.isFinite(y) || !Number.isFinite(rotation)) {
+        throw new TypeError(
+          `Transform at index ${String(index)} must fit finite f32 x/y and binary16 rotation`,
+        );
+      }
+    }
+    preflight?.(slots, ids.length);
+    let changed = 0;
+    for (let index = 0; index < ids.length; index += 1) {
+      const slot = slots[index]!;
+      const x = Math.fround(positions[index * 2]!);
+      const y = Math.fround(positions[index * 2 + 1]!);
+      const rotation = packF16(rotations[index]!);
+      const rotated = rotation !== this.#rotation[slot];
+      if (x === this.#x[slot] && y === this.#y[slot] && !rotated) continue;
+      this.#x[slot] = x;
+      this.#y[slot] = y;
+      this.#rotation[slot] = rotation;
+      this.#markTransformKind(slot, rotated ? FULL_TRANSFORM : POSITION_ONLY);
+      this.#journal.record(slot, TextDirty.Transform);
+      visitor?.(slot);
+      slots[changed++] = slot;
+    }
+    if (changed > 0) batchVisitor?.(slots, changed);
     return changed;
   }
 
@@ -976,7 +1039,11 @@ export class TextStore {
     this.#journal.dispose();
   }
 
-  #ensureResidentPositionCapacity(required: number, mode: PaletteMoveMode, baseSlot: number): void {
+  #ensureResidentPositionCapacity(
+    required: number,
+    mode: PalettePositionMoveMode,
+    baseSlot: number,
+  ): void {
     if (this.#residentPositionIndices.length < this.#capacity) {
       this.#residentPositionIndices = resizeTypedArray(
         this.#residentPositionIndices,
@@ -1295,7 +1362,7 @@ export class TextStore {
   }
 }
 
-function residentMoveStride(mode: PaletteMoveMode): number {
+function residentMoveStride(mode: PalettePositionMoveMode): number {
   return mode === "dense" ? PALETTE_DENSE_MOVE_STRIDE : PALETTE_MOVE_STRIDE;
 }
 

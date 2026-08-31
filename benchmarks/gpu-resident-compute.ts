@@ -326,10 +326,13 @@ async function runFusedMoveProbe(
       96,
       GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_SRC,
       "fused-move-transforms",
-      (range) =>
+      (range) => {
         new Float32Array(range).set([
           0, 0, 1, 0, 0, 1, 0, 1, 10, 20, 1, 0, 0, 1, 0, 1, 0, 0, 1, 0, 0, 1, 0, 1,
-        ]),
+        ]);
+        const words = new Uint32Array(range);
+        words[4] = words[12] = words[20] = 0x3c00_0000; // Packed sin(0), cos(0).
+      },
     );
     const records = createMappedBuffer(
       device,
