@@ -158,6 +158,8 @@ export interface AdmitLaneGroup {
 export interface ResidentAdmitLaneGroup extends AdmitLaneGroup {
   readonly zIndex: number;
   readonly blendMode: BLEND_MODES;
+  readonly rotations?: Float32Array;
+  readonly layout?: Readonly<TextLayoutOptions>;
   /** Pre-layout geometry candidate assigned by the bounded GPU-scene compiler. */
   readonly prototypeCandidateIndex?: number;
 }
@@ -171,6 +173,7 @@ export interface ResidentAdmitLaneResult extends RenderCommitResult {
 }
 
 export interface ResidentAdmitLaneOptions {
+  readonly mode?: "append" | "rebind";
   /** Complete-scene device capacity check, called after layout and before raster/atlas work. */
   readonly capacityFits?: (recordCount: number, drawInstanceCount: number) => boolean;
 }
@@ -279,6 +282,7 @@ export class RenderCoordinator {
   readonly #slotAtlasKeys = new Map<number, readonly GlyphCacheKey[]>();
   readonly #atlasKeyRefs = new Map<GlyphCacheKey, number>();
   readonly #residentPrototypeSlots = new Set<number>();
+  #nextResidentPrototypeSlot = 0;
   #residentCompiler: GpuSceneCompiler | undefined;
   #pendingAtlasCommit: Readonly<AtlasCommit> | undefined;
   readonly #pendingAtlasPins: GlyphCacheKey[] = [];
@@ -737,7 +741,7 @@ export class RenderCoordinator {
     for (let index = 0; index < groups.length; index += 1) {
       const group = groups[index];
       if (group === undefined || group.count <= 0) continue;
-      const pair = sceneCompiler.admitCandidate(group.text, group.style);
+      const pair = sceneCompiler.admitCandidate(group.text, group.style, group.layout);
       if (pair === undefined) return undefined;
       const prototypeCandidateIndex = Math.floor(pair / GPU_SCENE_MAX_PAINTS);
       if (
@@ -783,6 +787,7 @@ export class RenderCoordinator {
             group.slots[0] ?? 0,
             scope,
             group.projectedHeightPx,
+            group.layout,
           ),
         ),
       );
@@ -849,11 +854,13 @@ export class RenderCoordinator {
           slots: item.group.slots,
           count: item.group.count,
           xy: item.group.xy,
+          ...(item.group.rotations === undefined ? {} : { rotations: item.group.rotations }),
           orders: item.group.orders,
           run: item.run,
           rasterIdentity: this.#residentRasterIdentity(item.run, item.snapshot),
           paint: canonicalFillPaint(item.group.style.fill),
         })),
+        options.mode ?? "append",
       );
       if (compiled.status === "unsupported") {
         this.#discardAtlas(scope);
@@ -911,6 +918,7 @@ export class RenderCoordinator {
           slots: column.slots,
           count: column.count,
           xy: column.xy,
+          ...(column.rotations === undefined ? {} : { rotations: column.rotations }),
           orders: column.orders,
           localBounds: binding.localBounds,
           prototypeId: binding.prototypeId,
@@ -924,6 +932,7 @@ export class RenderCoordinator {
           column.count,
           column.xy,
           sceneCompiler.paint(column.paintIndex),
+          column.rotations,
         );
       }
       this.#lastInstanceWriteMs = performance.now() - writeStart;
@@ -937,7 +946,7 @@ export class RenderCoordinator {
       this.#acceptAtlasCommit();
       this.#shapedLabels += sourceColumns.length;
       this.#appliedLabels += scenePlan.recordCount;
-      this.#residentLabels += scenePlan.recordCount;
+      if (scenePlan.mode === "append") this.#residentLabels += scenePlan.recordCount;
       this.#revisions += 1;
       this.#drawRebuildPending = false;
       return result;
@@ -1403,18 +1412,22 @@ export class RenderCoordinator {
     slotHint: number,
     scope: Readonly<RenderTokenScope>,
     projectedHeightPx?: number,
+    layout?: Readonly<TextLayoutOptions>,
   ):
     | Readonly<PreparedSharedColumn>
     | Promise<Readonly<PreparedSharedColumn> | undefined>
     | undefined {
-    const snapshot = contentLaneSnapshot(text, style, projectedHeightPx);
+    const snapshot = {
+      ...contentLaneSnapshot(text, style, projectedHeightPx),
+      ...(layout === undefined ? {} : { layout }),
+    };
     const interned = this.#lookupIntern(snapshot);
     if (interned !== undefined) {
       return isPromise(interned)
         ? interned.then((run) => this.#finishSharedLayout(run, snapshot, scope))
         : this.#finishSharedLayout(interned, snapshot, scope);
     }
-    const laidOut = this.#layout.layout(slotHint, 1, { text, style });
+    const laidOut = this.#layout.layout(slotHint, 1, { text, style, ...layout });
     this.#storeIntern(snapshot, laidOut);
     if (isPromise(laidOut)) {
       return laidOut.then((run) => {
@@ -1539,8 +1552,11 @@ export class RenderCoordinator {
         ? interned
         : undefined;
     if (slot === undefined) {
-      slot = item.group.slots[0];
-      if (slot === undefined) throw new Error("Resident admit slot list is incomplete");
+      while (this.instances.getRange(this.#nextResidentPrototypeSlot) !== undefined) {
+        this.#nextResidentPrototypeSlot += 1;
+      }
+      slot = this.#nextResidentPrototypeSlot++;
+      this.transforms.reserve(slot + 1);
       this.#writeInstances(slot, item.run, item.snapshot, item.ownedRun, variantKey);
     }
     const range = this.instances.getRange(slot);
@@ -2050,7 +2066,9 @@ export function residentAdmitLaneEligible(
       !(group.orders instanceof Uint32Array) ||
       group.count > group.slots.length ||
       group.count > group.orders.length ||
-      group.count * 2 > group.xy.length
+      group.count * 2 > group.xy.length ||
+      (group.rotations !== undefined &&
+        (!(group.rotations instanceof Float32Array) || group.count > group.rotations.length))
     ) {
       return false;
     }

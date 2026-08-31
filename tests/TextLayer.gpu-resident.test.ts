@@ -6,6 +6,8 @@ import { TextLayer, type PositionedRun } from "../src";
 import { RenderCoordinator } from "../src/advanced";
 import { compactVisibleInstances } from "../src/culling/computeCull";
 import { GpuResidentScene } from "../src/render/GpuResidentScene";
+import { packF16, unpackF16 } from "../src/render/pack";
+import { packResidentRotation, writeResidentRotatedAabbF32 } from "../src/render/paletteStorage";
 import { RenderSurface } from "../src/render/RenderSurface";
 import { TextStore } from "../src/store/TextStore";
 import { TextDirty } from "../src/store/types";
@@ -1095,7 +1097,7 @@ describe("TextLayer GPU-resident scene", () => {
       expect(layer.hitTest({ x: 16_777_216, y: 1 })).toBe(id);
       expect(layer.hitTest({ x: 16_777_217, y: 1 })).toBeUndefined();
 
-      expect(layer.update(id, { text: "x" })).toBe(true);
+      expect(layer.update(id, { alpha: 0.5 })).toBe(true);
       await layer.commit();
       expect(layer.stats).toMatchObject({
         residencyActive: "viewport",
@@ -1119,7 +1121,9 @@ describe("TextLayer GPU-resident scene", () => {
       await layer.commit();
 
       expect(layer.updatePositions([id], new Float64Array([50.5, 60.25]))).toBe(1);
-      expect(layer.update(id, { text: "x", style: { fill: 0xff00ff, fontSize: 8 } })).toBe(true);
+      expect(
+        layer.update(id, { text: "x", alpha: 0.5, style: { fill: 0xff00ff, fontSize: 8 } }),
+      ).toBe(true);
       expect(layer.stats).toMatchObject({
         pendingDirtyLabels: 1,
         pendingDirtyMask: TextDirty.Content | TextDirty.Style | TextDirty.Transform,
@@ -1132,6 +1136,7 @@ describe("TextLayer GPU-resident scene", () => {
       });
 
       layer.detach();
+      layer.update(id, { alpha: 1 });
       layer.attach(fixture.renderer);
       await layer.commit();
       expect(layer.get(id)).toMatchObject({ text: "x", x: 50.5, y: 60.25 });
@@ -1580,7 +1585,7 @@ describe("TextLayer GPU-resident scene", () => {
       ]);
       const firstCommit = layer.commit();
       await waitFor(() => rasterStarted);
-      layer.update(ids[0]!, { text: "x" });
+      layer.update(ids[0]!, { text: "x", alpha: 0.5 });
       const fallbackCommit = layer.commit();
 
       releaseRaster();
@@ -1794,7 +1799,7 @@ describe("TextLayer GPU-resident scene", () => {
         sceneDestroy.call(this);
         throw sceneFailure;
       };
-      layer.update(id, { text: "x" });
+      layer.update(id, { text: "x", alpha: 0.5 });
 
       expect(() => layer.commit()).toThrow(sceneFailure);
       expect(sceneDestroyCalls).toBe(1);
@@ -1863,25 +1868,306 @@ describe("TextLayer GPU-resident scene", () => {
     }
   });
 
-  test("falls back when resident content changes", async () => {
+  test("rebinds resident content while retaining shared prototype geometry", async () => {
     const fixture = fakeResidentWebGpuRenderer();
     const restore = installFakeGpuGlobals();
     try {
-      const layer = createResidentLayer(fixture.renderer);
-      const id = layer.create({ text: "g", x: 1, y: 1 });
+      const layer = createHeterogeneousResidentLayer(fixture.renderer);
+      const id = layer.create({ text: "A", x: 1, y: 1 });
+      const unchanged = layer.create({ text: "A", x: 20, y: 20 });
       await layer.commit();
       expect(layer.stats.residencyActive).toBe("gpu-scene");
+      const setup = layer.stats;
 
-      layer.update(id, { text: "x" });
+      layer.update(id, { text: "B" });
       await layer.commit();
       expect(layer.stats).toMatchObject({
-        residencyActive: "viewport",
-        residencyFallbackReason: "unsupported-scene",
-        gpuResidentLabels: 0,
-        visibleLabelCount: 1,
+        residencyActive: "gpu-scene",
+        gpuResidentLabels: 2,
+        gpuScenePrototypeCount: 2,
+        visibleLabelCount: 2,
       });
+      expect(layer.getBoundsFor(id)).toMatchObject({ x: 4, y: 1, width: 8, height: 10 });
+      expect(layer.getBoundsFor(unchanged)).toMatchObject({ x: 20, y: 20, width: 8, height: 10 });
+      expect(layer.stats.cullRecordUploadBytes - setup.cullRecordUploadBytes).toBe(32);
+      const rebound = layer.stats;
+      layer.update(id, { text: "A" });
+      await layer.commit();
+      expect(layer.stats.gpuScenePrototypeCount).toBe(2);
+      expect(layer.stats.instanceUploadBytes).toBe(rebound.instanceUploadBytes);
+      expect(layer.getBoundsFor(id)).toMatchObject({ x: 1, y: 1, width: 8, height: 10 });
       layer.destroy();
     } finally {
+      restore();
+    }
+  });
+
+  test("keeps rotated labels resident across sparse positions and mixed rigid-transform waves", async () => {
+    const fixture = fakeResidentWebGpuRenderer();
+    const restore = installFakeGpuGlobals();
+    const layer = createResidentLayer(fixture.renderer);
+    try {
+      const ids = layer.createMany([
+        { text: "g", x: 20, y: 20, rotation: 0.25 },
+        { text: "g", x: 40, y: 40 },
+        { text: "g", x: 60, y: 60, rotation: -0.5 },
+      ]);
+      await layer.commit();
+      const setup = layer.stats;
+      expect(setup.residencyActive).toBe("gpu-scene");
+      expectRotatedBounds(layer, ids[0]!, RUN.bounds);
+      expectRotatedBounds(layer, ids[2]!, RUN.bounds);
+
+      layer.updatePositions([ids[0]!, ids[2]!], new Float32Array([25, 26, 65, 66]));
+      await layer.commit();
+      expect(layer.stats.transformUploadBytes - setup.transformUploadBytes).toBe(2 * 12 + 16);
+      expect(layer.stats.cullRecordUploadBytes).toBe(setup.cullRecordUploadBytes);
+      expectRotatedBounds(layer, ids[0]!, RUN.bounds);
+      expectRotatedBounds(layer, ids[2]!, RUN.bounds);
+
+      const before = layer.stats;
+      const writeStart = fixture.writes.length;
+      layer.updatePositions(ids, new Float32Array([30, 31, 50, 51, 70, 71]));
+      layer.update(ids[1]!, { rotation: 0.7 });
+      await layer.commit();
+      const command = fixture.writes
+        .slice(writeStart)
+        .find((write) => write.buffer.label === "pixi-glyphflow-palette-move-commands");
+      expect(command?.bytes.byteLength).toBe(3 * 12);
+      const words = new Uint32Array(command!.bytes.slice().buffer);
+      const floats = new Float32Array(words.buffer);
+      for (let index = 0; index < ids.length; index += 1) {
+        const label = layer.get(ids[index]!)!;
+        expect([floats[index * 3], floats[index * 3 + 1]]).toEqual([label.x, label.y]);
+        expect(words[index * 3 + 2]).toBe(packResidentRotation(label.rotation));
+        expectRotatedBounds(layer, ids[index]!, RUN.bounds);
+      }
+      expect(layer.stats).toMatchObject({
+        residencyActive: "gpu-scene",
+        gpuScenePrototypeCount: 1,
+      });
+      expect(layer.stats.transformUploadBytes - before.transformUploadBytes).toBe(3 * 12 + 16);
+      expect(layer.stats.cullRecordUploadBytes).toBe(before.cullRecordUploadBytes);
+      expect(layer.stats.instanceUploadBytes).toBe(before.instanceUploadBytes);
+
+      const sparseStart = fixture.writes.length;
+      layer.updateMany([
+        { id: ids[0]!, patch: { x: 35, rotation: -0.8 } },
+        { id: ids[2]!, patch: { y: 75, rotation: 1.2 } },
+      ]);
+      await layer.commit();
+      const sparse = fixture.writes
+        .slice(sparseStart)
+        .find((write) => write.buffer.label === "pixi-glyphflow-palette-move-commands");
+      expect(sparse?.bytes.byteLength).toBe(2 * 16);
+      expectRotatedBounds(layer, ids[0]!, RUN.bounds);
+      expectRotatedBounds(layer, ids[2]!, RUN.bounds);
+
+      expect(
+        layer.updateTransforms(
+          ids,
+          new Float32Array([25, 25, 50, 50, 75, 75]),
+          new Float32Array([0.25, 0.5, 0.75]),
+        ),
+      ).toBe(3);
+      expectRotatedBounds(layer, ids[0]!, RUN.bounds);
+      await layer.commit();
+      expect(layer.stats.residencyActive).toBe("gpu-scene");
+      expectRotatedBounds(layer, ids[2]!, RUN.bounds);
+    } finally {
+      layer.destroy();
+      restore();
+    }
+  });
+
+  test("recovers position and rotation together after a compact transform write failure", async () => {
+    const fixture = fakeResidentWebGpuRenderer();
+    const restore = installFakeGpuGlobals();
+    const layer = createResidentLayer(fixture.renderer);
+    try {
+      const id = layer.create({ text: "g", x: 10, y: 10 });
+      await layer.commit();
+      const writeStart = fixture.writes.length;
+      layer.update(id, { x: 50, y: 60, rotation: 0.75 });
+      fixture.controls.failNextPaletteMoveWrite = true;
+      await layer.commit();
+      const rotation = packResidentRotation(layer.get(id)!.rotation);
+      const restored = fixture.writes.slice(writeStart).some((write) => {
+        const floats = float32View(write.bytes);
+        const words = new Uint32Array(write.bytes.buffer, write.bytes.byteOffset, floats.length);
+        return floats[0] === 50 && floats[1] === 60 && words[4] === rotation;
+      });
+      expect(restored).toBe(true);
+      expect(layer.stats.residencyActive).toBe("viewport");
+      expectRotatedBounds(layer, id, RUN.bounds);
+      const bounds = layer.getBoundsFor(id)!;
+      expect(
+        layer.hitTest({ x: bounds.x + bounds.width / 2, y: bounds.y + bounds.height / 2 }),
+      ).toBe(id);
+    } finally {
+      layer.destroy();
+      restore();
+    }
+  });
+
+  for (const recovery of ["aborted-frame", "replacement-device"] as const) {
+    test(`restores packed rotation and cull bounds after ${recovery}`, async () => {
+      const fixture = fakeResidentWebGpuRenderer({ frameTransactions: true });
+      const replacement = fakeResidentWebGpuRenderer();
+      const restore = installFakeGpuGlobals();
+      const layer = createResidentLayer(fixture.renderer);
+      try {
+        const id = layer.create({ text: "g", x: 10, y: 10, rotation: 0.25 });
+        await layer.commit();
+        fixture.renderFrame();
+        layer.updateTransforms([id], new Float32Array([50, 60]), new Float32Array([0.75]));
+        await layer.commit();
+        if (recovery === "aborted-frame") {
+          fixture.controls.failNextFrameSubmit = true;
+          expect(() => fixture.renderFrame()).toThrow("injected resident frame submit failure");
+        } else {
+          fixture.renderFrame();
+          (fixture.renderer as unknown as { gpu: { device: GPUDevice } }).gpu.device = (
+            replacement.renderer as unknown as { gpu: { device: GPUDevice } }
+          ).gpu.device;
+        }
+        const writes = recovery === "aborted-frame" ? fixture.writes : replacement.writes;
+        const start = writes.length;
+        await layer.commit();
+        const rotation = packResidentRotation(layer.get(id)!.rotation);
+        expect(
+          writes.slice(start).some((write) => {
+            const floats = float32View(write.bytes);
+            const words = new Uint32Array(
+              write.bytes.buffer,
+              write.bytes.byteOffset,
+              floats.length,
+            );
+            return floats[0] === 50 && floats[1] === 60 && words[4] === rotation;
+          }),
+        ).toBe(true);
+        const records = writes
+          .slice(start)
+          .find((write) => write.buffer.label === "pixi-glyphflow-cull-records");
+        expect(records).toBeDefined();
+        const expected = new Float32Array(4);
+        writeResidentRotatedAabbF32(
+          expected,
+          0,
+          50,
+          60,
+          RUN.bounds.x,
+          RUN.bounds.y,
+          RUN.bounds.width,
+          RUN.bounds.height,
+          rotation,
+        );
+        expect(float32View(records!.bytes).subarray(0, 4)).toEqual(expected);
+        fixture.renderFrame();
+        expectRotatedBounds(layer, id, RUN.bounds);
+        expect(layer.stats.residencyActive).toBe("gpu-scene");
+      } finally {
+        layer.destroy();
+        restore();
+      }
+    });
+  }
+
+  test("publishes overlapping rigid transforms in commit order", async () => {
+    const fixture = fakeResidentWebGpuRenderer();
+    const restore = installFakeGpuGlobals();
+    const layer = createResidentLayer(fixture.renderer);
+    try {
+      const id = layer.create({ text: "g", x: 10, y: 10 });
+      await layer.commit();
+      const start = fixture.writes.length;
+      layer.updateTransforms([id], new Float32Array([20, 30]), new Float32Array([0.5]));
+      const first = layer.commit();
+      layer.updateTransforms([id], new Float32Array([40, 50]), new Float32Array([-0.75]));
+      const second = layer.commit();
+      await Promise.all([first, second]);
+      const commands = fixture.writes
+        .slice(start)
+        .filter((write) => write.buffer.label === "pixi-glyphflow-palette-move-commands");
+      expect(commands).toHaveLength(2);
+      for (const [index, [x, y, rotation]] of [
+        [20, 30, 0.5],
+        [40, 50, -0.75],
+      ].entries()) {
+        const bytes = commands[index]!.bytes.slice();
+        expect(Array.from(float32View(bytes).subarray(0, 2))).toEqual([x!, y!]);
+        expect(new Uint32Array(bytes.buffer)[2]).toBe(packResidentRotation(rotation!));
+      }
+      expectRotatedBounds(layer, id, RUN.bounds);
+      expect(layer.stats.pendingDirtyLabels).toBe(0);
+    } finally {
+      layer.destroy();
+      restore();
+    }
+  });
+
+  test("reuses bounded wrap and newline prototypes while moving and rotating labels", async () => {
+    const fixture = fakeResidentWebGpuRenderer();
+    const restore = installFakeGpuGlobals();
+    const seen: Array<{ text: string; width: unknown; writingMode: unknown }> = [];
+    const layer = new TextLayer({
+      renderer: fixture.renderer,
+      culling: residentCulling(),
+      rendering: {
+        layoutEngine: {
+          layout(_slot, _revision, input) {
+            seen.push({
+              text: input.text,
+              width: input.style.wordWrapWidth,
+              writingMode: input.writingMode,
+            });
+            return wrappedRun(input.text, Number(input.style.wordWrapWidth) || 32);
+          },
+          destroy() {},
+        },
+        glyphProvider: {
+          async rasterize() {
+            return alphaRaster();
+          },
+          destroy() {},
+        },
+        atlasOptions: { pageWidth: 32, pageHeight: 32, maxBytes: 4_096 },
+      },
+    });
+    try {
+      const ids = layer.createMany([
+        { text: "gggg", x: 10, y: 10, style: { wordWrap: true, wordWrapWidth: 32 } },
+        { text: "gggg", x: 50, y: 50, style: { wordWrap: true, wordWrapWidth: 32 } },
+      ]);
+      await layer.commit();
+      const before = layer.stats;
+      layer.updatePositions(ids, new Float32Array([20, 20, 60, 60]));
+      layer.update(ids[0]!, { rotation: 0.4, style: { wordWrap: true, wordWrapWidth: 16 } });
+      await layer.commit();
+      expect(layer.stats).toMatchObject({
+        residencyActive: "gpu-scene",
+        gpuResidentLabels: 2,
+        gpuScenePrototypeCount: 2,
+      });
+      expectRotatedBounds(layer, ids[0]!, { x: 0, y: 0, width: 16, height: 20 });
+      expect(layer.getBoundsFor(ids[1]!)).toMatchObject({ x: 60, y: 60, width: 32, height: 10 });
+      expect(layer.stats.cullRecordUploadBytes - before.cullRecordUploadBytes).toBe(32);
+      const wrapped = layer.stats;
+
+      layer.update(ids[0]!, { text: "gg\ngg", style: { wordWrap: true, wordWrapWidth: 32 } });
+      await layer.commit();
+      expect(layer.stats.gpuScenePrototypeCount).toBe(2);
+      expect(layer.stats.instanceUploadBytes).toBe(wrapped.instanceUploadBytes);
+      expect(seen).toContainEqual({ text: "gg\ngg", width: 32, writingMode: undefined });
+      expectRotatedBounds(layer, ids[0]!, { x: 0, y: 0, width: 16, height: 20 });
+
+      layer.update(ids[0]!, { text: "gggg", rotation: 0, layout: { writingMode: "vertical-rl" } });
+      await layer.commit();
+      expect(seen.at(-1)?.writingMode).toBe("vertical-rl");
+      expect(layer.stats.residencyActive).toBe("gpu-scene");
+      expect(layer.getBoundsFor(ids[0]!)).toMatchObject({ x: 20, y: 20, width: 32, height: 10 });
+    } finally {
+      layer.destroy();
       restore();
     }
   });
@@ -2257,6 +2543,63 @@ function repeatedRun(glyphCount: number): Readonly<PositionedRun> {
     lineIndices: new Uint32Array(glyphCount),
     bounds: Object.freeze({ x: 0, y: 0, width: glyphCount * 8, height: 10 }),
   });
+}
+
+function wrappedRun(text: string, wrapWidth: number): Readonly<PositionedRun> {
+  const run = repeatedRun(text.replaceAll("\n", "").length);
+  const glyphX = new Float32Array(run.glyphCount);
+  const glyphY = new Float32Array(run.glyphCount);
+  const lineIndices = new Uint32Array(run.glyphCount);
+  let index = 0;
+  let line = 0;
+  let x = 0;
+  let width = 0;
+  for (const char of text) {
+    if (char === "\n" || x >= wrapWidth) {
+      line += 1;
+      x = 0;
+    }
+    if (char === "\n") continue;
+    glyphX[index] = x;
+    glyphY[index] = 8 + line * 10;
+    lineIndices[index] = line;
+    x += 8;
+    width = Math.max(width, x);
+    index += 1;
+  }
+  return {
+    ...run,
+    text,
+    x: glyphX,
+    y: glyphY,
+    lineIndices,
+    bounds: { x: 0, y: 0, width, height: (line + 1) * 10 },
+  };
+}
+
+function expectRotatedBounds(
+  layer: TextLayer,
+  id: Parameters<TextLayer["get"]>[0],
+  local: Readonly<PositionedRun>["bounds"],
+): void {
+  const label = layer.get(id)!;
+  const edges = new Float32Array(4);
+  writeResidentRotatedAabbF32(
+    edges,
+    0,
+    label.x,
+    label.y,
+    local.x,
+    local.y,
+    local.width,
+    local.height,
+    packResidentRotation(unpackF16(packF16(label.rotation))),
+  );
+  const bounds = layer.getBoundsFor(id)!;
+  expect(bounds.x).toBeCloseTo(edges[0]!, 4);
+  expect(bounds.y).toBeCloseTo(edges[1]!, 4);
+  expect(bounds.width).toBeCloseTo(edges[2]! - edges[0]!, 4);
+  expect(bounds.height).toBeCloseTo(edges[3]! - edges[1]!, 4);
 }
 
 function heterogeneousRun(text: string): Readonly<PositionedRun> {

@@ -136,7 +136,7 @@ export interface PixiRendererBackend {
   prepareCullPath(): CullPath;
   preparePalettePath(): PalettePath;
   queuePaletteMoves(move: PaletteMoveUpload): void;
-  bindOriginColumns(originX: Float32Array, originY: Float32Array): void;
+  bindOriginColumns(originX: Float32Array, originY: Float32Array, rotationBits?: Uint16Array): void;
   dropIdleMeshes(): void;
   refreshComputeCull(update: Readonly<RenderComputeCullUpdate>): CullPath;
   rebuildCpuCull(update: Readonly<RenderComputeCullUpdate>): void;
@@ -193,6 +193,7 @@ export class DefaultPixiRendererBackend implements PixiRendererBackend {
   #queuedMoves: PaletteMoveUpload | undefined;
   #originX: Float32Array | undefined;
   #originY: Float32Array | undefined;
+  #rotationBits: Uint16Array | undefined;
   #activePaletteSlots = new Uint32Array(0);
   #storageSynced = false;
   #storageNeedsOriginRefresh = false;
@@ -342,9 +343,14 @@ export class DefaultPixiRendererBackend implements PixiRendererBackend {
     this.#queuedMoves = move;
   }
 
-  bindOriginColumns(originX: Float32Array, originY: Float32Array): void {
+  bindOriginColumns(
+    originX: Float32Array,
+    originY: Float32Array,
+    rotationBits?: Uint16Array,
+  ): void {
     this.#originX = originX;
     this.#originY = originY;
+    this.#rotationBits = rotationBits;
   }
 
   dropIdleMeshes(): void {
@@ -1014,7 +1020,7 @@ export class DefaultPixiRendererBackend implements PixiRendererBackend {
     ) {
       return;
     }
-    this.#coordinator.transforms.refreshOrigins(this.#originX, this.#originY);
+    this.#coordinator.transforms.refreshOrigins(this.#originX, this.#originY, this.#rotationBits);
   }
 
   #adoptPalettePath(previous: PalettePath): PalettePath {
@@ -1026,7 +1032,7 @@ export class DefaultPixiRendererBackend implements PixiRendererBackend {
 
   #fallbackPaletteToTexture(): void {
     if (this.#originX !== undefined && this.#originY !== undefined) {
-      this.#coordinator.transforms.refreshOrigins(this.#originX, this.#originY);
+      this.#coordinator.transforms.refreshOrigins(this.#originX, this.#originY, this.#rotationBits);
     }
     this.#queuedMoves = undefined;
     this.#storageSynced = false;

@@ -6,16 +6,130 @@ import {
   GPU_RESIDENT_RECORD_STRIDE,
   gpuResidentAdmitEligible,
 } from "../src/render/GpuResidentScene";
+import { packF16, unpackF16 } from "../src/render/pack";
 import {
   PALETTE_DENSE_MOVE_STRIDE,
   PALETTE_DENSE_MOVE_WORDS,
   PALETTE_MOVE_STRIDE,
   PALETTE_MOVE_WORDS,
+  applyResidentPaletteMoves,
+  packResidentRotation,
 } from "../src/render/paletteStorage";
 
 const VIEWPORT = Object.freeze({ x: 0, y: 0, width: 100, height: 100, padding: 0 });
 
 describe("GpuResidentScene", () => {
+  test("reconciles moved neighbors before a banded removal upload", () => {
+    const scene = new GpuResidentScene({ initialCapacity: 20 });
+    scene.setup(
+      column(
+        Array.from({ length: 20 }, (_, i) => i),
+        Array.from({ length: 20 }, (_, i) => i + 1),
+        1,
+      ),
+    );
+    scene.snapshot(VIEWPORT);
+    scene.updateTransforms(
+      new Uint32Array([1]),
+      1,
+      new Float32Array([50, 60]),
+      new Float32Array([0.5]),
+    );
+    scene.flushSpatialMoves(() => {});
+    scene.updateTransforms(
+      new Uint32Array([1]),
+      1,
+      new Float32Array([150, 160]),
+      new Float32Array([-0.5]),
+    );
+    scene.remove(
+      Uint32Array.from({ length: 10 }, (_, i) => i * 2),
+      10,
+    );
+    const update = scene.snapshot(VIEWPORT);
+    expect(update.recordDirty).not.toBe("none");
+    expect(
+      Array.isArray(update.recordDirty) &&
+        update.recordDirty.some((range) => range.offset <= 32 && range.offset + range.length >= 64),
+    ).toBe(true);
+    const uploaded = update.records.slice(0);
+    scene.flushSpatialMoves(() => {});
+    expect(new Uint32Array(uploaded)).toEqual(new Uint32Array(scene.snapshot(VIEWPORT).records));
+    scene.destroy();
+  });
+
+  test("fuses packed rotation with positions and reconciles identical CPU AABBs", () => {
+    const scene = new GpuResidentScene({ initialCapacity: 3 });
+    scene.setup(column([0, 1, 2], [1, 2, 3], 4));
+    const initial = scene.snapshot(VIEWPORT);
+    const gpuRecords = initial.records.slice(0);
+    const palette = new Float32Array(3 * 8);
+    const paletteWords = new Uint32Array(palette.buffer);
+    paletteWords[4] = paletteWords[12] = paletteWords[20] = packResidentRotation(0);
+    const rotations = new Float32Array([0.6, -1.4]);
+    const moves = scene.updateTransforms(
+      new Uint32Array([0, 2]),
+      2,
+      new Float32Array([30, 40, 50, 60]),
+      rotations,
+    );
+    expect(moves.paletteMoves.mode).toBe("indexed-transform");
+    expect(moves.paletteMoves.commands.byteLength).toBe(32);
+    const commandWords = new Uint32Array(moves.paletteMoves.commands);
+    expect([commandWords[0], commandWords[4]]).toEqual([0, 2]);
+    expect(commandWords[3]).toBe(packResidentRotation(unpackF16(packF16(rotations[0]!))));
+    expect(scene.snapshot(VIEWPORT).recordDirty).toBe("none");
+    applyResidentPaletteMoves({
+      ...moves.paletteMoves,
+      transforms: palette,
+      records: gpuRecords,
+      recordCount: 3,
+      localBounds: initial.localBounds,
+      localBoundsCount: initial.localBoundsCount,
+    });
+    scene.flushSpatialMoves(() => {});
+    expect(new Uint32Array(scene.snapshot(VIEWPORT).records)).toEqual(new Uint32Array(gpuRecords));
+
+    const dense = scene.updateTransforms(
+      new Uint32Array([1, 2]),
+      2,
+      new Float32Array([15, 25, 35, 45]),
+      new Float32Array([0.5, 1.5]),
+    );
+    expect(dense.paletteMoves).toMatchObject({ mode: "dense-transform", baseSlot: 1, count: 2 });
+    expect(dense.paletteMoves.commands.byteLength).toBe(24);
+    scene.destroy();
+  });
+
+  test("rebinds active slots transactionally while retaining other prototype references", () => {
+    const scene = new GpuResidentScene({ initialCapacity: 3 });
+    scene.setup(column([0, 1, 2], [1, 2, 3], 4, 2));
+    scene.snapshot(VIEWPORT);
+    const replacement = {
+      ...column([0], [1], 5, 4),
+      instanceOffset: 20,
+      localBounds: new Float32Array([-2, -3, 12, 14]),
+    };
+    expect(scene.rebindMany([replacement])).toBe(true);
+    const update = scene.snapshot(VIEWPORT);
+    const words = new Uint32Array(update.records);
+    expect([words[4], words[5], words[12], words[13]]).toEqual([20, 4, 4, 2]);
+    expect(update.recordDirty).toEqual([{ offset: 0, length: 32 }]);
+    expect(scene.stats).toMatchObject({
+      activeLabels: 3,
+      activeGlyphInstances: 8,
+      prototypeCount: 2,
+    });
+    expect(scene.referencedGlyphCount(new Uint32Array([0, 2]), 2)).toBe(6);
+    const before = update.records.slice(0);
+    expect(() => scene.rebindMany([replacement, replacement])).toThrow("duplicate slots");
+    expect(scene.rebindMany([{ ...replacement, orders: new Uint32Array([10]) }])).toBe(false);
+    expect(new Uint8Array(scene.snapshot(VIEWPORT).records)).toEqual(new Uint8Array(before));
+    expect(scene.rebindMany([column([0], [1], 4, 2)])).toBe(true);
+    expect(scene.stats).toMatchObject({ activeGlyphInstances: 6, prototypeCount: 1 });
+    scene.destroy();
+  });
+
   test("sets up interleaved prototype columns over one exact dense slot union", () => {
     const scene = new GpuResidentScene({ initialCapacity: 4, maxCapacity: 4 });
     scene.setupMany([

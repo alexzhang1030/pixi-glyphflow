@@ -40,6 +40,10 @@
 
 ### Added
 
+- `TextLayer.updateTransforms(ids, xy, rotations)` batches absolute positions and rotations in
+  radians through typed columns, with complete input validation before mutation.
+- GPU-scene text, wrap-width, explicit-newline, and writing-mode changes rebind existing label
+  slots while retaining immutable layout prototypes and the bounded viewport recovery path.
 - `TextLayer.whenDestroyed()` observes internally owned asynchronous teardown while `destroy()`
   retains PixiJS's synchronous signature. `TextLayer.whenRendererReleased()` observes the latest
   actual renderer graph release across detach, replacement, activation rollback, and provider
@@ -83,6 +87,9 @@
 
 ### Performance
 
+- GPU-scene rigid-transform waves use 12-byte dense or 16-byte indexed commands plus a 16-byte
+  header. Fused compute updates transform rows and rotated AABBs with zero CPU cull-record uploads;
+  position-only waves retain their existing 8-byte dense and 12-byte indexed command formats.
 - GPU-scene camera commits refresh the compute viewport uniform while spatial query, admission,
   coordinator, and cull-record upload deltas stay zero. Position commits dispatch fused transform
   and absolute-AABB patches before culling. Sorted, unique, strictly contiguous active slots use

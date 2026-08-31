@@ -3,9 +3,12 @@ import { describe, expect, test } from "bun:test";
 import { TRANSFORM_PALETTE_STRIDE } from "../src/advanced";
 import { packCullRecords } from "../src/culling/computeCull";
 import { computeCullDeviceLimits } from "../src/culling/requestComputeCullGpu";
+import { packHalf2x16 } from "../src/render/pack";
 import {
+  PALETTE_DENSE_TRANSFORM_PATCH_WGSL,
   PALETTE_DENSE_PATCH_WGSL,
   PALETTE_PATCH_WGSL,
+  PALETTE_TRANSFORM_PATCH_WGSL,
   PALETTE_TRANSFORM_SCATTER_WGSL,
 } from "../src/render/palettePatch.wgsl";
 import {
@@ -14,6 +17,8 @@ import {
   applyPaletteTransforms,
   PALETTE_DENSE_MOVE_STRIDE,
   PALETTE_DENSE_MOVE_WORDS,
+  PALETTE_DENSE_TRANSFORM_MOVE_STRIDE,
+  PALETTE_INDEXED_TRANSFORM_MOVE_STRIDE,
   PALETTE_INDEXED_MOVE_STRIDE,
   PALETTE_MOVE_STRIDE,
   PALETTE_MOVE_UNIFORM_BYTES,
@@ -23,6 +28,7 @@ import {
   PALETTE_TRANSFORM_SCATTER_MAX_LABELS,
   packPaletteTransforms,
   packPaletteMoves,
+  packResidentRotation,
   paletteMoveDispatchBytes,
   paletteMoveUploadBytes,
   paletteTransformDispatchBytes,
@@ -39,6 +45,76 @@ import { installWebGpuGlobals } from "./fixtures/webgpuGlobals";
 const WEBGPU_DEFAULT_MAX_STORAGE_BUFFER_BINDING_SIZE = 134_217_728;
 
 describe("palette storage path", () => {
+  test("accounts for dense 12-byte and indexed 16-byte rigid-transform commands", () => {
+    expect(PALETTE_DENSE_TRANSFORM_MOVE_STRIDE).toBe(12);
+    expect(PALETTE_INDEXED_TRANSFORM_MOVE_STRIDE).toBe(16);
+    expect(paletteMoveDispatchBytes("dense-transform", 100_000)).toBe(1_200_016);
+    expect(paletteMoveDispatchBytes("indexed-transform", 10_000)).toBe(160_016);
+    expect(paletteMoveDispatchBytes("dense-transform", 0)).toBe(0);
+    expect(PALETTE_TRANSFORM_PATCH_WGSL).toContain("fn patch_transform_and_cull");
+    expect(PALETTE_DENSE_TRANSFORM_PATCH_WGSL).toContain("fn patch_transform_and_cull_dense");
+    expect(PALETTE_TRANSFORM_PATCH_WGSL).toContain("rotation: u32");
+    expect(PALETTE_DENSE_TRANSFORM_PATCH_WGSL).toContain("rotation: u32");
+  });
+
+  test("rotates all four cull corners and preserves packed paint through both transform modes", () => {
+    for (const mode of ["dense-transform", "indexed-transform"] as const) {
+      const dense = mode === "dense-transform";
+      const transforms = residentReferencePalette(2);
+      transforms[10] = transforms[11] = 1;
+      transforms[14] = 0x123456;
+      transforms[15] = 0xffff;
+      const records = packCullRecords([
+        {
+          minX: 0,
+          minY: 0,
+          maxX: 0,
+          maxY: 0,
+          instanceOffset: 0,
+          instanceCount: 0,
+          paletteIndex: 0,
+          localBoundsIndex: 0,
+        },
+        {
+          minX: 0,
+          minY: 0,
+          maxX: 0,
+          maxY: 0,
+          instanceOffset: 7,
+          instanceCount: 2,
+          paletteIndex: 1,
+          localBoundsIndex: 0,
+        },
+      ]);
+      const commands = new ArrayBuffer(paletteMoveUploadBytes(mode, 1));
+      const words = new Uint32Array(commands);
+      const floats = new Float32Array(commands);
+      const base = dense ? 0 : 1;
+      if (!dense) words[0] = 1;
+      floats[base] = 100;
+      floats[base + 1] = 200;
+      words[base + 2] = packHalf2x16(1, 0);
+      const move = dense
+        ? { mode: "dense-transform" as const, baseSlot: 1, commands, count: 1 }
+        : { mode: "indexed-transform" as const, commands, count: 1 };
+      applyResidentPaletteMoves({
+        ...move,
+        transforms,
+        records,
+        recordCount: 2,
+        localBounds: new Float32Array([-2, -3, 8, 9]),
+        localBoundsCount: 1,
+      });
+      expect(Array.from(new Float32Array(records).subarray(8, 12))).toEqual([94, 198, 103, 206]);
+      expect(Array.from(new Uint32Array(records).subarray(12, 16))).toEqual([7, 2, 1, 0]);
+      expect(Array.from(transforms.subarray(14, 16))).toEqual([0x123456, 0xffff]);
+      expect(applyPaletteMoves(transforms, move)).toBe(0);
+      words[base + 2] = packHalf2x16(0, -1);
+      expect(applyPaletteMoves(transforms, move)).toBe(1);
+      expect(new Uint32Array(transforms.buffer)[12]).toBe(packHalf2x16(0, -1));
+    }
+  });
+
   test("keeps WebGL and devices without vertex storage on the texture palette", () => {
     expect(
       resolvePalettePath({
@@ -211,7 +287,7 @@ describe("palette storage path", () => {
   });
 
   test("rewrites absolute resident AABBs from indexed local bounds", () => {
-    const transforms = new Float32Array(PALETTE_ORIGIN_FLOATS * 2);
+    const transforms = residentReferencePalette(2);
     const records = packCullRecords([
       {
         minX: -2,
@@ -271,7 +347,7 @@ describe("palette storage path", () => {
   });
 
   test("rewrites dense resident AABBs at baseSlot with exact f32 bounds arithmetic", () => {
-    const transforms = new Float32Array(PALETTE_ORIGIN_FLOATS * 3);
+    const transforms = residentReferencePalette(3);
     const records = packCullRecords([
       {
         minX: 0,
@@ -338,7 +414,7 @@ describe("palette storage path", () => {
   });
 
   test("matches the two-step f32 max edge bit-for-bit and preserves a tombstone", () => {
-    const transforms = new Float32Array(PALETTE_ORIGIN_FLOATS);
+    const transforms = residentReferencePalette(1);
     const records = packCullRecords([
       {
         minX: 0,
@@ -374,7 +450,7 @@ describe("palette storage path", () => {
   });
 
   test("keeps repeated oscillation and large-coordinate moves drift-free", () => {
-    const transforms = new Float32Array(PALETTE_ORIGIN_FLOATS);
+    const transforms = residentReferencePalette(1);
     const records = packCullRecords([
       {
         minX: 0.25,
@@ -673,6 +749,10 @@ describe("palette storage path", () => {
         "patch_xy_and_cull",
         "patch_xy_dense",
         "patch_xy_and_cull_dense",
+        "patch_transform",
+        "patch_transform_and_cull",
+        "patch_transform_dense",
+        "patch_transform_and_cull_dense",
         "scatter_transform",
       ]);
       expect(rebound).toHaveLength(2);
@@ -1359,9 +1439,10 @@ describe("palette storage path", () => {
     expect(PALETTE_PATCH_WGSL).toContain("transforms[base] = texel");
     expect(PALETTE_PATCH_WGSL).toContain("fn patch_xy_and_cull");
     expect(PALETTE_PATCH_WGSL).toContain("local_bounds[record.local_bounds_index]");
-    expect(PALETTE_PATCH_WGSL).toContain("let min_x = command.x + bounds.x");
-    expect(PALETTE_PATCH_WGSL).toContain("record.min_x = min_x");
-    expect(PALETTE_PATCH_WGSL).toContain("record.max_x = min_x + bounds.z");
+    expect(PALETTE_PATCH_WGSL).toContain("translated.min_x = origin.x + bounds.x");
+    expect(PALETTE_PATCH_WGSL).toContain("translated.max_x = translated.min_x + bounds.z");
+    expect(PALETTE_PATCH_WGSL).toContain("records[command.slot] = patch_record_aabb");
+    expect(PALETTE_PATCH_WGSL).toContain("unpack2x16float(bitcast<u32>(transforms[base + 1u].x))");
     expect(PALETTE_PATCH_WGSL).toContain("@group(0) @binding(3) var<storage, read_write> records");
     expect(PALETTE_PATCH_WGSL).toContain("@group(0) @binding(4) var<storage, read> local_bounds");
     expect(PALETTE_PATCH_WGSL).not.toContain("origin_x");
@@ -1381,8 +1462,8 @@ describe("palette storage path", () => {
     expect(PALETTE_DENSE_PATCH_WGSL).toContain("struct DenseMoveCommand");
     expect(PALETTE_DENSE_PATCH_WGSL).toContain("params.base_slot + id.x");
     expect(PALETTE_DENSE_PATCH_WGSL).toContain("commands[id.x]");
-    expect(PALETTE_DENSE_PATCH_WGSL).toContain("let min_x = command.x + bounds.x");
-    expect(PALETTE_DENSE_PATCH_WGSL).toContain("record.max_x = min_x + bounds.z");
+    expect(PALETTE_DENSE_PATCH_WGSL).toContain("translated.min_x = origin.x + bounds.x");
+    expect(PALETTE_DENSE_PATCH_WGSL).toContain("translated.max_x = translated.min_x + bounds.z");
   });
 });
 
@@ -1634,6 +1715,15 @@ function installPaletteGpuGlobals(): () => void {
     GPUShaderStage: { COMPUTE: 4 },
     GPUBufferUsage: { STORAGE: 0x0080, COPY_DST: 0x0008, UNIFORM: 0x0040 },
   });
+}
+
+function residentReferencePalette(count: number): Float32Array {
+  const palette = new Float32Array(count * PALETTE_ORIGIN_FLOATS);
+  const words = new Uint32Array(palette.buffer);
+  for (let slot = 0; slot < count; slot += 1) {
+    words[slot * PALETTE_ORIGIN_FLOATS + 4] = packResidentRotation(0);
+  }
+  return palette;
 }
 
 async function settlePromises(): Promise<void> {

@@ -76,8 +76,12 @@ export class RenderSurface {
     this.#backend.queuePaletteMoves(move);
   }
 
-  bindOriginColumns(originX: Float32Array, originY: Float32Array): void {
-    this.#backend.bindOriginColumns(originX, originY);
+  bindOriginColumns(
+    originX: Float32Array,
+    originY: Float32Array,
+    rotationBits?: Uint16Array,
+  ): void {
+    this.#backend.bindOriginColumns(originX, originY, rotationBits);
   }
 
   dropIdleMeshes(): void {

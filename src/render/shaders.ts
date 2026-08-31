@@ -521,10 +521,9 @@ fn protoFetch(proto: u32, texelOffset: u32) -> vec4<f32> {
 }`;
 
 /**
- * WebGPU GPU-scene resident shader. Its caller guarantees fill-only identity transforms, zero
- * anchors, normal blending, and storage-palette residency. Keep atlas-mode and alpha/color
- * composition identical to the general shader while leaving effect and transform work out of the
- * hot draw.
+ * WebGPU GPU-scene resident shader. Its caller guarantees fill-only unit scale, zero anchors,
+ * normal blending, and storage-palette residency. Rotation uses the same packed sin/cos as the
+ * fused cull patch; atlas-mode and alpha/color composition follow the general shader.
  */
 const GLYPH_SHADER_WGSL_RESIDENT_FILL_STORAGE: string = /* wgsl */ `
 ${GLYPH_COMMON_UNIFORMS_WGSL}
@@ -570,7 +569,12 @@ fn mainVertex(
     let paletteBase = aPaletteIndex * 2u;
     let transform0 = uTransforms[paletteBase];
     let transform1 = uTransforms[paletteBase + 1u];
-    let localPosition = instanceRect.xy + aVertex * instanceRect.zw + transform0.xy;
+    let rotation = unpack2x16float(bitcast<u32>(transform1.x));
+    let glyphPosition = instanceRect.xy + aVertex * instanceRect.zw;
+    let localPosition = vec2<f32>(
+        glyphPosition.x * rotation.y - glyphPosition.y * rotation.x,
+        glyphPosition.x * rotation.x + glyphPosition.y * rotation.y,
+    ) + transform0.xy;
     let projected = globalUniforms.uProjectionMatrix
         * globalUniforms.uWorldTransformMatrix
         * localUniforms.uTransformMatrix

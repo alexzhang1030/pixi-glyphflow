@@ -7,6 +7,72 @@ import { GpuSceneCompiler, type GpuSceneCompilerColumn } from "../src/render/Gpu
 import { canonicalFillPaint } from "../src/render/TransformPalette";
 
 describe("GpuSceneCompiler", () => {
+  test("keeps sparse rebinds independent of append allocation and revision rollback", () => {
+    const compiler = new GpuSceneCompiler();
+    const initial = expectReadyCompile(
+      compiler.compile([column([0, 1, 2], [1, 2, 3], run("A", 0), "alpha:16", 0xffffff)]),
+    );
+    const changed = expectReadyCompile(
+      compiler.compile(
+        [
+          {
+            ...column([2, 0], [3, 1], run("B", 8), "alpha:16", 0xff0000),
+            rotations: new Float32Array([0.5, -0.5]),
+          },
+        ],
+        "rebind",
+      ),
+    );
+    expect(changed).toMatchObject({
+      mode: "rebind",
+      recordStart: 3,
+      recordCount: 2,
+      prototypeCount: 2,
+      paintCount: 2,
+    });
+    expect(Array.from(changed.columns[0]!.slots)).toEqual([2, 0]);
+    expect(Array.from(changed.columns[0]!.rotations!)).toEqual([0.5, -0.5]);
+    expect(compiler.rollback(initial)).toBe(false);
+    expect(compiler.rollback(changed)).toBe(true);
+    const appended = expectReadyCompile(
+      compiler.compile([column([3], [4], run("A", 0), "alpha:16", 0xffffff)]),
+    );
+    expect(appended).toMatchObject({
+      recordStart: 3,
+      recordCount: 1,
+      prototypeCount: 1,
+      paintCount: 1,
+    });
+    expect(
+      compiler.compile([column([0, 0], [1, 1], run("A", 0), "alpha:16", 0xffffff)], "rebind")
+        .status,
+    ).toBe("unsupported");
+    expect(
+      compiler.compile(
+        [
+          column([0], [1], run("A", 0), "alpha:16", 0xffffff),
+          column([0], [1], run("B", 8), "alpha:16", 0xff0000),
+        ],
+        "rebind",
+      ).status,
+    ).toBe("unsupported");
+    expect(
+      compiler.compile([column([4], [5], run("A", 0), "alpha:16", 0xffffff)], "rebind").status,
+    ).toBe("unsupported");
+  });
+
+  test("isolates wrap width, explicit newlines, and writing-flow candidate keys", () => {
+    const compiler = new GpuSceneCompiler();
+    const style = Object.freeze({ wordWrap: true, wordWrapWidth: 32 });
+    const horizontal = compiler.admitCandidate("ABCD", style);
+    expect(compiler.admitCandidate("ABCD", { ...style, wordWrapWidth: 16 })).not.toBe(horizontal);
+    expect(compiler.admitCandidate("AB\nCD", style)).not.toBe(horizontal);
+    const vertical = compiler.admitCandidate("ABCD", style, { writingMode: "vertical-rl" });
+    expect(vertical).not.toBe(horizontal);
+    expect(compiler.admitCandidate("ABCD", style, { writingMode: "vertical-rl" })).toBe(vertical);
+    expect(compiler.admitCandidate("ABCD", style)).toBe(horizontal);
+  });
+
   test("bounds value-semantic prototype candidate discovery at the 65th fresh style", () => {
     const compiler = new GpuSceneCompiler();
     let inspected = 0;

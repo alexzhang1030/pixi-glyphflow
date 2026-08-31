@@ -210,6 +210,15 @@ labels.updatePositions(ids, positions);
 await labels.commit();
 ```
 
+Stream positions and per-label rotation together:
+
+```ts
+const rotations = new Float32Array(ids.length); // Radians, one value per label.
+rotations.fill(Math.PI / 6);
+labels.updateTransforms(ids, positions, rotations);
+await labels.commit();
+```
+
 Broadcast one counter string alongside the packed positions through one transactional columnar
 pass:
 

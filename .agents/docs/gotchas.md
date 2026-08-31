@@ -306,6 +306,30 @@ Stable evidence lives in `tests/TextLayer.gpu-resident.test.ts`,
 `tests/GpuResidentScene.test.ts`, `tests/PixiRendererBackend.test.ts`,
 `tests/paletteStorage.test.ts`, and the `gpu-scene-resident` browser artifact.
 
+## Resident rigid transforms and layout changes share immutable prototype geometry
+
+A label slot and a resident prototype arena slot have independent lifetimes. Rebinding the first
+label of a shared run previously overwrote the geometry still referenced by its neighbors. The
+coordinator now allocates a bounded independent arena slot for each new prototype. Text, wrap
+width, explicit newlines, and writing mode participate in candidate identity; cached layouts
+rebind existing records while retaining geometry and stable label order.
+
+The palette stores packed binary16 `sin(angle), cos(angle)`; identity rotation is `0x3c000000`.
+Zero-filled packed rotation collapses the glyph and its AABB. GPU compute probes initialize the
+identity word explicitly. CPU AABBs use the same packed trigonometric values and four-corner f32
+arithmetic as the shader; identity rotation keeps the historical left-associated additions.
+Device/encoder recovery refreshes both origins and rotations from authoritative store columns.
+
+Structural dirty bands can cover an unchanged neighbor whose latest transform still lives in the
+GPU. Reconcile pending CPU records before publishing any structural upload. Track reconciliation
+separately from the spatial journal so repeated wrap commits pay once per transform wave; CPU
+queries still flush their pending grid work. The 100k-mover / 1k-wrap diagnostic exposed 10.9 ms
+p95 of repeated commit work and measured 1.7–1.8 ms after this separation.
+
+Evidence: `tests/GpuResidentScene.test.ts` covers banded removal uploads;
+`tests/TextLayer.gpu-resident.test.ts` covers shared geometry, wrap, overlapping rotations, and
+recovery; `tests/browser/gpu-transform-layout.pw.ts` compares real GPU pixels and sustained counts.
+
 ## Collision fast paths require explicit invalidation and density routing
 
 The million-label collision fixture presents monotonic slots in admission order. Passing that proof

@@ -4,8 +4,10 @@ import { CULL_RECORD_STRIDE, planComputeCullStorageBytes } from "../culling/comp
 import { cleanupBestEffort, cleanupBestEffortOrThrow } from "./cleanup";
 import type { ComputeCullResidentRecords } from "./ComputeCullPass";
 import {
+  PALETTE_DENSE_TRANSFORM_PATCH_WGSL,
   PALETTE_DENSE_PATCH_WGSL,
   PALETTE_PATCH_WGSL,
+  PALETTE_TRANSFORM_PATCH_WGSL,
   PALETTE_TRANSFORM_SCATTER_WGSL,
 } from "./palettePatch.wgsl";
 import {
@@ -87,6 +89,10 @@ export class PaletteStoragePass {
   #fusedPipeline: GPUComputePipeline | undefined;
   #densePipeline: GPUComputePipeline | undefined;
   #denseFusedPipeline: GPUComputePipeline | undefined;
+  #transformMovePipeline: GPUComputePipeline | undefined;
+  #transformMoveFusedPipeline: GPUComputePipeline | undefined;
+  #denseTransformMovePipeline: GPUComputePipeline | undefined;
+  #denseTransformMoveFusedPipeline: GPUComputePipeline | undefined;
   #transformPipeline: GPUComputePipeline | undefined;
   #bindGroupLayout: GPUBindGroupLayout | undefined;
   #fusedBindGroupLayout: GPUBindGroupLayout | undefined;
@@ -196,6 +202,14 @@ export class PaletteStoragePass {
         label: "pixi-glyphflow-palette-dense-patch",
         code: PALETTE_DENSE_PATCH_WGSL,
       });
+      const transformMoveModule = device.createShaderModule({
+        label: "pixi-glyphflow-palette-transform-move-patch",
+        code: PALETTE_TRANSFORM_PATCH_WGSL,
+      });
+      const denseTransformMoveModule = device.createShaderModule({
+        label: "pixi-glyphflow-palette-dense-transform-move-patch",
+        code: PALETTE_DENSE_TRANSFORM_PATCH_WGSL,
+      });
       const transformModule = device.createShaderModule({
         label: "pixi-glyphflow-palette-transform-scatter",
         code: PALETTE_TRANSFORM_SCATTER_WGSL,
@@ -233,6 +247,22 @@ export class PaletteStoragePass {
       this.#denseFusedPipeline = device.createComputePipeline({
         layout: device.createPipelineLayout({ bindGroupLayouts: [fusedBindGroupLayout] }),
         compute: { module: denseModule, entryPoint: "patch_xy_and_cull_dense" },
+      });
+      this.#transformMovePipeline = device.createComputePipeline({
+        layout: device.createPipelineLayout({ bindGroupLayouts: [bindGroupLayout] }),
+        compute: { module: transformMoveModule, entryPoint: "patch_transform" },
+      });
+      this.#transformMoveFusedPipeline = device.createComputePipeline({
+        layout: device.createPipelineLayout({ bindGroupLayouts: [fusedBindGroupLayout] }),
+        compute: { module: transformMoveModule, entryPoint: "patch_transform_and_cull" },
+      });
+      this.#denseTransformMovePipeline = device.createComputePipeline({
+        layout: device.createPipelineLayout({ bindGroupLayouts: [bindGroupLayout] }),
+        compute: { module: denseTransformMoveModule, entryPoint: "patch_transform_dense" },
+      });
+      this.#denseTransformMoveFusedPipeline = device.createComputePipeline({
+        layout: device.createPipelineLayout({ bindGroupLayouts: [fusedBindGroupLayout] }),
+        compute: { module: denseTransformMoveModule, entryPoint: "patch_transform_and_cull_dense" },
       });
       this.#transformPipeline = device.createComputePipeline({
         layout: device.createPipelineLayout({ bindGroupLayouts: [bindGroupLayout] }),
@@ -468,7 +498,7 @@ export class PaletteStoragePass {
     try {
       commandBytes = paletteMoveUploadBytes(move.mode, move.count);
       if (
-        move.mode === "dense" &&
+        (move.mode === "dense" || move.mode === "dense-transform") &&
         (!Number.isSafeInteger(move.baseSlot) ||
           move.baseSlot < 0 ||
           move.baseSlot + move.count > 0x1_0000_0000)
@@ -516,7 +546,7 @@ export class PaletteStoragePass {
     const { commands, uniform } = lease;
     const fused = resident !== undefined;
     let layout = this.#bindGroupLayout;
-    let pipeline = move.mode === "dense" ? this.#densePipeline : this.#pipeline;
+    let pipeline = this.#movePipeline(move.mode, false);
     let mode: PaletteMoveDispatchMode = "palette-only";
     const entries: GPUBindGroupEntry[] = [
       { binding: 0, resource: { buffer: uniform } },
@@ -533,7 +563,7 @@ export class PaletteStoragePass {
         return this.#moveFailure("fused resident move patch lacks local-bounds resources");
       }
       layout = this.#fusedBindGroupLayout;
-      pipeline = move.mode === "dense" ? this.#denseFusedPipeline : this.#fusedPipeline;
+      pipeline = this.#movePipeline(move.mode, true);
       entries.push(
         { binding: 3, resource: { buffer: resident.buffer } },
         { binding: 4, resource: { buffer: this.#localBounds } },
@@ -550,7 +580,8 @@ export class PaletteStoragePass {
       device.queue.writeBuffer(commands, 0, move.commands, 0, commandBytes);
       acceptedBytes += commandBytes;
       acceptedWrites += 1;
-      this.#uniformInts[0] = move.mode === "dense" ? move.baseSlot : 0;
+      this.#uniformInts[0] =
+        move.mode === "dense" || move.mode === "dense-transform" ? move.baseSlot : 0;
       this.#uniformInts[1] = move.count;
       this.#uniformInts[2] = resident?.recordCount ?? 0;
       this.#uniformInts[3] = fused ? this.#localBoundsCount : 0;
@@ -617,6 +648,19 @@ export class PaletteStoragePass {
         acceptedBytes,
         acceptedWrites,
       );
+    }
+  }
+
+  #movePipeline(mode: PaletteMoveUpload["mode"], fused: boolean): GPUComputePipeline | undefined {
+    switch (mode) {
+      case "dense":
+        return fused ? this.#denseFusedPipeline : this.#densePipeline;
+      case "indexed":
+        return fused ? this.#fusedPipeline : this.#pipeline;
+      case "dense-transform":
+        return fused ? this.#denseTransformMoveFusedPipeline : this.#denseTransformMovePipeline;
+      case "indexed-transform":
+        return fused ? this.#transformMoveFusedPipeline : this.#transformMovePipeline;
     }
   }
 
@@ -729,6 +773,10 @@ export class PaletteStoragePass {
     this.#fusedPipeline = undefined;
     this.#densePipeline = undefined;
     this.#denseFusedPipeline = undefined;
+    this.#transformMovePipeline = undefined;
+    this.#transformMoveFusedPipeline = undefined;
+    this.#denseTransformMovePipeline = undefined;
+    this.#denseTransformMoveFusedPipeline = undefined;
     this.#transformPipeline = undefined;
     this.#bindGroupLayout = undefined;
     this.#fusedBindGroupLayout = undefined;
@@ -1009,6 +1057,10 @@ export class PaletteStoragePass {
     this.#fusedPipeline = undefined;
     this.#densePipeline = undefined;
     this.#denseFusedPipeline = undefined;
+    this.#transformMovePipeline = undefined;
+    this.#transformMoveFusedPipeline = undefined;
+    this.#denseTransformMovePipeline = undefined;
+    this.#denseTransformMoveFusedPipeline = undefined;
     this.#transformPipeline = undefined;
     this.#bindGroupLayout = undefined;
     this.#fusedBindGroupLayout = undefined;

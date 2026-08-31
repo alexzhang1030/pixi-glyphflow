@@ -6,7 +6,8 @@ import {
   DIRTY_WHOLE_BUFFER_BPS,
   DirtyRanges,
 } from "./DirtyRanges";
-import { bitsFromFloat, packHalf2x16 } from "./pack";
+import { bitsFromFloat, packHalf2x16, unpackF16 } from "./pack";
+import { packResidentRotation } from "./paletteStorage";
 import type {
   DirtyByteRange,
   TransformPaletteInput,
@@ -203,11 +204,15 @@ export class TransformPalette {
     count: number,
     xy: Float32Array,
     paint: Readonly<CanonicalFillPaint>,
+    rotations?: Float32Array,
   ): number {
     this.#assertActive();
     if (count <= 0) return 0;
     if (xy.length < count * 2) {
       throw new TypeError("Palette writeFills xy must contain one packed pair per slot");
+    }
+    if (rotations !== undefined && rotations.length < count) {
+      throw new TypeError("Palette rotations must contain one value per slot");
     }
     let maxSlot = 0;
     for (let index = 0; index < count; index += 1) {
@@ -220,7 +225,6 @@ export class TransformPalette {
     }
     this.#ensureCapacity(maxSlot + 1);
     assertCanonicalPaint(paint);
-    const rotationBits = packHalf2x16(0, 1);
     const anchorBits = packHalf2x16(0, 0);
     const data = this.#data;
     const bits = new Uint32Array(data.buffer, data.byteOffset, data.length);
@@ -231,6 +235,7 @@ export class TransformPalette {
       const offset = slot * FLOATS_PER_LABEL;
       const nextX = Math.fround(xy[index * 2] ?? 0);
       const nextY = Math.fround(xy[index * 2 + 1] ?? 0);
+      const rotationBits = packResidentRotation(rotations?.[index] ?? 0);
       if (
         occupied[slot] === 1 &&
         data[offset] === nextX &&
@@ -256,6 +261,29 @@ export class TransformPalette {
         occupied[slot] = 1;
         this.#activeLabels += 1;
       }
+      this.#dirty.record(slot * TRANSFORM_PALETTE_STRIDE, TRANSFORM_PALETTE_STRIDE);
+      written += 1;
+    }
+    return written;
+  }
+
+  /** Restore compact resident rigid transforms to the CPU palette after a GPU failure. */
+  writeRigidTransforms(
+    slots: Uint32Array,
+    count: number,
+    xy: Float32Array,
+    rotations: Float32Array,
+  ): number {
+    this.#assertActive();
+    const bits = new Uint32Array(this.#data.buffer, this.#data.byteOffset, this.#data.length);
+    let written = 0;
+    for (let index = 0; index < count; index += 1) {
+      const slot = slots[index] ?? 0;
+      if (slot >= this.#capacity || this.#occupied[slot] !== 1) continue;
+      const offset = slot * FLOATS_PER_LABEL;
+      this.#data[offset] = xy[index * 2] ?? 0;
+      this.#data[offset + 1] = xy[index * 2 + 1] ?? 0;
+      bits[offset + 4] = packResidentRotation(rotations[index] ?? 0);
       this.#dirty.record(slot * TRANSFORM_PALETTE_STRIDE, TRANSFORM_PALETTE_STRIDE);
       written += 1;
     }
@@ -309,6 +337,13 @@ export class TransformPalette {
     return this.#data;
   }
 
+  /** Reserve palette address space for the coordinator's bounded prototype arena. @internal */
+  reserve(capacity: number): void {
+    this.#assertActive();
+    assertPositiveInteger("capacity", capacity);
+    this.#ensureCapacity(capacity);
+  }
+
   /** Occupied flag for a slot. Storage rebuilds refresh x/y from the store columns. @internal */
   occupiedAt(slot: number): boolean {
     this.#assertActive();
@@ -319,9 +354,10 @@ export class TransformPalette {
    * Rewrite occupied x/y from store columns without dirtying. Used when a storage buffer rebuild
    * would otherwise upload stale CPU texels after a mover-only storm.
    */
-  refreshOrigins(originX: Float32Array, originY: Float32Array): number {
+  refreshOrigins(originX: Float32Array, originY: Float32Array, rotationBits?: Uint16Array): number {
     this.#assertActive();
     const data = this.#data;
+    const bits = new Uint32Array(data.buffer, data.byteOffset, data.length);
     const occupied = this.#occupied;
     const limit = Math.min(this.#capacity, occupied.length, originX.length, originY.length);
     let written = 0;
@@ -330,6 +366,9 @@ export class TransformPalette {
       const offset = slot * FLOATS_PER_LABEL;
       data[offset] = originX[slot] ?? 0;
       data[offset + 1] = originY[slot] ?? 0;
+      if (rotationBits !== undefined) {
+        bits[offset + 4] = packResidentRotation(unpackF16(rotationBits[slot] ?? 0));
+      }
       written += 1;
     }
     return written;

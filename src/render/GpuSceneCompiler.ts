@@ -2,6 +2,7 @@ import type { TextStyleOptions } from "pixi.js";
 
 import { encodeCacheKey } from "../cache/cacheKey";
 import type { PositionedRun } from "../layout/types";
+import type { TextLayoutOptions } from "../types";
 import { canonicalFillPaint, type CanonicalFillPaint } from "./TransformPalette";
 
 export const GPU_SCENE_MAX_PROTOTYPES = 64;
@@ -12,6 +13,7 @@ export interface GpuSceneCompilerColumn {
   readonly slots: Uint32Array;
   readonly count: number;
   readonly xy: Float32Array;
+  readonly rotations?: Float32Array;
   readonly orders: Uint32Array;
   readonly run: Readonly<PositionedRun>;
   readonly rasterIdentity: string;
@@ -27,12 +29,15 @@ export interface GpuScenePlanColumn {
   readonly slots: Uint32Array;
   readonly count: number;
   readonly xy: Float32Array;
+  readonly rotations?: Float32Array;
   readonly orders: Uint32Array;
 }
 
 /** @internal Bounded typed plan consumed by the coordinator and resident record owner. */
 export interface GpuScenePlan {
   readonly status: "ready";
+  readonly mode: "append" | "rebind";
+  readonly revision: number;
   readonly recordStart: number;
   readonly recordCount: number;
   readonly prototypeCount: number;
@@ -95,7 +100,10 @@ const UNSUPPORTED: Readonly<UnsupportedGpuScenePlan> = Object.freeze({
 export class GpuSceneCompiler {
   readonly #candidatePrototypes = new Map<string, number>();
   readonly #candidatePaints = new Map<string, number>();
-  readonly #candidatePairsByStyle = new WeakMap<object, Map<string, number>>();
+  readonly #candidatePairsByStyle = new WeakMap<
+    object,
+    Map<TextLayoutOptions["writingMode"] | undefined, Map<string, number>>
+  >();
   readonly #prototypes: PrototypeIdentity[] = [];
   readonly #prototypeBuckets = new Map<number, number[]>();
   readonly #paints: CanonicalFillPaint[] = [];
@@ -104,6 +112,7 @@ export class GpuSceneCompiler {
     | ((run: Readonly<PositionedRun>, rasterIdentity: string) => number)
     | undefined;
   #nextSlot = 0;
+  #revision = 0;
 
   constructor(options: Readonly<GpuSceneCompilerOptions> = {}) {
     this.#prototypeHash = options.prototypeHash;
@@ -136,12 +145,17 @@ export class GpuSceneCompiler {
    * Admit one value-semantic text/style candidate before layout and raster work. The returned pair
    * key is bounded to the 64 by 8 candidate matrix; undefined means the scene exceeded it.
    */
-  admitCandidate(text: string, style: Readonly<TextStyleOptions>): number | undefined {
+  admitCandidate(
+    text: string,
+    style: Readonly<TextStyleOptions>,
+    layout?: Readonly<TextLayoutOptions>,
+  ): number | undefined {
     if (typeof text !== "string" || typeof style !== "object" || style === null) return undefined;
-    const cached = this.#candidatePairsByStyle.get(style)?.get(text);
+    const writingMode = layout?.writingMode;
+    const cached = this.#candidatePairsByStyle.get(style)?.get(writingMode)?.get(text);
     if (cached !== undefined) return cached;
 
-    const prototypeKey = candidatePrototypeKey(text, style);
+    const prototypeKey = candidatePrototypeKey(text, style, layout);
     if (prototypeKey === undefined) return undefined;
     const paint = canonicalFillPaint(style.fill);
     const paintKey = `${String(paint.colorBits >>> 0)}:${String(paint.alphaBits >>> 0)}`;
@@ -161,10 +175,15 @@ export class GpuSceneCompiler {
     if (currentPaint === undefined) this.#candidatePaints.set(paintKey, paintIndex);
     const pair = pairKey(prototypeIndex, paintIndex);
     if (Object.isFrozen(style)) {
-      let byText = this.#candidatePairsByStyle.get(style);
+      let byMode = this.#candidatePairsByStyle.get(style);
+      if (byMode === undefined) {
+        byMode = new Map();
+        this.#candidatePairsByStyle.set(style, byMode);
+      }
+      let byText = byMode.get(writingMode);
       if (byText === undefined) {
         byText = new Map();
-        this.#candidatePairsByStyle.set(style, byText);
+        byMode.set(writingMode, byText);
       }
       byText.set(text, pair);
     }
@@ -205,7 +224,8 @@ export class GpuSceneCompiler {
   /** Roll back the latest compiled revision after a downstream atlas/arena/palette failure. */
   rollback(plan: Readonly<GpuScenePlan>): boolean {
     if (
-      this.#nextSlot !== plan.recordStart + plan.recordCount ||
+      this.#revision !== plan.revision ||
+      this.#nextSlot !== plan.recordStart + (plan.mode === "append" ? plan.recordCount : 0) ||
       this.#prototypes.length !== plan.prototypeCount ||
       this.#paints.length !== plan.paintCount
     ) {
@@ -229,17 +249,21 @@ export class GpuSceneCompiler {
     this.#bindings.length = plan.previousPrototypeCount;
     this.#paints.length = plan.previousPaintCount;
     this.#nextSlot = plan.recordStart;
+    this.#revision -= 1;
     return true;
   }
 
-  compile(columns: readonly Readonly<GpuSceneCompilerColumn>[]): GpuSceneCompileResult {
+  compile(
+    columns: readonly Readonly<GpuSceneCompilerColumn>[],
+    mode: "append" | "rebind" = "append",
+  ): GpuSceneCompileResult {
     let recordCount = 0;
     for (const column of columns) {
       recordCount += column.count;
       if (
         !Number.isSafeInteger(recordCount) ||
         recordCount > 0xffff_ffff ||
-        this.#nextSlot + recordCount > 0xffff_ffff
+        (mode === "append" && this.#nextSlot + recordCount > 0xffff_ffff)
       ) {
         return UNSUPPORTED;
       }
@@ -247,6 +271,8 @@ export class GpuSceneCompiler {
     if (recordCount === 0) {
       return Object.freeze({
         status: "ready",
+        mode,
+        revision: ++this.#revision,
         recordStart: this.#nextSlot,
         recordCount: 0,
         prototypeCount: this.#prototypes.length,
@@ -261,8 +287,9 @@ export class GpuSceneCompiler {
 
     const slotColumns = new Uint32Array(recordCount);
     const slotOffsets = new Uint32Array(recordCount);
-    const slotOrders = new Uint32Array(recordCount);
+    const validationKeys = new Uint32Array(recordCount);
     const occupied = new Uint8Array(recordCount);
+    let rebindIndex = 0;
     for (let columnIndex = 0; columnIndex < columns.length; columnIndex += 1) {
       const column = columns[columnIndex];
       if (column === undefined) return UNSUPPORTED;
@@ -270,22 +297,24 @@ export class GpuSceneCompiler {
         const slot: number | undefined = column.slots[index];
         const order: number | undefined = column.orders[index];
         if (slot === undefined || order === undefined) return UNSUPPORTED;
-        const relative = slot - this.#nextSlot;
+        if (mode === "rebind" && slot >= this.#nextSlot) return UNSUPPORTED;
+        const relative = mode === "append" ? slot - this.#nextSlot : rebindIndex++;
         if (relative < 0 || relative >= recordCount || occupied[relative] === 1) {
           return UNSUPPORTED;
         }
         occupied[relative] = 1;
         slotColumns[relative] = columnIndex;
         slotOffsets[relative] = index;
-        slotOrders[relative] = order;
+        validationKeys[relative] = mode === "append" ? order : slot;
       }
     }
-    let previousOrder = -1;
+    if (mode === "rebind") validationKeys.sort();
+    let previousKey = -1;
     for (let relative = 0; relative < recordCount; relative += 1) {
       if (occupied[relative] !== 1) return UNSUPPORTED;
-      const order = slotOrders[relative] ?? 0;
-      if (order <= previousOrder) return UNSUPPORTED;
-      previousOrder = order;
+      const key = validationKeys[relative] ?? 0;
+      if (key <= previousKey) return UNSUPPORTED;
+      previousKey = key;
     }
 
     const candidatePrototype = new Uint8Array(columns.length);
@@ -341,6 +370,7 @@ export class GpuSceneCompiler {
       pairCount += 1;
     }
     const compiled: GpuScenePlanColumn[] = [];
+    const hasRotations = columns.some((column) => column.rotations !== undefined);
     const pairWrites = new Uint32Array(pairCapacity);
     const pairColumns = new Int16Array(pairCapacity).fill(-1);
     for (let index = 0; index < pairCount; index += 1) {
@@ -354,6 +384,7 @@ export class GpuSceneCompiler {
         slots: new Uint32Array(count),
         count,
         xy: new Float32Array(count * 2),
+        ...(hasRotations ? { rotations: new Float32Array(count) } : {}),
         orders: new Uint32Array(count),
       });
     }
@@ -370,9 +401,12 @@ export class GpuSceneCompiler {
       const target = compiledIndex >= 0 ? compiled[compiledIndex] : undefined;
       if (target === undefined) return UNSUPPORTED;
       const write = pairWrites[key] ?? 0;
-      target.slots[write] = this.#nextSlot + relative;
+      target.slots[write] = candidate.slots[sourceOffset] ?? 0;
       target.xy[write * 2] = candidate.xy[sourceOffset * 2] ?? 0;
       target.xy[write * 2 + 1] = candidate.xy[sourceOffset * 2 + 1] ?? 0;
+      if (target.rotations !== undefined) {
+        target.rotations[write] = candidate.rotations?.[sourceOffset] ?? 0;
+      }
       target.orders[write] = candidate.orders[sourceOffset] ?? 0;
       pairWrites[key] = write + 1;
     }
@@ -393,7 +427,7 @@ export class GpuSceneCompiler {
     }
     this.#paints.push(...pendingPaints);
     const recordStart = this.#nextSlot;
-    this.#nextSlot += recordCount;
+    if (mode === "append") this.#nextSlot += recordCount;
     const newPrototypeIndices = new Uint8Array(pendingPrototypes.length);
     for (let index = 0; index < newPrototypeIndices.length; index += 1) {
       newPrototypeIndices[index] = prototypeBase + index;
@@ -401,6 +435,8 @@ export class GpuSceneCompiler {
 
     return Object.freeze({
       status: "ready",
+      mode,
+      revision: ++this.#revision,
       recordStart,
       recordCount,
       prototypeCount: this.#prototypes.length,
@@ -551,6 +587,7 @@ function pairKey(prototypeIndex: number, paintIndex: number): number {
 function candidatePrototypeKey(
   text: string,
   style: Readonly<TextStyleOptions>,
+  layout?: Readonly<TextLayoutOptions>,
 ): string | undefined {
   try {
     const entries: string[] = [];
@@ -563,7 +600,7 @@ function candidatePrototypeKey(
       if (valueKey === undefined) return undefined;
       entries.push(encodeCacheKey([key, valueKey]));
     }
-    return encodeCacheKey([text, entries.join("")]);
+    return encodeCacheKey([text, layout?.writingMode ?? "", entries.join("")]);
   } catch {
     return undefined;
   }
